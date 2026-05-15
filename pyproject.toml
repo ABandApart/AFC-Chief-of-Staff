@@ -1,0 +1,33 @@
+[project]
+name = "aiadaptive-cos"
+version = "0.1.0"
+description = "AI Adaptive Chief of Staff — persistent operational layer"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Barry Baldwin" }
+]
+dependencies = [
+    # Phase 1: Postgres connectivity only.
+    # Later phases add discord.py, anthropic, google-generativeai, etc.
+    "psycopg[binary]>=3.2.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    # Linting and type checking — useful from day one
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
