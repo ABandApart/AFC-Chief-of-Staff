@@ -2,94 +2,103 @@
 
 Use this as the live tracking document during the Phase 1 build. Check items
 off as you complete them. Each item maps to an acceptance criterion in
-`PRD-phase-1.md`.
+`architecture/PRD-phase-1.md`.
+
+This checklist reflects the **post-pivot** plan: local Postgres 17 instead
+of hosted Supabase. The decision-log entry is in
+`architecture/70-build-order.md` (2026-05-19).
 
 ## Pre-flight
 
-- [ ] PRD-phase-1.md read end-to-end
-- [ ] Password manager open and ready to capture credentials
-- [ ] Mac mini reachable; can SSH or sit at it directly
-- [ ] Laptop reachable; can clone the repo there too
+- [x] PRD-phase-1.md read end-to-end
+- [x] Password manager open and ready
+- [x] OpenClaw gateway stopped and UTM VM shut down
 
-## Task 1: Supabase provisioning
+## Task 1: Local Postgres 17 install
 
-- [ ] Project created on Pro plan, region chosen
-- [ ] Database password generated and stored in password manager
-- [ ] pgvector extension enabled
-- [ ] pg_trgm extension enabled
-- [ ] Project URL captured
-- [ ] anon public key captured
-- [ ] service_role secret key captured
-- [ ] Direct DB URI captured (with ?sslmode=require)
+- [ ] `brew install postgresql@17 pgvector` succeeds
+- [ ] `brew services start postgresql@17` — LaunchAgent registered under barry-admin
+- [ ] Cluster reachable: `psql postgres -c '\conninfo'` connects as barry-admin
+- [ ] 32-char password generated for `barry_agent` DB role; stored in `cos-db-password-staging` keychain item
+- [ ] `aiadaptive_cos` database created
+- [ ] `barry_agent` role created with LOGIN, owns `aiadaptive_cos`
+- [ ] `CREATE EXTENSION vector;` succeeds in `aiadaptive_cos`
+- [ ] `CREATE EXTENSION pg_trgm;` succeeds in `aiadaptive_cos`
+- [ ] Full `db-url` constructed and stored in barry-admin keychain
+- [ ] `/opt/homebrew/var/postgresql@17/` added to Time Machine exclusions
 
 ## Task 2: Repo scaffold
 
-- [ ] Local repo initialized on admin account
-- [ ] Directory scaffold created (architecture/, migrations/, agents/_lib/, cli/, scripts/)
-- [ ] 10 architecture .md files copied into architecture/
-- [ ] README.md created at repo root
-- [ ] .gitignore created
-- [ ] Per-directory READMEs in place
-- [ ] pyproject.toml created
-- [ ] Private GitHub repo `aiadaptive-cos` created
-- [ ] First commit made: "Phase 1: initial scaffold and architecture docs"
-- [ ] Pushed to GitHub
-- [ ] **AC3 ✓**: fresh clone shows the expected directory structure
+- [x] Local repo initialized on barry-admin
+- [x] Directory scaffold created (architecture/, migrations/, agents/_lib/, cli/, scripts/, checklists/)
+- [x] 10 architecture .md files copied into architecture/
+- [x] README.md created at repo root
+- [x] .gitignore created
+- [x] Per-directory READMEs in place
+- [x] pyproject.toml created
+- [x] Private GitHub repo `ABandApart/AFC-Chief-of-Staff` created
+- [x] First commit made: "Phase 1: initial scaffold and architecture docs"
+- [x] Pushed to GitHub
+- [ ] Pivot commit pushed: "Phase 1: pivot to local Postgres 17"
+- [x] **AC3 ✓**: fresh clone shows the expected directory structure
 
 ## Task 3: macOS account separation
 
-- [ ] `admin` and `agent` accounts both exist (`dscl . list /Users | grep -E '^(admin|agent)$'`)
-- [ ] `agent` is NOT in admin group (`dseditgroup -o checkmember -m agent admin`)
-- [ ] `agent` home directory exists at `/Users/agent`
-- [ ] Password for `agent` recorded in password manager
-- [ ] **AC4 ✓**: both accounts verified
+- [x] `barry-admin` and `barry-agent` accounts both exist
+- [x] `barry-agent` is NOT in admin group
+- [x] `barry-agent` home directory exists at `/Users/barry-agent`
+- [x] Password for `barry-agent` recorded in password manager
+- [x] **AC4 ✓**: both accounts verified
 
 ## Task 4: Agent toolchain
 
-- [ ] Logged in as `agent` (or `su - agent`)
-- [ ] Homebrew installed and on PATH
-- [ ] `git --version` returns a version
-- [ ] `uv --version` returns a version
-- [ ] `psql --version` returns a version
-- [ ] **AC7 ✓**: smoke-test venv works (`uv run python -c 'print("ok")'` → `ok`)
+- [x] Homebrew installed system-wide at /opt/homebrew (under barry-admin)
+- [x] `uv` installed system-wide via brew
+- [x] `psql` (via libpq) installed and force-linked
+- [x] `gh` installed (used for any future browser-auth flows)
+- [x] barry-admin .zshrc updated with brew shellenv + libpq path
+- [ ] barry-agent .zshrc updated with brew shellenv + libpq path
+- [ ] As barry-agent: `git --version`, `uv --version`, `psql --version` all return versions
+- [ ] **AC7 ✓**: `uv run python -c 'print("ok")'` returns `ok` from barry-agent
 
-## Task 5: Keychain credentials
+## Task 5: Keychain credentials (4 items, not 8)
 
 - [ ] Gemini API key obtained from aistudio.google.com
-- [ ] Anthropic API key obtained from console.anthropic.com (billing set up)
-- [ ] GitHub personal access token obtained
-- [ ] `bash scripts/keychain_setup.sh` run; all 8 items entered
-- [ ] `bash scripts/keychain_verify.sh` returns 8 OK lines, 0 MISSING
-- [ ] **AC5 ✓**: all credentials retrievable
+- [ ] Anthropic API key obtained from console.anthropic.com (billing confirmed)
+- [ ] Fine-grained GitHub PAT obtained (scoped to ABandApart/AFC-Chief-of-Staff, Contents R/W)
+- [ ] `db-url` copied from barry-admin keychain to barry-agent keychain (sudo step)
+- [ ] As barry-agent: `bash scripts/keychain_setup.sh` run; 3 remaining items entered
+- [ ] As barry-agent: `bash scripts/keychain_verify.sh` returns 4 OK lines, 0 MISSING
+- [ ] **AC5 ✓**: all 4 credentials retrievable
 
 ## Task 6: Schema migration
 
-- [ ] Repo cloned to `agent`: `~/agents` exists with the scaffold
-- [ ] `agent` can pull/push to GitHub (with the keychain-stored PAT)
-- [ ] Migration 0001 applied via Supabase SQL Editor (first time, for inline visibility)
-- [ ] Verification SQL run via psql: `psql "$DB_URL" -f migrations/verify_schema.sql`
-- [ ] Verification output shows 18 tables, vector and pg_trgm enabled, dashboard singleton present
+- [ ] Repo cloned to barry-agent at `~/agents`
+- [ ] `psql "$DB_URL" -f migrations/0001_initial_schema.sql` succeeds with no ERROR lines
+- [ ] `psql "$DB_URL" -f migrations/verify_schema.sql` shows 18 tables, vector + pg_trgm, dashboard singleton
 - [ ] No FAIL lines in the verification output
 - [ ] **AC1 ✓**: extensions enabled
 - [ ] **AC2 ✓**: schema verified
 
-## Task 7: Smoke test &amp; snapshot
+## Task 7: Smoke test & snapshot
 
 - [ ] `uv sync` run in `~/agents` — produces `.venv/` and `uv.lock`
 - [ ] `uv.lock` committed to git
 - [ ] `uv run python scripts/smoke_test.py` returns success
 - [ ] Manual snapshot: `bash scripts/snapshot_backup.sh phase1`
-- [ ] `~/agents/backups/phase1_*.sql.gz` exists and is &gt; 0 bytes
-- [ ] **AC6 ✓**: repo cloned to both Mac mini and laptop
+- [ ] `~/agents/backups/phase1_*.sql.gz` exists and is > 0 bytes
+- [ ] **AC6 ✓**: repo cloned to barry-agent
 - [ ] **AC8 ✓**: smoke test passes
 - [ ] **AC9 ✓**: backup file exists
-- [ ] **AC10 ✓**: README documents the layout
+- [ ] **AC10 ✓**: README documents the layout and the pivot
 
 ## Done
 
 - [ ] All 10 acceptance criteria checked
+- [ ] `cos-db-password-staging` keychain item deleted from barry-admin (no longer needed; password lives only inside the `db-url` URI now)
 - [ ] Final commit: "Phase 1: foundation complete"
 - [ ] Pushed to GitHub
+- [ ] Memory file refreshed (`project_afc_richmond.md` no longer points at OpenClaw)
 - [ ] Ready to start Phase 2 (Telemetry primitives)
 
 ## Notes / issues encountered
@@ -97,7 +106,7 @@ off as you complete them. Each item maps to an acceptance criterion in
 _Record anything that didn't go as the PRD described — useful for refining the
 PRD for whoever comes after, even if that's you next phase._
 
--
+- 2026-05-19: Pivoted from hosted Supabase to local Postgres 17 before any infra was provisioned. Reasoning in `architecture/70-build-order.md` decision log. PRD Task 1 was rewritten; credential inventory shrank from 8 to 4 items.
 
 -
 

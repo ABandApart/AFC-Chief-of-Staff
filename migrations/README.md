@@ -5,11 +5,11 @@ add a new one with the next sequential number.
 
 ## How to apply
 
-The first migration was applied via the Supabase SQL Editor (so you could see
-the output inline). All subsequent migrations should be applied via `psql`:
+Apply via `psql` against the local Postgres instance. The DB URL lives in
+keychain (no `.env` files, never on the command line as a literal):
 
 ```bash
-export DB_URL=$(security find-generic-password -a "$USER" -s supabase-db-url -w)
+export DB_URL=$(security find-generic-password -a "$USER" -s db-url -w)
 psql "$DB_URL" -f migrations/000N_description.sql
 ```
 

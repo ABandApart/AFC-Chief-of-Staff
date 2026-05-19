@@ -3,7 +3,7 @@ smoke_test.py — Phase 1 connectivity verification.
 
 Confirms:
   1. Keychain has the necessary credentials.
-  2. Supabase is reachable from this account.
+  2. The local Postgres instance is reachable from this account.
   3. All 18 tables exist.
   4. A test row can be written and deleted (read/write privileges work).
 
@@ -64,7 +64,7 @@ def main() -&gt; int:
 
     # Step 1: Pull credentials.
     try:
-        db_url = keychain_get("supabase-db-url")
+        db_url = keychain_get("db-url")
     except RuntimeError as e:
         print(f"FAIL: {e}")
         return 1
@@ -92,8 +92,8 @@ def main() -&gt; int:
                     return 1
 
                 if extra:
-                    # Extra tables are not a failure — could be Supabase internal
-                    # or future migrations. Just note them.
+                    # Extra tables are not a failure — could be from a future
+                    # migration applied ahead of this script. Just note them.
                     print(f"note: extra tables present (ok): {sorted(extra)}")
 
                 print(
@@ -124,7 +124,7 @@ def main() -&gt; int:
                 print("OK    test row deleted; brain is clean")
 
     except psycopg.OperationalError as e:
-        print(f"FAIL: cannot connect to Supabase: {e}")
+        print(f"FAIL: cannot connect to Postgres: {e}")
         return 1
     except Exception as e:
         print(f"FAIL: unexpected error: {type(e).__name__}: {e}")

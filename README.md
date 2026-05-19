@@ -27,7 +27,7 @@ aiadaptive-cos/
 The full Phase 1 build instructions are in `architecture/PRD-phase-1.md`.
 TL;DR:
 
-1. Provision Supabase Pro with pgvector and pg_trgm.
+1. Install local Postgres 17 + pgvector + pg_trgm.
 2. Set up macOS account separation (`admin` builds, `agent` runs).
 3. Configure Keychain credentials: `bash scripts/keychain_setup.sh`
 4. Apply migration: `psql "$DB_URL" -f migrations/0001_initial_schema.sql`
@@ -35,15 +35,18 @@ TL;DR:
 
 ## Deviations from baseline PRD
 
-The PRD in `architecture/PRD-phase-1.md` is preserved as-written. We are
-executing it with the following deliberate deviations:
+The baseline PRD assumed hosted Supabase. The execution pivoted before any
+infrastructure was provisioned. The architecture documents in
+`architecture/` still describe the original hosted-Supabase design as
+historical reference; the decision-log entry in `architecture/70-build-order.md`
+records the change. Current implementation choices:
 
-- **Supabase tier**: starting on the **Free** plan instead of Pro. The Free
-  tier supports pgvector and pg_trgm, which is all Phase 1 needs. Local
-  snapshots (via `scripts/snapshot_backup.sh`) take the role that Supabase
-  Pro's automated backups would have played. Upgrade trigger: connection
-  limits, daily-backup retention, or DB size approaching the Free-tier
-  ceiling.
+- **Brain is local Postgres 17 on the Mac mini**, not hosted Supabase.
+  Installed via Homebrew (`postgresql@17` + `pgvector`), running under
+  `barry-admin`'s LaunchAgent. Application DB `aiadaptive_cos` is owned by
+  the `barry_agent` DB role. Trade-off: no external reachability without a
+  tunnel, no managed backups. Revisit at Phase 6 (Roy Kent / WordPress
+  webhook) when external reach becomes a requirement.
 - **Single-host build**: both the `admin` (build) and `agent` (runtime)
   accounts live on the same Mac mini — `barry-admin` and `barry-agent`. The
   PRD's "laptop + Mac mini" model collapses to one machine with account
@@ -52,6 +55,22 @@ executing it with the following deliberate deviations:
 - **OpenClaw retired**: the prior multi-agent Slack stack (OpenClaw gateway
   in a UTM Ubuntu VM) is decommissioned. All prior API keys are rotated;
   no credential or schema sharing with the new system.
+
+## Backup posture
+
+Time Machine alone is **not** sufficient to back up a running Postgres
+instance — live data files are constantly mid-write and snapshotting them
+file-by-file produces inconsistent state. The proper stack:
+
+1. `scripts/snapshot_backup.sh` produces a transactionally-consistent
+   `pg_dump` of `~/agents/backups/<label>_<timestamp>.sql.gz`.
+2. Time Machine backs up `~/agents/backups/` (static files — safe).
+3. The live data directory `/opt/homebrew/var/postgresql@17/` should be
+   **excluded** from Time Machine. System Settings → General → Time Machine
+   → Options → "Exclude these items".
+
+Phase 1 takes one manual snapshot. Phase 12 (Hardening) schedules the
+snapshot script via launchd and adds a restore-test routine.
 
 ## Conventions
 

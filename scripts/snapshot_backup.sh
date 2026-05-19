@@ -19,15 +19,15 @@ LABEL="${1:-snapshot}"
 OUT="${BACKUP_DIR}/${LABEL}_${TIMESTAMP}.sql.gz"
 
 # Pull the connection string from keychain (never log it).
-DB_URL=$(security find-generic-password -a "$USER" -s supabase-db-url -w 2&gt;/dev/null) || {
-    echo "FAIL: supabase-db-url not in keychain. Run scripts/keychain_setup.sh."
+DB_URL=$(security find-generic-password -a "$USER" -s db-url -w 2&gt;/dev/null) || {
+    echo "FAIL: db-url not in keychain. Run scripts/keychain_setup.sh."
     exit 1
 }
 
 echo "Backing up to: $OUT"
 
-# --no-owner and --no-acl prevent Supabase-managed role grants from leaking.
-# --schema=public excludes internal Supabase schemas (auth, storage, etc.).
+# --no-owner and --no-acl keep the dump portable across role layouts.
+# --schema=public is the application schema; we don't dump pg internals.
 pg_dump "$DB_URL" \
     --schema=public \
     --no-owner \

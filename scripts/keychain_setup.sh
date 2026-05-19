@@ -14,12 +14,15 @@ set -euo pipefail
 
 # Whitelist of items expected in Phase 1.
 # Format: keychain_item_name|description
+#
+# Phase 1 deviated from the baseline PRD: the brain is a locally-hosted
+# Postgres 17 instance on this Mac mini (not hosted Supabase). The four
+# Supabase-specific items in the baseline (service-key, anon-key, db-password,
+# project-url) are not used. `db-url` is the single Postgres connection string
+# the agent process uses; it is populated automatically by the postgres
+# provisioning step using the role password generated during install.
 ITEMS=(
-    "supabase-service-key|Supabase service_role key (from Settings → API)"
-    "supabase-anon-key|Supabase anon public key"
-    "supabase-db-password|Supabase database password (from project creation)"
-    "supabase-db-url|Supabase database connection string (from Database → Connection string → URI)"
-    "supabase-project-url|Supabase project URL, e.g. https://abc.supabase.co"
+    "db-url|Postgres connection URI (postgresql://barry_agent:PW@localhost:5432/aiadaptive_cos) — auto-populated by install"
     "gemini-api-key|Gemini API key (from aistudio.google.com)"
     "anthropic-api-key|Anthropic API key (from console.anthropic.com)"
     "github-personal-token|GitHub personal access token (for git push from agent)"

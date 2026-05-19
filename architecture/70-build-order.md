@@ -363,7 +363,7 @@ Total to a fully-functional v1 (Phases 1–12): ~15 weeks of evenings/weekends.
 
 **Tasks**:
 
-1. Implement backup script (`brain_backup.sh`) per `30-memory-layer.md`. Verify backups restore to a test Supabase project.
+1. Implement backup script (`brain_backup.sh`) per `30-memory-layer.md`. Verify backups restore to a test database (separate Postgres cluster or hosted instance, whichever the brain lives on at Phase 12).
 2. Audit log paths for sensitive data leakage. Rotate logs older than 30 days.
 3. Add `pip-audit` to pre-push git hooks on the admin account.
 4. Document the runbook: how to restart agents, investigate failures, roll back a bad deploy.
@@ -453,6 +453,7 @@ These are not commitments. They are evidence that the architecture has headroom.
 | Decision | Rationale | Recorded |
 |----------|-----------|----------|
 | Hosted Supabase over self-hosted | Hosted security is sufficient; brain reachable from any service | 2026-05-14 |
+| **Reversed**: local Postgres 17 on Mac mini for Phase 1–5 | Phase 1–5 do not require external reachability. Local wins on latency (<1ms vs ~50ms), privacy (data never leaves the box), cost (free vs $25/mo Pro tier), and offline-resilience. Phase 6 (Roy Kent WordPress webhook) is the first phase that needs external reach; the decision will be revisited then with three options on the table: Tailscale/Cloudflare tunnel + local, migrate to hosted Supabase via `pg_dump`/`pg_restore`, or pick a different hosted provider. Postgres-to-Postgres migration is mechanically simple, so the option remains cheap. | 2026-05-19 |
 | Postgres over SQLite | pgvector, FKs, future multi-client, transactional consistency | 2026-05-14 |
 | Selective vectorization | Cost and clarity; structured data doesn't benefit from embeddings | 2026-05-14 |
 | Discord as sole mobile channel | One bot, one event model, full history searchable | 2026-05-14 |

@@ -12,9 +12,11 @@
 
 ## TL;DR
 
-By the end of Phase 1, a Python script running on the Mac mini `agent` account can connect to Supabase, read and write all 18 tables defined in the v1 schema, and the same repo exists on the laptop for ad-hoc Claude Code sessions. No automation, no LLM calls, no Discord bot — just the plumbing.
+By the end of Phase 1, a Python script running on the Mac mini `barry-agent` account can connect to a locally-hosted PostgreSQL 17 instance, read and write all 18 tables defined in the v1 schema. No automation, no LLM calls, no Discord bot — just the plumbing.
 
 This phase is deliberately small. Its job is to make Phase 2 (telemetry primitives) possible without retrofitting.
+
+**Note:** the brain was originally specified as hosted Supabase. We pivoted to local Postgres 17 before any infrastructure was provisioned; see `70-build-order.md` decision log and the Deviations section of the root README for rationale.
 
 ---
 
@@ -24,13 +26,13 @@ This phase is deliberately small. Its job is to make Phase 2 (telemetry primitiv
 
 **Goal**: A working substrate. Specifically:
 
-1. Hosted Supabase Pro project provisioned with pgvector and pg_trgm enabled.
+1. Local Postgres 17 cluster running under Homebrew's LaunchAgent with `vector` + `pg_trgm` enabled and `aiadaptive_cos` database owned by the `barry_agent` role.
 2. Schema migration 0001 applied: all 18 tables, indexes, and extensions.
-3. Private GitHub repo `aiadaptive-cos` initialized with directory scaffolding.
-4. macOS account separation operational: `admin` (build) and `agent` (run).
-5. All credentials stored in `agent` Keychain, retrievable from Python.
-6. Repo cloned to both `agent` account (`~/agents/`) and laptop.
-7. Connectivity test passes: a Python script on `agent` reads and writes Supabase.
+3. Private GitHub repo `ABandApart/AFC-Chief-of-Staff` initialized with directory scaffolding.
+4. macOS account separation operational: `barry-admin` (build) and `barry-agent` (run).
+5. All credentials stored in `barry-agent` Keychain, retrievable from Python.
+6. Repo cloned to `barry-agent` account at `~/agents/`.
+7. Connectivity test passes: a Python script on `barry-agent` reads and writes the local Postgres.
 
 </goals>
 
@@ -43,7 +45,7 @@ This phase is deliberately small. Its job is to make Phase 2 (telemetry primitiv
 - No scheduled jobs in launchd. (Earliest is Phase 3 for the briefing skeleton.)
 - No agent code beyond the connectivity smoke test.
 - No backups beyond the manual one this PRD specifies at the end.
-- No multi-environment setup (dev/staging/prod). Single hosted Supabase project; the brain doesn't need staging at this scale.
+- No multi-environment setup (dev/staging/prod). Single local Postgres database; the brain doesn't need staging at this scale.
 
 </non_goals>
 
@@ -57,16 +59,16 @@ The phase is done when all of the following are true. Each is independently veri
 
 | # | Criterion | How to verify |
 |---|-----------|---------------|
-| AC1 | Supabase project exists on the Pro plan with pgvector and pg_trgm enabled | Supabase dashboard → Database → Extensions shows both enabled |
+| AC1 | Local Postgres 17 running with `vector` and `pg_trgm` extensions enabled in `aiadaptive_cos` | `brew services list \| grep postgresql@17` shows started; `psql aiadaptive_cos -c '\dx'` lists both extensions |
 | AC2 | All tables in migration 0001 exist with correct columns and indexes | Run `verify_schema.sql` (provided) — output shows 18 tables, no errors |
-| AC3 | Private GitHub repo `aiadaptive-cos` exists with the directory structure | `git ls-tree -d HEAD` from a fresh clone shows architecture/, migrations/, agents/, agents/_lib/, cli/, scripts/ |
-| AC4 | `admin` and `agent` macOS accounts both exist and are separated | `dscl . list /Users \| grep -E '^(admin\|agent)$'` returns both |
-| AC5 | All credentials in the inventory are in `agent`'s Keychain | `security find-generic-password -a $USER -s <name>` succeeds for each item (script provided) |
-| AC6 | Repo cloned to `~/agents/` on `agent` account and to the laptop | Both directories exist and `git remote -v` matches the GitHub URL |
-| AC7 | `uv` is installed on the `agent` account and a smoke-test venv works | `uv --version` returns a version; `uv run python -c "print('ok')"` returns `ok` |
-| AC8 | Smoke test connects to Supabase from `agent` account | `python scripts/smoke_test.py` returns `OK — connected at <timestamp>, 18 tables visible` |
-| AC9 | Manual snapshot backup taken | `~/agents/backups/snapshot_phase1.sql.gz` exists and is > 0 bytes |
-| AC10 | README.md committed to the repo documenting the layout | `cat README.md` displays the layout section |
+| AC3 | Private GitHub repo exists with the directory structure | `git ls-tree -d HEAD` from a fresh clone shows architecture/, migrations/, agents/, agents/_lib/, cli/, scripts/, checklists/ |
+| AC4 | `barry-admin` and `barry-agent` macOS accounts both exist and are separated | `dscl . list /Users \| grep -E '^barry-(admin\|agent)$'` returns both |
+| AC5 | All 4 credentials are in `barry-agent`'s keychain | `bash scripts/keychain_verify.sh` (as `barry-agent`) returns 4 `OK` lines, 0 `MISSING` |
+| AC6 | Repo cloned to `/Users/barry-agent/agents/` | Directory exists; `git remote -v` points at `github.com:ABandApart/AFC-Chief-of-Staff` |
+| AC7 | `uv` and `psql` are reachable from the `barry-agent` shell | `uv --version` and `psql --version` both succeed; `uv run python -c "print('ok')"` returns `ok` |
+| AC8 | Smoke test connects to local Postgres from `barry-agent` account | `uv run python scripts/smoke_test.py` returns `OK connected at <timestamp>, 18 expected tables visible` |
+| AC9 | Manual snapshot backup taken | `~/agents/backups/phase1_*.sql.gz` exists and is > 0 bytes |
+| AC10 | README.md committed to the repo documenting the layout | `cat README.md` displays the layout section and current Deviations note |
 
 </acceptance>
 
@@ -123,8 +125,9 @@ aiadaptive-cos/
 
 Outside the repo:
 
-- Supabase project (URL and keys recorded in 1Password / your password manager).
-- Keychain entries on the `agent` account.
+- Local Postgres 17 cluster at `/opt/homebrew/var/postgresql@17/` with `aiadaptive_cos` database, `barry_agent` role, and both extensions enabled.
+- Keychain entries on the `barry-agent` account: `db-url`, `gemini-api-key`, `anthropic-api-key`, `github-personal-token`.
+- Time Machine exclusion configured for `/opt/homebrew/var/postgresql@17/`.
 - A manual `.sql.gz` snapshot in `~/agents/backups/`.
 
 ---
@@ -135,31 +138,65 @@ Outside the repo:
 
 The seven tasks below are sequenced so each one's prerequisites are complete. Estimated total: 6–8 hours over 3–4 sittings.
 
-### Task 1: Provision Supabase
+### Task 1: Install local Postgres 17
 
-**Outcome**: Hosted Supabase Pro project exists with pgvector and pg_trgm enabled, project URL and service-role key captured.
+**Outcome**: PostgreSQL 17 running on the Mac mini under a Homebrew-managed LaunchAgent, application database `aiadaptive_cos` created, role `barry_agent` owns the database, `vector` (pgvector) and `pg_trgm` extensions enabled, password for `barry_agent` stored in keychain.
 
-**Steps**:
+**Why local (deviation from baseline PRD)**: see `70-build-order.md` decision log entry "Reversed: local Postgres 17 on Mac mini for Phase 1–5". Phase 6 will revisit reachability.
 
-1. Log in to supabase.com. Create a new project under your organization.
-   - Name: `aiadaptive-cos`
-   - Region: closest to where the Mac mini lives (lower query latency)
-   - Plan: Pro ($25/mo) — needed for backups and pgvector at scale
-   - Database password: generate a strong one; store in password manager
-2. Wait for project provisioning (typically 1–2 minutes).
-3. Database → Extensions:
-   - Enable `vector` (pgvector)
-   - Enable `pg_trgm`
-4. Settings → API: copy and store the following in your password manager:
-   - Project URL (e.g. `https://abcdefgh.supabase.co`)
-   - `anon` public key
-   - `service_role` secret key
-   - Database password (already stored from step 1)
-5. Settings → Database → Connection string → URI: copy and store the direct connection string (used by `pg_dump` for backups).
+**Steps** (run as `barry-admin`):
 
-**Verification**: Database → Extensions shows both `vector` and `pg_trgm` with status "enabled". You have 4 credentials captured for the next task.
+1. Install Postgres 17 + pgvector via Homebrew:
+   ```bash
+   brew install postgresql@17 pgvector
+   ```
+2. Start the service. Homebrew registers a LaunchAgent under `barry-admin` that survives logout (via Fast User Switching) and reboot (so long as `barry-admin` auto-logs-in or stays logged in):
+   ```bash
+   brew services start postgresql@17
+   ```
+3. Verify cluster is reachable. The Homebrew `initdb` creates a superuser role matching the OS user that ran it (so `barry-admin` is auto-created as cluster superuser):
+   ```bash
+   /opt/homebrew/opt/postgresql@17/bin/psql postgres -c '\conninfo'
+   ```
+4. Generate a 32-character random password for the `barry_agent` DB role and stash it in keychain (never echoed to terminal or shell history):
+   ```bash
+   PASS=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)
+   security add-generic-password -a "$USER" -s cos-db-password-staging \
+       -w "$PASS" -T "" -U
+   unset PASS
+   ```
+5. Create the application database, role, and extensions:
+   ```bash
+   PASS=$(security find-generic-password -a "$USER" -s cos-db-password-staging -w)
+   createdb aiadaptive_cos
+   psql aiadaptive_cos <<SQL
+     CREATE ROLE barry_agent WITH LOGIN PASSWORD '$PASS';
+     ALTER DATABASE aiadaptive_cos OWNER TO barry_agent;
+     GRANT ALL PRIVILEGES ON DATABASE aiadaptive_cos TO barry_agent;
+     CREATE EXTENSION IF NOT EXISTS vector;
+     CREATE EXTENSION IF NOT EXISTS pg_trgm;
+   SQL
+   unset PASS
+   ```
+6. Construct the full DB URL and store under the keychain item name agents expect (`db-url`):
+   ```bash
+   PASS=$(security find-generic-password -a "$USER" -s cos-db-password-staging -w)
+   security add-generic-password -a "$USER" -s db-url \
+       -w "postgresql://barry_agent:$PASS@localhost:5432/aiadaptive_cos" \
+       -T "" -U
+   unset PASS
+   ```
+   The same `db-url` item will be copied to `barry-agent`'s keychain in Task 5.
 
-**Estimated time**: 20 minutes.
+7. **Add the live data directory to Time Machine exclusions**: System Settings → General → Time Machine → Options → "Exclude these items" → add `/opt/homebrew/var/postgresql@17/`. Reason: Postgres data files are constantly mid-write, so TM file-by-file snapshots produce inconsistent state. The proper backup is `scripts/snapshot_backup.sh` (run in Task 7); its `.sql.gz` output lives in `~/agents/backups/` which TM **does** back up.
+
+**Verification**: All four checks pass:
+- `brew services list` shows `postgresql@17` as `started`
+- `psql postgres -c '\conninfo'` connects and reports current user/database
+- `psql aiadaptive_cos -c '\dx'` lists both `vector` and `pg_trgm` extensions
+- `security find-generic-password -a "$USER" -s db-url -w | grep -c '@localhost:5432/aiadaptive_cos'` returns 1
+
+**Estimated time**: 25 minutes.
 
 ---
 
@@ -265,86 +302,89 @@ This task is largely already done per the existing OpenClaw-style security setup
 
 ### Task 5: Configure Keychain Credentials on Agent Account
 
-**Outcome**: All 8 credentials from the inventory are in `agent`'s login keychain, retrievable via `security find-generic-password`.
+**Outcome**: All 4 credentials are in `barry-agent`'s login keychain, retrievable via `security find-generic-password`.
 
-**Credential inventory** (from `40-action-layer.md`):
+**Credential inventory** (post-pivot — local Postgres replaces hosted Supabase):
 
 | Keychain item | What it is | Where you got it |
 |---|---|---|
-| `supabase-service-key` | service_role key | Task 1, step 4 |
-| `supabase-anon-key` | anon public key | Task 1, step 4 |
-| `supabase-db-password` | database password | Task 1, step 1/4 |
-| `supabase-db-url` | direct Postgres URI | Task 1, step 5 |
-| `supabase-project-url` | https://...supabase.co | Task 1, step 4 |
+| `db-url` | full Postgres URI `postgresql://barry_agent:PW@localhost:5432/aiadaptive_cos` | Task 1, step 6 (copied from `barry-admin` keychain) |
 | `gemini-api-key` | Gemini API key | aistudio.google.com → API keys |
 | `anthropic-api-key` | Anthropic API key | console.anthropic.com → API keys |
-| `github-personal-token` | for git operations from agent | github.com → Settings → Developer settings |
+| `github-personal-token` | for git clone/pull from agent account | github.com → Settings → Developer settings → fine-grained PAT |
 
 (Discord and Buffer tokens are deferred to Phase 3 and Phase 9 respectively.)
 
-**Steps**:
+**Steps** (run as `barry-agent`):
 
-1. As `agent`, run the provided `scripts/keychain_setup.sh`. The script prompts for each credential and stores it (it does not echo or log anything).
+1. Copy `db-url` from `barry-admin`'s keychain to `barry-agent`'s. From a `barry-admin` terminal:
    ```bash
-   cd ~/agents  # or wherever the repo is cloned in Task 6
-   bash scripts/keychain_setup.sh
+   VAL=$(security find-generic-password -a "$USER" -s db-url -w)
+   sudo -u barry-agent security add-generic-password \
+       -a barry-agent -s db-url -w "$VAL" -T "" -U
+   unset VAL
    ```
-2. Run the verifier:
+   (sudo prompts once for `barry-admin`'s password.)
+2. As `barry-agent`, run `scripts/keychain_setup.sh`. It prompts for the remaining 3 credentials and stores them (no echo, no shell history):
    ```bash
-   bash scripts/keychain_verify.sh
+   bash /Users/barry-admin/code/aiadaptive-cos/scripts/keychain_setup.sh
    ```
-   Expected output: 8 lines, each saying `OK <item-name>`. No `MISSING` lines.
+   When asked about `db-url`, choose **skip** (already populated in step 1).
+3. Run the verifier:
+   ```bash
+   bash /Users/barry-admin/code/aiadaptive-cos/scripts/keychain_verify.sh
+   ```
+   Expected output: 4 lines, each saying `OK <item-name>`. No `MISSING` lines.
 
 **If you haven't yet obtained Gemini or Anthropic API keys**:
 - Gemini: aistudio.google.com → "Get API key" → create a new key for the project. Free tier is fine; usage will be billed once Tartt runs in Phase 4.
 - Anthropic: console.anthropic.com → API Keys → Create Key. Set up billing; usage starts in Phase 2 with the cost helper smoke test.
 
-**Verification**: `keychain_verify.sh` returns 8 OK lines.
+**Verification**: `keychain_verify.sh` returns 4 OK lines.
 
-**Estimated time**: 20 minutes (mostly waiting on API console pages).
+**Estimated time**: 15 minutes (mostly waiting on API console pages).
 
 ---
 
 ### Task 6: Apply Schema Migration
 
-**Outcome**: All 18 tables, indexes, and extensions exist in the Supabase database. `verify_schema.sql` returns a clean report.
+**Outcome**: All 18 tables, indexes, and extensions exist in `aiadaptive_cos`. `verify_schema.sql` returns a clean report.
 
-**Steps**:
+**Steps** (run as `barry-agent`):
 
-1. Clone the repo to `agent`'s home directory:
+1. Clone the repo to `barry-agent`'s home directory using the PAT from keychain:
    ```bash
-   # As agent
-   cd ~
-   gh auth login   # if using gh; otherwise use HTTPS clone with token
-   git clone git@github.com:<your-username>/aiadaptive-cos.git agents
-   cd agents
+   TOKEN=$(security find-generic-password -a "$USER" -s github-personal-token -w)
+   git clone "https://${TOKEN}@github.com/ABandApart/AFC-Chief-of-Staff.git" ~/agents
+   unset TOKEN
+   cd ~/agents
    ```
-2. Apply migration 0001 via the Supabase SQL Editor (recommended for first migration so you see the output inline):
-   - Open the Supabase dashboard → SQL Editor → New query
-   - Paste the entire content of `migrations/0001_initial_schema.sql`
-   - Run
-   - Expect: "Success. No rows returned." If errors, see Troubleshooting below.
-3. Apply via `psql` for repeatability (also recommended — bake the muscle memory now, the team will use this path for every future migration):
+2. Apply migration 0001 via `psql`:
    ```bash
-   export DB_URL=$(security find-generic-password -a $USER -s supabase-db-url -w)
+   export DB_URL=$(security find-generic-password -a "$USER" -s db-url -w)
+   psql "$DB_URL" -f migrations/0001_initial_schema.sql
+   ```
+   Expect: a sequence of `CREATE TABLE` / `CREATE INDEX` / `COMMIT` lines and no `ERROR:` lines.
+3. Verify:
+   ```bash
    psql "$DB_URL" -f migrations/verify_schema.sql
    ```
-   Expected output: 18 tables listed, 3 extensions confirmed, no FAIL lines.
+   Expected output: 18 tables listed, both extensions confirmed, dashboard singleton seeded, no `FAIL` lines.
 
 **Verification**: `verify_schema.sql` runs clean.
 
 **Troubleshooting**:
-- *"extension pgvector does not exist"*: Task 1 step 3 was incomplete. Enable from dashboard, retry.
-- *"relation 'sources' does not exist" when creating content_items*: the migration creates tables in dependency order. If you see this, the migration has been modified or partially applied. Drop everything and rerun:
+- *"extension pgvector does not exist"*: Task 1 step 5 (or `brew install pgvector`) was incomplete. Re-run `CREATE EXTENSION vector;` from `psql aiadaptive_cos`.
+- *"role 'barry_agent' is not permitted to log in"*: the role was created without `LOGIN`. Run `ALTER ROLE barry_agent LOGIN;` from a `barry-admin` `psql postgres` session.
+- *Partial migration on first try*: drop and recreate the schema, then rerun:
   ```sql
   DROP SCHEMA public CASCADE;
   CREATE SCHEMA public;
-  GRANT ALL ON SCHEMA public TO postgres, anon, authenticated, service_role;
+  GRANT ALL ON SCHEMA public TO barry_agent;
   ```
-  Then rerun the migration.
-- *Connection refused via psql*: the connection string from Supabase includes `?sslmode=require`. Don't strip it.
+- *"connection refused on port 5432"*: `brew services list` should show `postgresql@17` started under `barry-admin`. If it isn't, `brew services start postgresql@17`.
 
-**Estimated time**: 30 minutes.
+**Estimated time**: 20 minutes.
 
 ---
 
@@ -389,13 +429,16 @@ This task is largely already done per the existing OpenClaw-style security setup
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Supabase free → Pro upgrade timing | Low | Low — $25 vs free is small | Just start on Pro; the backup feature alone is worth it |
 | pgvector HNSW indexes slow at first | Low | Low | They're empty in Phase 1; tune after Phase 4 has real volume |
-| Apple Silicon Homebrew permissions for `agent` | Medium | Medium — blocks Task 4 | Per-user install in `~/.brew` is the fallback |
-| Forgetting to commit pyproject.toml lockfile | Medium | Medium — agent vs laptop env drift | `uv.lock` is committed to git; verify with `git status` after `uv sync` |
-| Credentials echoed to shell history | Medium | High — credential leak | `keychain_setup.sh` uses `read -s` for all secrets; verify `history` after running |
-| Schema applied to wrong project | Low | High — would require fresh project | Always verify `DB_URL` host before applying migrations: `psql "$DB_URL" -c '\conninfo'` |
+| Postgres not running when `barry-agent` logs in alone | Medium | High — agents can't reach the brain | `brew services` installs a LaunchAgent scoped to `barry-admin`; keep `barry-admin` logged in via Fast User Switching, or migrate to a system-level LaunchDaemon in Phase 12 |
+| `pgvector` version mismatch with `postgresql@17` | Low | Medium — `CREATE EXTENSION` fails | Use `brew install pgvector` (not building from source) so brew handles the version pinning |
+| Apple Silicon Homebrew permissions for `barry-agent` | Low | Low — only running existing binaries, not installing | Binaries in `/opt/homebrew/bin` are world-executable; `barry-agent` only needs PATH set |
+| Forgetting to commit pyproject.toml lockfile | Medium | Medium — env drift between admin and agent | `uv.lock` is committed to git; verify with `git status` after `uv sync` |
+| Credentials echoed to shell history | Medium | High — credential leak | `keychain_setup.sh` uses `read -s` for all secrets; password generation uses `unset PASS` immediately after use |
+| Schema applied to wrong database | Low | High — recovery requires drop + reapply | Always verify `DB_URL` host/db before applying migrations: `psql "$DB_URL" -c '\conninfo'` |
 | Migration partially applied on first try | Medium | Low — recoverable | The `DROP SCHEMA public CASCADE` recipe in Task 6 troubleshooting handles this |
+| Time Machine snapshots inconsistent live Postgres files | Medium | High — silent corruption on restore | Exclude `/opt/homebrew/var/postgresql@17/` from TM (Task 1, step 7); rely on `pg_dump` snapshots in `~/agents/backups/` for restores |
+| Mac mini disk failure with no offsite backup | Low | Catastrophic — total data loss | Phase 1 has TM as the only offsite path; Phase 12 hardening adds cloud-sync of `~/agents/backups/` |
 
 </risks>
 

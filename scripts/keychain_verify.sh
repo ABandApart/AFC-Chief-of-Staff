@@ -9,11 +9,7 @@
 set -euo pipefail
 
 ITEMS=(
-    "supabase-service-key"
-    "supabase-anon-key"
-    "supabase-db-password"
-    "supabase-db-url"
-    "supabase-project-url"
+    "db-url"
     "gemini-api-key"
     "anthropic-api-key"
     "github-personal-token"
