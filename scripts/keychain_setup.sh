@@ -36,7 +36,7 @@ echo "Each prompt reads silently (no echo, not in shell history)."
 echo
 read -p "Proceed? [y/N] " -n 1 -r
 echo
-[[ ! $REPLY =~ ^[Yy]$ ]] &amp;&amp; exit 0
+[[ ! $REPLY =~ ^[Yy]$ ]] && exit 0
 echo
 
 for item in "${ITEMS[@]}"; do
@@ -44,12 +44,12 @@ for item in "${ITEMS[@]}"; do
     desc="${item#*|}"
 
     # Check if it already exists.
-    if security find-generic-password -a "$USER" -s "$name" -w &gt;/dev/null 2&gt;&amp;1; then
+    if security find-generic-password -a "$USER" -s "$name" -w >/dev/null 2>&1; then
         echo "[$name] already exists in keychain."
         read -p "  Overwrite? [y/N] " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            security delete-generic-password -a "$USER" -s "$name" &gt;/dev/null 2&gt;&amp;1 || true
+            security delete-generic-password -a "$USER" -s "$name" >/dev/null 2>&1 || true
         else
             echo "  Skipped."
             continue

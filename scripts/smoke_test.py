@@ -42,7 +42,7 @@ EXPECTED_TABLES = {
 }
 
 
-def keychain_get(item_name: str) -&gt; str:
+def keychain_get(item_name: str) -> str:
     """Fetch a credential from the macOS Keychain."""
     result = subprocess.run(
         ["security", "find-generic-password", "-w", "-s", item_name],
@@ -58,7 +58,7 @@ def keychain_get(item_name: str) -&gt; str:
     return result.stdout.strip()
 
 
-def main() -&gt; int:
+def main() -> int:
     print("Phase 1 smoke test")
     print("=" * 50)
 
@@ -101,7 +101,7 @@ def main() -&gt; int:
                     f"{len(EXPECTED_TABLES)} expected tables visible"
                 )
 
-                # Step 3: Write &amp; delete test row.
+                # Step 3: Write & delete test row.
                 cur.execute(
                     """
                     INSERT INTO facts (content, source_type, source_ref, domain, confidence)

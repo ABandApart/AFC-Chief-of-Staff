@@ -16,16 +16,17 @@ of hosted Supabase. The decision-log entry is in
 
 ## Task 1: Local Postgres 17 install
 
-- [ ] `brew install postgresql@17 pgvector` succeeds
-- [ ] `brew services start postgresql@17` — LaunchAgent registered under barry-admin
-- [ ] Cluster reachable: `psql postgres -c '\conninfo'` connects as barry-admin
-- [ ] 32-char password generated for `barry_agent` DB role; stored in `cos-db-password-staging` keychain item
-- [ ] `aiadaptive_cos` database created
-- [ ] `barry_agent` role created with LOGIN, owns `aiadaptive_cos`
-- [ ] `CREATE EXTENSION vector;` succeeds in `aiadaptive_cos`
-- [ ] `CREATE EXTENSION pg_trgm;` succeeds in `aiadaptive_cos`
-- [ ] Full `db-url` constructed and stored in barry-admin keychain
-- [ ] `/opt/homebrew/var/postgresql@17/` added to Time Machine exclusions
+- [x] `brew install postgresql@17 pgvector` succeeds (required `brew reinstall postgresql@17` once to fix initial file layout issue)
+- [x] `brew services start postgresql@17` — LaunchAgent registered under barry-admin
+- [x] Cluster reachable: `psql postgres -c '\conninfo'` connects as barry-admin
+- [x] 32-char password generated for `barry_agent` DB role; stored in `cos-db-password-staging` keychain item (deleted after Task 1 step 6)
+- [x] `aiadaptive_cos` database created
+- [x] `barry_agent` role created with LOGIN, owns `aiadaptive_cos`
+- [x] `CREATE EXTENSION vector;` succeeds in `aiadaptive_cos` (pgvector 0.8.2)
+- [x] `CREATE EXTENSION pg_trgm;` succeeds in `aiadaptive_cos` (1.6)
+- [x] Full `db-url` constructed and stored in barry-admin keychain
+- [ ] `/opt/homebrew/var/postgresql@17/` added to Time Machine exclusions (manual step — user)
+- [x] **Pre-flight**: `uv run python scripts/smoke_test.py` from barry-admin succeeds (full stack: psycopg + TCP + password auth + read/write)
 
 ## Task 2: Repo scaffold
 
@@ -74,11 +75,11 @@ of hosted Supabase. The decision-log entry is in
 ## Task 6: Schema migration
 
 - [ ] Repo cloned to barry-agent at `~/agents`
-- [ ] `psql "$DB_URL" -f migrations/0001_initial_schema.sql` succeeds with no ERROR lines
-- [ ] `psql "$DB_URL" -f migrations/verify_schema.sql` shows 18 tables, vector + pg_trgm, dashboard singleton
-- [ ] No FAIL lines in the verification output
-- [ ] **AC1 ✓**: extensions enabled
-- [ ] **AC2 ✓**: schema verified
+- [x] `psql "$DB_URL" -f migrations/0001_initial_schema.sql` succeeds with no ERROR lines (run from barry-admin during install)
+- [x] `psql "$DB_URL" -f migrations/verify_schema.sql` shows 18 tables, vector + pg_trgm, dashboard singleton
+- [x] No FAIL lines in the verification output
+- [x] **AC1 ✓**: extensions enabled
+- [x] **AC2 ✓**: schema verified
 
 ## Task 7: Smoke test & snapshot
 

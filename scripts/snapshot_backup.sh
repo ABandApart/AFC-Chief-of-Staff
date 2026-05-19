@@ -19,7 +19,7 @@ LABEL="${1:-snapshot}"
 OUT="${BACKUP_DIR}/${LABEL}_${TIMESTAMP}.sql.gz"
 
 # Pull the connection string from keychain (never log it).
-DB_URL=$(security find-generic-password -a "$USER" -s db-url -w 2&gt;/dev/null) || {
+DB_URL=$(security find-generic-password -a "$USER" -s db-url -w 2>/dev/null) || {
     echo "FAIL: db-url not in keychain. Run scripts/keychain_setup.sh."
     exit 1
 }
@@ -33,7 +33,7 @@ pg_dump "$DB_URL" \
     --no-owner \
     --no-acl \
     --quote-all-identifiers \
-    | gzip &gt; "$OUT"
+    | gzip > "$OUT"
 
 SIZE=$(du -h "$OUT" | cut -f1)
 echo "OK   $OUT ($SIZE)"

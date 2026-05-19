@@ -17,7 +17,7 @@ ITEMS=(
 
 missing=0
 for name in "${ITEMS[@]}"; do
-    if security find-generic-password -a "$USER" -s "$name" &gt;/dev/null 2&gt;&amp;1; then
+    if security find-generic-password -a "$USER" -s "$name" >/dev/null 2>&1; then
         printf 'OK      %s\n' "$name"
     else
         printf 'MISSING %s\n' "$name"
