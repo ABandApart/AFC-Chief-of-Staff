@@ -67,25 +67,22 @@ maps to an acceptance criterion in `architecture/PRD-phase-2.md`.
 
 ## Task 7: Smoke test execution (barry-agent — user action)
 
-> 🛑 Pause point: this step is executed by the user as `barry-agent` (the
-> account where the keys live), not by Claude as `barry-admin`.
-
-- [ ] As barry-agent: `cd ~/agents && git pull` (pulls Phase 2 changes)
-- [ ] As barry-agent: `uv sync` (picks up new deps from pyproject.toml)
-- [ ] As barry-agent: `uv run python -m agents.test.run_smoke` succeeds
-- [ ] Output includes "✅ Phase 2 smoke test PASSED"
-- [ ] As barry-agent: `uv run python -m cli.spend` shows phase-2-smoke rows
-- [ ] As barry-agent: `uv run python -m cli.spend --by function` shows infrastructure
-- [ ] **AC1 ✓**: rows exist in agent_runs
-- [ ] **AC2 ✓**: at least one token_cap_exceeded row present
-- [ ] **AC5 ✓**: usd_cost matches manual calculation (input × rate)
-- [ ] **AC6 ✓**: Anthropic console shows usage on `anthropic-key-ted`
-- [ ] **AC7 ✓**: ≥ 11 rows for phase-2-smoke (10 + 1 G1)
-- [ ] **AC8 ✓**: spend CLI works in all three modes
+- [x] As barry-agent: `cd ~/agents && git pull` (pulls Phase 2 changes)
+- [x] As barry-agent: `uv sync` (picks up new deps from pyproject.toml)
+- [x] As barry-agent: `uv run python -m agents.test.run_smoke` succeeds
+- [x] Output includes "✅ Phase 2 smoke test PASSED"
+- [x] As barry-agent: `uv run python -m cli.spend` shows phase-2-smoke rows
+- [x] As barry-agent: `uv run python -m cli.spend --by function` shows infrastructure
+- [x] **AC1 ✓**: 11 rows in agent_runs (10 success + 1 token_cap_exceeded)
+- [x] **AC2 ✓**: 1 token_cap_exceeded row recorded with `input_tokens=1208`
+- [x] **AC5 ✓**: usd_cost matches PRICE_TABLE (Anthropic 1512/194 → ~$0.0014; Gemini at sub-cent rounds to $0)
+- [x] **AC6 ✓**: Anthropic dashboard groups usage by per-agent key (`anthropic-key-ted`)
+- [x] **AC7 ✓**: 11 rows for phase-2-smoke (5 Anthropic success + 5 Gemini success + 1 G1)
+- [x] **AC8 ✓**: spend CLI works in all three modes (by agent / function / day)
 
 ## Done
 
-- [ ] All 10 acceptance criteria checked
+- [x] All 10 acceptance criteria checked
 - [ ] Final commit: "Phase 2: telemetry primitives complete"
 - [ ] Pushed to GitHub
 - [ ] Memory file updated (Phase 2 done, Phase 3 next)
