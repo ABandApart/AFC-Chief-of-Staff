@@ -87,4 +87,4 @@ snapshot script via launchd and adds a restore-test routine.
 The system is built in 13 phases. See `architecture/70-build-order.md` for
 sequencing, dependencies, and acceptance criteria for each phase.
 
-Phase 1 (Foundation) is currently in progress. No agents have been built yet.
+Phase 1 (Foundation) is **complete** as of 2026-05-19. No agents have been built yet — Phase 2 (Telemetry primitives) is next.
