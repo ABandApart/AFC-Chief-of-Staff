@@ -82,6 +82,57 @@ snapshot script via launchd and adds a restore-test routine.
   to git.
 - `admin` account builds and commits; `agent` account runs scheduled jobs.
 
+## Adding a new agent (Phase 2+)
+
+Every agent that calls an LLM must go through the cost helper. The integration
+is three steps:
+
+1. **Pick a slug** matching the agent's directory name (e.g. `tartt`,
+   `keeley-strategy`). Used as `agent_runs.agent_name` and as the keychain
+   item suffix.
+
+2. **Register in `agents/_lib/runs.py`**:
+   - Add a `DAILY_CEILINGS[slug]` entry (per-day spend cap; see
+     `architecture/80-telemetry-layer.md` starting ceilings table).
+   - If the agent calls Anthropic: add `KEY_BY_AGENT[slug]` pointing at the
+     keychain item name (e.g. `"anthropic-key-tartt"`).
+   - Create the corresponding key in `barry-agent`'s keychain using the
+     standard naming (e.g. via `scripts/keychain_setup.sh` extended).
+
+3. **Use the helper from the agent's code**:
+
+   ```python
+   from agents._lib.runs import agent_run
+
+   def summarize_item(item_text: str, item_id: int) -> str:
+       with agent_run(
+           "tartt",                       # agent slug
+           "news_aggregation",            # function label
+           correlation_id=str(item_id),   # links the run to the entity
+           correlation_kind="content_item",
+       ) as run:
+           return run.call_anthropic(
+               messages=[{"role": "user", "content": f"Summarize:\n{item_text}"}],
+               model="claude-haiku-4-5",
+               max_input_tokens=4000,     # G1: per-run input cap
+               max_output_tokens=500,
+           )
+   ```
+
+That's it. The helper writes one row to `agent_runs` per call (success,
+token_cap_exceeded, or failed) and refuses calls that would exceed the
+agent's daily ceiling.
+
+See `architecture/80-telemetry-layer.md` for the full design, including the
+function-label taxonomy and three-metric-per-agent pattern.
+
+For ad-hoc spend queries:
+```bash
+uv run python -m cli.spend                  # today by agent
+uv run python -m cli.spend --by function    # today by function
+uv run python -m cli.spend --since 7d       # last week by agent
+```
+
 ## Phases
 
 The system is built in 13 phases. See `architecture/70-build-order.md` for
