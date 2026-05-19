@@ -62,15 +62,17 @@ of hosted Supabase. The decision-log entry is in
 - [ ] As barry-agent: `git --version`, `uv --version`, `psql --version` all return versions
 - [ ] **AC7 ✓**: `uv run python -c 'print("ok")'` returns `ok` from barry-agent
 
-## Task 5: Keychain credentials (4 items, not 8)
+## Task 5: Keychain credentials (8 required items + 1 optional)
 
-- [ ] Gemini API key obtained from aistudio.google.com
-- [ ] Anthropic API key obtained from console.anthropic.com (billing confirmed)
-- [ ] Fine-grained GitHub PAT obtained (scoped to ABandApart/AFC-Chief-of-Staff, Contents R/W)
-- [ ] `db-url` copied from barry-admin keychain to barry-agent keychain (sudo step)
-- [ ] As barry-agent: `bash scripts/keychain_setup.sh` run; 3 remaining items entered
-- [ ] As barry-agent: `bash scripts/keychain_verify.sh` returns 4 OK lines, 0 MISSING
-- [ ] **AC5 ✓**: all 4 credentials retrievable
+- [x] Gemini API key obtained from aistudio.google.com (Tartt)
+- [x] 6 per-agent Anthropic keys obtained: Ted, Keeley Strategy, Keeley Content, Roy Kent, Nate Shelley, Higgins
+- [ ] GitHub auth decision made: share barry-admin SSH key, or generate fine-grained PAT
+- [ ] If PAT chosen: fine-grained token obtained (scoped to ABandApart/AFC-Chief-of-Staff, Contents R/W)
+- [x] 8 required items present in barry-admin keychain (staged)
+- [ ] Bulk-copy from barry-admin → barry-agent keychain (sudo loop in PRD Task 5 step 1)
+- [ ] As barry-agent: `bash scripts/keychain_verify.sh` returns 8 OK + 0 MISSING (required)
+- [ ] Staged copies deleted from barry-admin keychain (after barry-agent has all 8)
+- [ ] **AC5 ✓**: all 8 required credentials retrievable from barry-agent's keychain
 
 ## Task 6: Schema migration
 

@@ -15,17 +15,33 @@ set -euo pipefail
 # Whitelist of items expected in Phase 1.
 # Format: keychain_item_name|description
 #
-# Phase 1 deviated from the baseline PRD: the brain is a locally-hosted
-# Postgres 17 instance on this Mac mini (not hosted Supabase). The four
-# Supabase-specific items in the baseline (service-key, anon-key, db-password,
-# project-url) are not used. `db-url` is the single Postgres connection string
-# the agent process uses; it is populated automatically by the postgres
-# provisioning step using the role password generated during install.
+# Two Phase-1 deviations from the baseline PRD are encoded here:
+#
+# 1. The brain is a locally-hosted Postgres 17 instance on this Mac mini
+#    (not hosted Supabase). The four Supabase-specific items in the baseline
+#    (service-key, anon-key, db-password, project-url) are not used. `db-url`
+#    is the single Postgres connection string the agent process uses; it is
+#    populated automatically by the postgres provisioning step using the role
+#    password generated during install.
+#
+# 2. Anthropic API keys are per-agent rather than one shared key. This gives
+#    spend-attribution at the Anthropic side, complementing the per-call
+#    `agent_runs.agent_name` ledger that Phase 2's cost helper writes. The
+#    cost helper looks up the right key by agent name. See decision-log entry
+#    "Per-agent Anthropic API keys" in 70-build-order.md.
+#
+# `github-personal-token` is optional — only needed if barry-agent clones via
+# HTTPS. If barry-agent shares barry-admin's SSH key (simpler), skip this one.
 ITEMS=(
-    "db-url|Postgres connection URI (postgresql://barry_agent:PW@localhost:5432/aiadaptive_cos) — auto-populated by install"
-    "gemini-api-key|Gemini API key (from aistudio.google.com)"
-    "anthropic-api-key|Anthropic API key (from console.anthropic.com)"
-    "github-personal-token|GitHub personal access token (for git push from agent)"
+    "db-url|Postgres connection URI (auto-populated during install)"
+    "gemini-api-key|Gemini API key (Tartt — Phase 4 news scraping + embeddings)"
+    "anthropic-key-ted|Anthropic key for Ted (Phase 11 — health checks + alert summarization)"
+    "anthropic-key-keeley-strategy|Anthropic key for Keeley Strategy (Phase 8 — content triage)"
+    "anthropic-key-keeley-content|Anthropic key for Keeley Content (Phase 8 — drafting)"
+    "anthropic-key-roy-kent|Anthropic key for Roy Kent (Phase 6 — inbound prospect qualifier)"
+    "anthropic-key-nate-shelley|Anthropic key for Nate Shelley (Phase 10 — ICP signal synthesis)"
+    "anthropic-key-higgins|Anthropic key for Higgins (Phase 11 — weekly dashboard)"
+    "github-personal-token|GitHub PAT — optional, only if cloning via HTTPS; skip if using shared SSH key"
 )
 
 echo "AI Adaptive Chief of Staff — Phase 1 Keychain Setup"

@@ -63,7 +63,7 @@ The phase is done when all of the following are true. Each is independently veri
 | AC2 | All tables in migration 0001 exist with correct columns and indexes | Run `verify_schema.sql` (provided) — output shows 18 tables, no errors |
 | AC3 | Private GitHub repo exists with the directory structure | `git ls-tree -d HEAD` from a fresh clone shows architecture/, migrations/, agents/, agents/_lib/, cli/, scripts/, checklists/ |
 | AC4 | `barry-admin` and `barry-agent` macOS accounts both exist and are separated | `dscl . list /Users \| grep -E '^barry-(admin\|agent)$'` returns both |
-| AC5 | All 4 credentials are in `barry-agent`'s keychain | `bash scripts/keychain_verify.sh` (as `barry-agent`) returns 4 `OK` lines, 0 `MISSING` |
+| AC5 | All 8 required credentials are in `barry-agent`'s keychain | `bash scripts/keychain_verify.sh` (as `barry-agent`) returns 8 `OK` lines, 0 `MISSING` |
 | AC6 | Repo cloned to `/Users/barry-agent/agents/` | Directory exists; `git remote -v` points at `github.com:ABandApart/AFC-Chief-of-Staff` |
 | AC7 | `uv` and `psql` are reachable from the `barry-agent` shell | `uv --version` and `psql --version` both succeed; `uv run python -c "print('ok')"` returns `ok` |
 | AC8 | Smoke test connects to local Postgres from `barry-agent` account | `uv run python scripts/smoke_test.py` returns `OK connected at <timestamp>, 18 expected tables visible` |
@@ -302,47 +302,65 @@ This task is largely already done per the existing OpenClaw-style security setup
 
 ### Task 5: Configure Keychain Credentials on Agent Account
 
-**Outcome**: All 4 credentials are in `barry-agent`'s login keychain, retrievable via `security find-generic-password`.
+**Outcome**: All 8 required credentials are in `barry-agent`'s login keychain, retrievable via `security find-generic-password`.
 
-**Credential inventory** (post-pivot — local Postgres replaces hosted Supabase):
+**Credential inventory** (post-pivot — local Postgres + per-agent Anthropic keys):
 
 | Keychain item | What it is | Where you got it |
 |---|---|---|
 | `db-url` | full Postgres URI `postgresql://barry_agent:PW@localhost:5432/aiadaptive_cos` | Task 1, step 6 (copied from `barry-admin` keychain) |
-| `gemini-api-key` | Gemini API key | aistudio.google.com → API keys |
-| `anthropic-api-key` | Anthropic API key | console.anthropic.com → API keys |
-| `github-personal-token` | for git clone/pull from agent account | github.com → Settings → Developer settings → fine-grained PAT |
+| `gemini-api-key` | Gemini API key (Tartt — Phase 4 news scraping + embeddings) | aistudio.google.com → API keys |
+| `anthropic-key-ted` | Anthropic key for Ted (Phase 11 health checks + alert summarization) | console.anthropic.com → API Keys |
+| `anthropic-key-keeley-strategy` | Anthropic key for Keeley Strategy (Phase 8 content triage) | console.anthropic.com → API Keys |
+| `anthropic-key-keeley-content` | Anthropic key for Keeley Content (Phase 8 drafting) | console.anthropic.com → API Keys |
+| `anthropic-key-roy-kent` | Anthropic key for Roy Kent (Phase 6 inbound qualifier) | console.anthropic.com → API Keys |
+| `anthropic-key-nate-shelley` | Anthropic key for Nate Shelley (Phase 10 ICP synthesis) | console.anthropic.com → API Keys |
+| `anthropic-key-higgins` | Anthropic key for Higgins (Phase 11 weekly dashboard) | console.anthropic.com → API Keys |
+| `github-personal-token` *(optional)* | only needed if `barry-agent` clones via HTTPS instead of sharing `barry-admin`'s SSH key | github.com → Settings → Developer settings |
 
-(Discord and Buffer tokens are deferred to Phase 3 and Phase 9 respectively.)
+Per-agent Anthropic keys give spend attribution at the provider side, complementing the per-call `agent_runs.agent_name` ledger that Phase 2's cost helper writes. The cost helper will look up the right key by agent name. See decision-log entry "Per-agent Anthropic API keys" in `70-build-order.md`.
 
-**Steps** (run as `barry-agent`):
+Anthropic keys for agents not yet listed (`sam`, `briefing`, `capture`, `meeting-processor`, etc.) can be created when their respective phases come up; they don't block Phase 1. Discord and Buffer tokens are deferred to Phase 3 and Phase 9 respectively.
 
-1. Copy `db-url` from `barry-admin`'s keychain to `barry-agent`'s. From a `barry-admin` terminal:
+**Steps** (orchestrated from `barry-admin`):
+
+All 8 required items are first staged in `barry-admin`'s keychain during Task 1 + the conversation in which keys are received. They are then copied into `barry-agent`'s keychain in one sudo'd bulk operation:
+
+1. From a `barry-admin` terminal, bulk-copy every required item:
    ```bash
-   VAL=$(security find-generic-password -a "$USER" -s db-url -w)
-   sudo -u barry-agent security add-generic-password \
-       -a barry-agent -s db-url -w "$VAL" -T "" -U
-   unset VAL
+   for name in db-url gemini-api-key \
+               anthropic-key-ted anthropic-key-keeley-strategy \
+               anthropic-key-keeley-content anthropic-key-roy-kent \
+               anthropic-key-nate-shelley anthropic-key-higgins; do
+       VAL=$(security find-generic-password -a "$USER" -s "$name" -w)
+       sudo -u barry-agent security add-generic-password \
+           -a barry-agent -s "$name" -w "$VAL" -T "" -U
+       unset VAL
+   done
    ```
-   (sudo prompts once for `barry-admin`'s password.)
-2. As `barry-agent`, run `scripts/keychain_setup.sh`. It prompts for the remaining 3 credentials and stores them (no echo, no shell history):
+   (sudo prompts once for `barry-admin`'s password; subsequent items reuse the credential timestamp.)
+
+2. Run the verifier as `barry-agent`:
    ```bash
-   bash /Users/barry-admin/code/aiadaptive-cos/scripts/keychain_setup.sh
+   sudo -u barry-agent bash /Users/barry-admin/code/aiadaptive-cos/scripts/keychain_verify.sh
    ```
-   When asked about `db-url`, choose **skip** (already populated in step 1).
-3. Run the verifier:
+   Expected: 8 `OK` lines under "Required items", `absent github-personal-token` under "Optional items", `exit 0`.
+
+3. Once verified, delete the staged copies from `barry-admin`'s keychain (the values now live only in `barry-agent`'s — the safer location since `barry-agent` is the runtime account):
    ```bash
-   bash /Users/barry-admin/code/aiadaptive-cos/scripts/keychain_verify.sh
+   for name in db-url gemini-api-key \
+               anthropic-key-ted anthropic-key-keeley-strategy \
+               anthropic-key-keeley-content anthropic-key-roy-kent \
+               anthropic-key-nate-shelley anthropic-key-higgins; do
+       security delete-generic-password -a "$USER" -s "$name"
+   done
    ```
-   Expected output: 4 lines, each saying `OK <item-name>`. No `MISSING` lines.
 
-**If you haven't yet obtained Gemini or Anthropic API keys**:
-- Gemini: aistudio.google.com → "Get API key" → create a new key for the project. Free tier is fine; usage will be billed once Tartt runs in Phase 4.
-- Anthropic: console.anthropic.com → API Keys → Create Key. Set up billing; usage starts in Phase 2 with the cost helper smoke test.
+**If new Anthropic keys need to be added later** (Sam, Briefing, Capture, Meeting Processor in Phases 3/7/8): `barry-agent` runs `bash scripts/keychain_setup.sh` interactively to add one item, OR the same bulk-copy pattern is used from `barry-admin`.
 
-**Verification**: `keychain_verify.sh` returns 4 OK lines.
+**Verification**: `keychain_verify.sh` returns 8 OK lines (required), exit 0.
 
-**Estimated time**: 15 minutes (mostly waiting on API console pages).
+**Estimated time**: 10 minutes (assuming keys are already gathered).
 
 ---
 
