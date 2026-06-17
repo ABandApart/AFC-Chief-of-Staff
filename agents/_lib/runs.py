@@ -86,12 +86,12 @@ KEY_BY_AGENT: dict[str, str] = {
     "roy-kent":        "anthropic-key-roy-kent",
     "nate-shelley":    "anthropic-key-nate-shelley",
     "higgins":         "anthropic-key-higgins",
+    "fact-extraction": "anthropic-key-fact-extraction",  # Phase 3.2
     # Agents below need keys provisioned at their respective phases:
     # "tartt":           gemini-only (Phase 4) — no anthropic key needed
-    # "briefing":        anthropic-key-briefing (Phase 3+)
+    # "briefing":        anthropic-key-briefing (Phase 3.5)
     # "sam":             anthropic-key-sam (Phase 8)
     # "meeting-processor": anthropic-key-meeting-processor (Phase 7)
-    # "fact-extraction":   anthropic-key-fact-extraction (Phase 3)
 }
 
 

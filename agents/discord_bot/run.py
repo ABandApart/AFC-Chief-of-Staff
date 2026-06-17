@@ -55,7 +55,8 @@ class CosBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.load_extension("agents.discord_bot.cogs.system")
-        logger.info("Cogs loaded; connecting to Discord...")
+        await self.load_extension("agents.discord_bot.cogs.capture")
+        logger.info("Cogs loaded (system, capture); connecting to Discord...")
 
 
 def main() -> int:
