@@ -138,4 +138,4 @@ uv run python -m cli.spend --since 7d       # last week by agent
 The system is built in 13 phases. See `architecture/70-build-order.md` for
 sequencing, dependencies, and acceptance criteria for each phase.
 
-Phases 1 (Foundation) and 2 (Telemetry primitives) are **complete** as of 2026-05-19. The cost helper, G1/G2 guards, and spend CLI are live; no real agents have been built yet. Phase 3 (Capture and Recall — Discord bot) is next.
+Phases 1 (Foundation) and 2 (Telemetry primitives) are **complete**. Phase 3 (Capture and Recall) is in progress, built in sub-phases: **3.1 (Discord bot skeleton) is complete** — the bot connects to the AFC Richmond server and posts to `#system`. Sub-phase 3.2 (Capture flow — fact extraction to the brain) is next.
