@@ -21,21 +21,30 @@ Live tracker for sub-phase 3.3. Each item maps to an AC in
 
 ## Runtime-side (barry-agent)
 
-- [ ] **[BARRY-AGENT]** `git pull` + `uv sync`
-- [ ] **[BARRY-AGENT]** Round-trip test (facts from 3.2 already in the brain):
-  - [ ] **AC1**: `cli.recall "<query>"` prints ranked facts
-  - [ ] **AC2**: paraphrase query (no shared exact words) finds a 3.2 fact
-        (e.g. recall "third-quarter mailing plan" → the Q3 newsletter fact)
-  - [ ] **AC3**: exact-term query (e.g. "Alex") ranks the matching fact high
-  - [ ] **AC4**: `agent_runs` shows a `recall` / gemini-embedding-001 row
-  - [ ] **AC5**: `--limit N` caps results
-  - [ ] **AC6**: gibberish query → "No matching facts."
+- [x] **[BARRY-AGENT]** `git pull` + `uv sync`
+- [x] **[BARRY-AGENT]** Round-trip test (facts from 3.2 already in the brain):
+  - [x] **AC1**: `cli.recall "<query>"` prints ranked facts
+  - [x] **AC2**: paraphrase ("third-quarter mailing") surfaced the Q3 newsletter fact first
+  - [x] **AC3**: exact-term ("Alex") ranked the Alex fact top
+  - [x] **AC4**: `agent_runs` logs every query as recall/gemini/gemini-embedding-001 success
+  - [x] **AC5**: `--limit 1` capped to a single result
+  - [x] **AC6**: gibberish → "No matching facts." (after the `--min-sim` 0.55 floor fix, `1adf182`)
 
 ## Done
 
-- [ ] All 7 acceptance criteria checked
-- [ ] **[BARRY-ADMIN]** final commit "Phase 3.3: recall CLI online"
+- [x] All 7 acceptance criteria checked (4/5 on first run; AC6 green after the floor fix)
+- [ ] **[BARRY-ADMIN]** final commit "Phase 3.3: recall CLI online"  ← this commit
 - [ ] Pushed; memory updated; PHASE-3.4.md created
+
+## AC6 note (added 2026-06-18)
+
+First round-trip found AC6 failing: vector search returned the nearest facts
+for *any* query (no similarity floor), so gibberish surfaced something.
+barry-agent isolated the data — relevant 0.67, noise ≤0.48 — and a cosine
+floor `--min-sim` (default 0.55) was added in `1adf182`. Re-test green: AC6
+fixed, AC2/AC3/AC5 unaffected, and the floor also trimmed secondary noise rows
+(AC2/AC3 now return just the relevant fact). 0.55 works for the current corpus;
+tunable as it grows.
 
 ## Notes / issues encountered
 
