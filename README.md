@@ -138,4 +138,4 @@ uv run python -m cli.spend --since 7d       # last week by agent
 The system is built in 13 phases. See `architecture/70-build-order.md` for
 sequencing, dependencies, and acceptance criteria for each phase.
 
-Phases 1 (Foundation) and 2 (Telemetry primitives) are **complete**. Phase 3 (Capture and Recall) is in progress, built in sub-phases: **3.1 (Discord bot skeleton) is complete** — the bot connects to the AFC Richmond server and posts to `#system`. Sub-phase 3.2 (Capture flow — fact extraction to the brain) is next.
+Phases 1 (Foundation) and 2 (Telemetry primitives) are **complete**. Phase 3 (Capture and Recall) is in progress, built in sub-phases: **3.1 (Discord bot skeleton) and 3.2 (Capture flow) are complete** — posting a thought in `#capture` extracts atomic facts (Claude Haiku) and embeds them (Gemini, 768-dim) into the brain, all through the cost helper. Sub-phase 3.3 (Recall CLI — hybrid search over facts) is next.
