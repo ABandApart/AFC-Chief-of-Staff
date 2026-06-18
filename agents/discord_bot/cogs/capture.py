@@ -34,7 +34,10 @@ from agents.discord_bot.config import CAPTURE_CHANNEL_ID
 logger = logging.getLogger(__name__)
 
 EXTRACTION_MODEL = "claude-haiku-4-5"
-EMBEDDING_MODEL = "text-embedding-004"
+# gemini-embedding-001 is the embedContent model available on our key
+# (text-embedding-004 returns 404). The cost helper requests 768 dims to
+# match the facts.embedding vector(768) column.
+EMBEDDING_MODEL = "gemini-embedding-001"
 
 EXTRACTION_SYSTEM_PROMPT = """You extract atomic facts from a person's captured note.
 

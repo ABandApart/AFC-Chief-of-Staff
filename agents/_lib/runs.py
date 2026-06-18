@@ -27,6 +27,7 @@ explicitly before a new agent goes live.
 
 from __future__ import annotations
 
+import math
 import subprocess
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -53,7 +54,12 @@ PRICE_TABLE: dict[tuple[str, str], dict[str, float]] = {
     ("anthropic", "claude-sonnet-4-6"):  {"input":  3.0 / 1_000_000, "output": 15.0 / 1_000_000},
     ("anthropic", "claude-haiku-4-5"):   {"input":  1.0 / 1_000_000, "output":  5.0 / 1_000_000},
     ("gemini",    "gemini-2.5-flash"):   {"input":  0.075 / 1_000_000, "output": 0.30 / 1_000_000},
-    ("gemini",    "text-embedding-004"): {"input":  0.0,               "output": 0.0},  # free tier
+    # Embeddings. text-embedding-004 is not served on our Gemini key (404 on
+    # embedContent, confirmed 2026-06-16) — gemini-embedding-001 is the
+    # available model. Priced at the paid-tier rate (verify periodically at
+    # ai.google.dev/pricing); embeddings have no billable "output" tokens.
+    ("gemini",    "gemini-embedding-001"): {"input": 0.15 / 1_000_000, "output": 0.0},
+    ("gemini",    "text-embedding-004"):   {"input": 0.0,              "output": 0.0},  # kept for reference; unavailable on this key
 }
 
 # Per-agent daily spend ceilings (G2). USD/day.
@@ -139,6 +145,14 @@ def _keychain_get(item_name: str) -> str:
 def _db_url() -> str:
     """Pull the Postgres connection string from keychain."""
     return _keychain_get("db-url")
+
+
+def _l2_normalize(vec: list[float]) -> list[float]:
+    """Return the L2-normalized (unit-length) vector. Zero vector → unchanged."""
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm == 0.0:
+        return vec
+    return [x / norm for x in vec]
 
 
 # =============================================================================
@@ -315,18 +329,31 @@ class RunContext:
         self,
         texts: list[str],
         *,
-        model: str = "text-embedding-004",
+        model: str = "gemini-embedding-001",
+        output_dimensionality: int = 768,
     ) -> list[list[float]]:
-        """Generate Gemini embeddings. Returns list of vectors.
+        """Generate Gemini embeddings. Returns L2-normalized vectors.
 
-        No output cap (embeddings are bounded by model dimension). Cost is
-        currently zero for `text-embedding-004` (free tier), but the row is
-        still written to agent_runs for the audit trail.
+        System standard is 768 dims, matching the `vector(768)` columns.
+        `gemini-embedding-001` defaults to 3072 dims and only ships
+        pre-normalized at that size; at 768 (a Matryoshka truncation) the
+        vectors are NOT normalized by the API, so we L2-normalize here. That
+        keeps cosine search correct and also makes dot-product / L2 behave,
+        and keeps stored facts and query embeddings on the same footing.
+
+        (`text-embedding-004` is not served on our Gemini key — returns 404 on
+        embedContent. See PRICE_TABLE note. 2026-06-16.)
         """
         api_key = _keychain_get("gemini-api-key")
         client = genai.Client(api_key=api_key)
 
-        result = client.models.embed_content(model=model, contents=texts)
+        result = client.models.embed_content(
+            model=model,
+            contents=texts,
+            config=genai_types.EmbedContentConfig(
+                output_dimensionality=output_dimensionality
+            ),
+        )
 
         # Embeddings don't return usage_metadata the same way; estimate input
         # tokens as char_total / 4 (a standard rough heuristic).
@@ -343,7 +370,7 @@ class RunContext:
         self._state.usd_cost += estimated_tokens * price["input"]
         self._state._call_count += 1
 
-        return [list(e.values) for e in result.embeddings]
+        return [_l2_normalize([float(v) for v in e.values]) for e in result.embeddings]
 
 
 # =============================================================================

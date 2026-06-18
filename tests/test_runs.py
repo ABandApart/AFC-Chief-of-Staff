@@ -22,6 +22,7 @@ from agents._lib.runs import (
     DailyCeilingExceeded,
     MissingAgentKeyError,
     TokenCapExceeded,
+    _l2_normalize,
     agent_run,
 )
 
@@ -367,3 +368,61 @@ def test_correlation_fields_persisted(patched_db, monkeypatch):
     _, params = patched_db.inserts[0]
     assert params[11] == "42"  # correlation_id
     assert params[12] == "content_item"  # correlation_kind
+
+
+# =============================================================================
+# Embeddings (Phase 3.2 — gemini-embedding-001 @ 768 dims, L2-normalized)
+# =============================================================================
+
+
+def test_l2_normalize_produces_unit_vector():
+    out = _l2_normalize([3.0, 4.0])
+    assert out == pytest.approx([0.6, 0.8])
+    assert sum(x * x for x in out) ** 0.5 == pytest.approx(1.0)
+
+
+def test_l2_normalize_zero_vector_unchanged():
+    assert _l2_normalize([0.0, 0.0, 0.0]) == [0.0, 0.0, 0.0]
+
+
+def test_call_embedding_requests_768_and_normalizes(patched_db, monkeypatch):
+    """call_embedding must request output_dimensionality=768 (gemini-embedding-001
+    defaults to 3072) and return L2-normalized vectors, with a gemini agent_runs
+    row."""
+    captured: dict[str, Any] = {}
+
+    class FakeEmbedding:
+        def __init__(self, values):
+            self.values = values
+
+    class FakeResult:
+        def __init__(self, embeddings):
+            self.embeddings = embeddings
+
+    class FakeModels:
+        def embed_content(self, *, model, contents, config):
+            captured["model"] = model
+            captured["dim"] = config.output_dimensionality
+            captured["n"] = len(contents)
+            # Return un-normalized [3,4,0,0] vectors (stand-in for 768-dim).
+            return FakeResult([FakeEmbedding([3.0, 4.0, 0.0, 0.0]) for _ in contents])
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.models = FakeModels()
+
+    monkeypatch.setattr("agents._lib.runs.genai.Client", lambda **kwargs: FakeClient())
+
+    with agent_run("phase-2-smoke", "infrastructure") as run:
+        out = run.call_embedding(["alpha", "beta"], model="gemini-embedding-001")
+
+    assert captured["model"] == "gemini-embedding-001"
+    assert captured["dim"] == 768
+    assert captured["n"] == 2
+    # [3,4,0,0] L2-normalized → [0.6, 0.8, 0, 0]
+    assert out[0] == pytest.approx([0.6, 0.8, 0.0, 0.0])
+    # One agent_runs row, attributed to gemini.
+    assert len(patched_db.inserts) == 1
+    _, params = patched_db.inserts[0]
+    assert params[6] == "gemini"
+    assert params[7] == "gemini-embedding-001"
