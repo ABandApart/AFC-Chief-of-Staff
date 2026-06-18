@@ -78,6 +78,7 @@ DAILY_CEILINGS: dict[str, float] = {
     "sam":               1.00,   # Phase 8
     "meeting-processor": 3.00,   # Phase 7 ($1/transcript, capped at $3/day)
     "fact-extraction":   2.00,   # Phase 3
+    "recall":            0.50,   # Phase 3.3 — query embeddings only (gemini, cheap)
 }
 
 # Per-agent Anthropic API key dispatch (Phase 1 architectural deviation).
