@@ -27,6 +27,16 @@ from agents._lib.runs import _keychain_get, agent_run
 DEFAULT_LEX_WEIGHT = 0.4
 DEFAULT_SEM_WEIGHT = 0.6
 
+# Minimum cosine similarity for a vector match to count. Without it, the
+# nearest-50 vector search returns *something* for every query (including
+# gibberish), since no fact is ever infinitely far away. Tuned for
+# gemini-embedding-001 (768, normalized): empirically relevant matches score
+# ~0.65+, unrelated/noise ~0.5, gibberish ~0.48 — so 0.55 cleanly separates
+# signal from noise. Lexical matches (`@@ tsq`) are naturally floored by token
+# overlap, so the floor only applies to the semantic half. Revisit as the
+# fact corpus grows. Overridable via --min-sim.
+DEFAULT_MIN_SIM = 0.55
+
 HYBRID_SQL = """
 WITH query_input AS (
     SELECT plainto_tsquery('english', %(q)s) AS tsq,
@@ -41,6 +51,7 @@ vec AS (
     SELECT f.id, 1 - (f.embedding <=> qi.query_embedding) AS sem
     FROM facts f, query_input qi
     WHERE f.embedding IS NOT NULL
+      AND (1 - (f.embedding <=> qi.query_embedding)) >= %(min_sim)s
     ORDER BY f.embedding <=> qi.query_embedding
     LIMIT 50
 ),
@@ -76,6 +87,7 @@ def run_query(
     limit: int,
     lex_weight: float,
     sem_weight: float,
+    min_sim: float,
 ) -> list[dict]:
     """Execute hybrid search; return rows as dicts ordered by score desc."""
     with conn.cursor() as cur:
@@ -86,6 +98,7 @@ def run_query(
                 "emb": _vector_literal(qvec),
                 "lexw": lex_weight,
                 "semw": sem_weight,
+                "min_sim": min_sim,
                 "limit": limit,
             },
         )
@@ -134,6 +147,11 @@ def main() -> int:
         "--sem-weight", type=float, default=DEFAULT_SEM_WEIGHT,
         help=f"semantic weight (default {DEFAULT_SEM_WEIGHT})",
     )
+    parser.add_argument(
+        "--min-sim", type=float, default=DEFAULT_MIN_SIM,
+        help=f"minimum cosine similarity for a vector match (default {DEFAULT_MIN_SIM}); "
+             f"lower to widen recall, raise to suppress weak matches",
+    )
     args = parser.parse_args()
 
     qvec = embed_query(args.query)
@@ -146,6 +164,7 @@ def main() -> int:
             limit=args.limit,
             lex_weight=args.lex_weight,
             sem_weight=args.sem_weight,
+            min_sim=args.min_sim,
         )
 
     print(format_results(args.query, rows))
