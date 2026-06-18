@@ -70,3 +70,39 @@ def insert_fact(
                 ),
             )
             return cur.fetchone()[0]
+
+
+def fact_exists(fact_id: int) -> bool:
+    """True if a fact with this id exists. Used to validate /outcome links."""
+    db_url = _keychain_get("db-url")
+    with psycopg.connect(db_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM facts WHERE id = %s", (fact_id,))
+            return cur.fetchone() is not None
+
+
+def insert_outcome(
+    *,
+    outcome_type: str,
+    description: str,
+    value: float | None = None,
+    attributed_fact_id: int | None = None,
+) -> int:
+    """Insert one outcome row (Phase 3.4 /outcome command). Returns the id.
+
+    The other `attributed_*` columns (prospect/task/content/signal) stay null
+    until those tables are populated in later phases.
+    """
+    db_url = _keychain_get("db-url")
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO outcomes
+                    (outcome_type, outcome_value, description, attributed_fact_id)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (outcome_type, value, description, attributed_fact_id),
+            )
+            return cur.fetchone()[0]
