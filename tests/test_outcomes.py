@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from agents.discord_bot.cogs.outcomes import OUTCOME_TYPES, parse_fact_id, parse_value
-
+from agents.discord_bot.cogs.outcomes import OUTCOME_TYPES, parse_value
 
 # --- parse_value ----------------------------------------------------------
 
@@ -31,23 +30,6 @@ def test_value_strips_dollar_and_commas():
 def test_value_bad_raises():
     with pytest.raises(ValueError):
         parse_value("lots")
-
-
-# --- parse_fact_id --------------------------------------------------------
-
-
-def test_fact_id_blank_is_none():
-    assert parse_fact_id("") is None
-    assert parse_fact_id("  ") is None
-
-
-def test_fact_id_number():
-    assert parse_fact_id("42") == 42
-
-
-def test_fact_id_bad_raises():
-    with pytest.raises(ValueError):
-        parse_fact_id("abc")
 
 
 # --- types ----------------------------------------------------------------

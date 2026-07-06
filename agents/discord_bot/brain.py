@@ -1,84 +1,118 @@
 """Postgres write surface for the Discord bot.
 
-Phase 3.2 needs exactly one operation: insert a fact (with embedding) into
-the `facts` table. Future cogs (3.4 /outcome, Phase 5 task_candidates) add
-their own helpers here.
+All access goes through the shared pool in `agents/_lib/db.py` — no
+per-operation connections. There is no ORM; the schema is small and SQL is
+explicit.
 
-The bot is otherwise stateless — every write goes straight to the brain.
-There is no ORM; the schema is small and SQL is explicit.
+2026-07 refactor: facts are inserted as a batch in one transaction (a
+mid-batch failure no longer leaves a partial capture), and a near-duplicate
+lookup guards the corpus against re-captured thoughts.
 """
 
 from __future__ import annotations
 
-import psycopg
+from typing import Any
 
-from agents._lib.runs import _keychain_get
+from agents._lib import db
+from agents._lib.db import EMBEDDING_DIM, vector_literal
 
-EMBEDDING_DIM = 768
 
+def insert_facts(
+    facts: list[dict[str, Any]], *, source_type: str, source_ref: str | None
+) -> list[int]:
+    """Insert fact rows atomically (one transaction). Returns new ids in order.
 
-def _vector_literal(embedding: list[float]) -> str:
-    """Format a Python float list as a pgvector string literal: '[a,b,c]'.
-
-    Inserted with an explicit `::vector` cast, which avoids needing the
-    pgvector psycopg adapter (and its numpy dependency) in this phase.
+    Each fact dict needs: content, domain, confidence, embedding, and
+    optionally context. Raises ValueError if any embedding has the wrong
+    dimension (a cheap guard against a silent provider/model mismatch that
+    would otherwise fail at the DB with a less obvious error).
     """
-    return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
+    for fact in facts:
+        if len(fact["embedding"]) != EMBEDDING_DIM:
+            raise ValueError(
+                f"embedding has {len(fact['embedding'])} dims, expected {EMBEDDING_DIM} "
+                f"(check the embedding model — facts.embedding is vector(768))"
+            )
+
+    ids: list[int] = []
+    with db.connection() as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                for fact in facts:
+                    cur.execute(
+                        """
+                        INSERT INTO facts
+                            (content, source_type, source_ref, context, domain,
+                             confidence, embedding)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s::vector)
+                        RETURNING id
+                        """,
+                        (
+                            fact["content"],
+                            source_type,
+                            source_ref,
+                            fact.get("context"),
+                            fact["domain"],
+                            fact["confidence"],
+                            vector_literal(fact["embedding"]),
+                        ),
+                    )
+                    row = cur.fetchone()
+                    assert row is not None
+                    ids.append(row[0])
+    return ids
 
 
-def insert_fact(
-    *,
-    content: str,
-    source_type: str,
-    source_ref: str | None,
-    domain: str | None,
-    confidence: float,
-    embedding: list[float],
-    context: str | None = None,
-) -> int:
-    """Insert one fact row. Returns the new fact id.
+def find_near_duplicate(embedding: list[float], *, threshold: float) -> tuple[int, float] | None:
+    """Return (fact_id, similarity) of the nearest stored fact if it is at or
+    above `threshold` cosine similarity; else None.
 
-    Raises ValueError if the embedding is the wrong dimension (a cheap guard
-    against a silent provider/model mismatch that would otherwise fail at the
-    DB with a less obvious error).
+    One indexed vector lookup — used at capture time so re-captured thoughts
+    don't accumulate as near-identical facts that pollute recall.
     """
-    if len(embedding) != EMBEDDING_DIM:
-        raise ValueError(
-            f"embedding has {len(embedding)} dims, expected {EMBEDDING_DIM} "
-            f"(check the embedding model — facts.embedding is vector(768))"
-        )
-
-    db_url = _keychain_get("db-url")
-    with psycopg.connect(db_url, autocommit=True) as conn:
+    vec = vector_literal(embedding)
+    with db.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO facts
-                    (content, source_type, source_ref, context, domain,
-                     confidence, embedding)
-                VALUES (%s, %s, %s, %s, %s, %s, %s::vector)
-                RETURNING id
+                SELECT id, 1 - (embedding <=> %s::vector) AS sim
+                FROM facts
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> %s::vector
+                LIMIT 1
                 """,
-                (
-                    content,
-                    source_type,
-                    source_ref,
-                    context,
-                    domain,
-                    confidence,
-                    _vector_literal(embedding),
-                ),
+                (vec, vec),
             )
-            return cur.fetchone()[0]
+            row = cur.fetchone()
+    if row is not None and float(row[1]) >= threshold:
+        return (row[0], float(row[1]))
+    return None
 
 
-def fact_exists(fact_id: int) -> bool:
-    """True if a fact with this id exists. Used to validate /outcome links."""
-    db_url = _keychain_get("db-url")
-    with psycopg.connect(db_url) as conn:
+def search_facts(term: str, limit: int = 20) -> list[tuple[int, str]]:
+    """Lightweight fact lookup for slash-command autocomplete.
+
+    Empty term → most recent facts. Numeric term also matches the fact id.
+    Returns (id, content) pairs, newest first.
+    """
+    with db.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM facts WHERE id = %s", (fact_id,))
-            return cur.fetchone() is not None
+            if term.strip():
+                cur.execute(
+                    """
+                    SELECT id, content FROM facts
+                    WHERE content ILIKE %s OR id::text = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (f"%{term.strip()}%", term.strip(), limit),
+                )
+            else:
+                cur.execute(
+                    "SELECT id, content FROM facts ORDER BY created_at DESC LIMIT %s",
+                    (limit,),
+                )
+            return [(r[0], r[1]) for r in cur.fetchall()]
 
 
 def insert_outcome(
@@ -90,11 +124,12 @@ def insert_outcome(
 ) -> int:
     """Insert one outcome row (Phase 3.4 /outcome command). Returns the id.
 
+    A bad `attributed_fact_id` raises psycopg.errors.ForeignKeyViolation —
+    the FK constraint is the validation (no separate existence pre-check).
     The other `attributed_*` columns (prospect/task/content/signal) stay null
     until those tables are populated in later phases.
     """
-    db_url = _keychain_get("db-url")
-    with psycopg.connect(db_url, autocommit=True) as conn:
+    with db.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -105,4 +140,6 @@ def insert_outcome(
                 """,
                 (outcome_type, value, description, attributed_fact_id),
             )
-            return cur.fetchone()[0]
+            row = cur.fetchone()
+            assert row is not None
+            return row[0]

@@ -41,14 +41,14 @@ Agent specs below state their declared caps and daily ceiling. These are startin
 
 | Credential | Keychain item name | Used by |
 |------------|---------------------|---------|
-| Supabase service-role key | `supabase-service-key` | All agents (writes) |
-| Supabase anon key | `supabase-anon-key` | Laptop Claude Code sessions (reads) |
-| Supabase DB password | `supabase-db-password` | Backup script (`pg_dump`) |
-| Gemini API key | `gemini-api-key` | Tartt, embedding jobs |
-| Anthropic API key | `anthropic-api-key` | Keeley Strategy, Keeley Content, Sam, Briefing, Ted, fact extraction |
+| Postgres connection string | `db-url` | All agents and the bot (via the `agents/_lib/db.py` pool); backup script (`pg_dump`) |
+| Gemini API key | `gemini-api-key` | Tartt, all embedding calls (shared — Gemini is not split per-agent) |
+| Anthropic API keys (per agent) | `anthropic-key-<agent>` (ted, keeley-strategy, keeley-content, roy-kent, nate-shelley, higgins, fact-extraction; briefing/sam/meeting-processor provisioned at their phases) | Dispatched by `KEY_BY_AGENT` in `agents/_lib/runs.py` for provider-side spend attribution (Phase 1 deviation — see `70-build-order.md` decision log) |
 | Buffer access token | `buffer-access-token` | Keeley Distribution |
 | Discord bot token | `discord-bot-token` | Discord bot |
-| Backup encryption pub key | `~/.config/brain-backup.pub` (file) | Backup script |
+
+Credential reads are cached per process (`agents/_lib/creds.py`) — keychain lookups spawn a
+`security` subprocess, so nothing should call `security` directly in a hot path.
 
 </credential_inventory>
 
@@ -109,7 +109,7 @@ Each agent below has: trigger, inputs (DB reads), outputs (DB writes), LLM choic
 1. For each active source: fetch new items (feedparser for RSS/newsletters, HN Algolia API, ArXiv API, YouTube Data API + youtube-transcript-api)
 2. Extract clean text via trafilatura (HTML) or supplied transcript (YouTube)
 3. Summarize via Gemini 2.5 Flash (target: 3-sentence summary, 1-sentence why-it-matters, list of ICP pain-points mentioned if any)
-4. Embed summary via Gemini `text-embedding-004`
+4. Embed summary via Gemini `gemini-embedding-001` @768 (L2-normalized via the cost helper — see `30-memory-layer.md` deployment notes)
 5. Score: cosine similarity against each `interest_signal.embedding`, weighted by signal.weight, summed; multiplied by `source.trust_score`
 6. Insert into `content_items`
 7. For each ICP pain-point mentioned, embed it and insert into `icp_signals` (wide-net pattern, W2 substrate)
@@ -117,7 +117,7 @@ Each agent below has: trigger, inputs (DB reads), outputs (DB writes), LLM choic
 
 **LLM choice**:
 - Gemini 2.5 Flash for summarization. Rationale: high volume, narrow scope, cost and rate-limit advantages over Claude Sonnet for this task type.
-- Gemini `text-embedding-004` for embeddings. Rationale: consolidate Tartt stack on one provider; 768 dimensions sufficient for similarity tasks at this scale.
+- Gemini `gemini-embedding-001` @768 for embeddings (`text-embedding-004` is not served on our key — decision log 2026-06-17). Rationale: consolidate Tartt stack on one provider; 768 dimensions sufficient for similarity tasks at this scale.
 
 **Token caps**: 4,000 input / 500 output per item summarization. 2,000 input per embedding call.
 **Daily ceiling**: $5.00/day.
@@ -469,7 +469,7 @@ Event-driven agents (Roy Kent via webhook, Keeley Strategy, Keeley Content, Sam,
 | Task type | Provider | Model | Rationale |
 |-----------|----------|-------|-----------|
 | Bulk summarization (Tartt) | Gemini | 2.5 Flash | High volume, narrow scope, cost/speed |
-| Embeddings | Gemini | text-embedding-004 | Consolidates Tartt stack |
+| Embeddings | Gemini | gemini-embedding-001 @768 | Consolidates Tartt stack; L2-normalized by cost helper |
 | Inbound qualification (Roy Kent) | Anthropic | Haiku | Rubric-based qualification, low volume |
 | ICP signal clustering (Nate Shelley) | Anthropic | Sonnet | Weekly synthesis from many signals |
 | Triage / ICP fit (Keeley Strategy) | Anthropic | Sonnet | Reasoning task, bounded volume |

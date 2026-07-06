@@ -9,7 +9,7 @@
 </doc:meta>
 
 <doc:abstract>
-A persistent operational layer for AI Adaptive built on four separable layers — channel, action, memory, and telemetry — that share one Postgres-backed brain. Channel is Discord. Action is Claude Code + launchd-scheduled scripts running on a Mac mini. Memory is hosted Supabase with pgvector for selective vectorization. Telemetry tracks cost, prevents runaway spend, and reports against the north star: sustainable long-term contract engagements. The system implements the Chief of Staff three-tier handoff model (autonomous / prep-for-review / human-only), serves seven defined workflows that each tie to a key result, maps to a Ted Lasso–named agent roster, and is built incrementally over a phased plan.
+A persistent operational layer for AI Adaptive built on four separable layers — channel, action, memory, and telemetry — that share one Postgres-backed brain. Channel is Discord. Action is Claude Code + launchd-scheduled scripts running on a Mac mini. Memory is local PostgreSQL 17 with pgvector for selective vectorization (pivoted from hosted Supabase — see `70-build-order.md` decision log). Telemetry tracks cost, prevents runaway spend, and reports against the north star: sustainable long-term contract engagements. The system implements the Chief of Staff three-tier handoff model (autonomous / prep-for-review / human-only), serves seven defined workflows that each tie to a key result, maps to a Ted Lasso–named agent roster, and is built incrementally over a phased plan.
 </doc:abstract>
 
 <doc:north_star>
@@ -70,7 +70,7 @@ XML tags wrap structured meta-context inside the markdown. Markdown handles narr
 
 | Term | Definition |
 |------|------------|
-| **Brain** | The Supabase Postgres database — the canonical memory layer |
+| **Brain** | The Postgres database (local PostgreSQL 17 on the Mac mini) — the canonical memory layer |
 | **Agent** | A scheduled or event-triggered job that reads/writes the brain |
 | **Skill** | A reusable Claude Code prompt/script invoked by an agent |
 | **Gemba point** | An explicit human decision gate in the value stream |
@@ -93,7 +93,7 @@ The system has four architectural layers, each separable from the others:
 |-------|----------------|-----------|----------|
 | Channel | Surface to humans, capture input | Discord, Claude Code CLI | `50-channel-layer.md` |
 | Action | Execute work, call LLMs, talk to external APIs | Python on Mac mini, launchd | `40-action-layer.md` |
-| Memory | Store everything the system knows | Supabase Postgres + pgvector | `30-memory-layer.md` |
+| Memory | Store everything the system knows | Local Postgres 17 + pgvector | `30-memory-layer.md` |
 | Telemetry | Measure, prevent runaway spend, report | agent_runs ledger, Higgins, Ted | `80-telemetry-layer.md` |
 
 The layers communicate only through the brain. No direct cross-layer dependencies.

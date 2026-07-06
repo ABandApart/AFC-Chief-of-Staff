@@ -205,7 +205,7 @@ These are targets, not guarantees. They inform agent priorities and alerting thr
 </failure>
 
 <failure id="F5" name="Embedding model deprecated">
-**Symptom**: Gemini API returns errors for text-embedding-004; new content_items have NULL embeddings.
+**Symptom**: Gemini API returns errors for gemini-embedding-001; new content_items have NULL embeddings.
 **Diagnosis**: Provider deprecated the model.
 **Response**: This is a substrate-level event. Pick new embedding model. Re-embed all existing `content_items`, `facts`, `interest_signals`, `meeting_transcripts`. This is a multi-hour migration; plan accordingly.
 </failure>

@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This file defines the Supabase Postgres schema, vectorization rules, and the hybrid search pattern. The brain is the single source of truth; all reads and writes flow through this schema.
+This file defines the Postgres schema (local PostgreSQL 17 on the Mac mini), vectorization rules, and the hybrid search pattern. The brain is the single source of truth; all reads and writes flow through this schema.
 
 ---
 
@@ -15,12 +15,19 @@ This file defines the Supabase Postgres schema, vectorization rules, and the hyb
 
 <deployment>
 
-- **Provider**: Hosted Supabase
-- **Tier**: Pro ($25/mo) — required for daily backups, sufficient compute for projected volume
-- **Region**: Whichever has lowest latency to the Mac mini's residential IP (typically us-east or us-west)
+- **Provider**: Local PostgreSQL 17 on the Mac mini (pivoted from hosted Supabase before any
+  infrastructure was provisioned — see `70-build-order.md` decision log, 2026-05-19). Migration
+  to hosted (via `pg_dump`/`pg_restore`) is deferred until a phase needs the *database*
+  externally reachable; Phase 6's webhook only needs an HTTPS endpoint (tunnel), not hosted
+  Postgres.
 - **Extensions enabled**: `pgvector`, `pg_trgm` (for fuzzy text matching on names/titles)
-- **Embedding model**: Gemini `text-embedding-004` (768 dimensions)
+- **Embedding model**: Gemini `gemini-embedding-001` at `output_dimensionality=768`, L2-normalized
+  by the cost helper (`text-embedding-004` returns 404 on our key — decision log 2026-06-17;
+  the model only ships pre-normalized at its 3072-dim default, so 768-dim truncations must be
+  normalized client-side). All embeddings MUST go through `runs.py call_embedding`.
 - **Dimension lock**: Once embeddings are stored, switching models requires re-embedding. Treat 768 as a hard commitment.
+- **Access**: all code uses the shared connection pool in `agents/_lib/db.py` — no
+  per-operation `psycopg.connect()`.
 
 </deployment>
 
@@ -410,39 +417,50 @@ The pattern below shows hybrid search over `facts`. The same pattern applies to 
 <query_pattern lang="sql">
 
 ```sql
--- Hybrid search over facts: weighted combination of FTS rank and vector similarity
+-- Hybrid search over facts: Reciprocal Rank Fusion of FTS rank and vector similarity.
+-- (2026-07 refactor: replaced the weighted raw-score blend — ts_rank_cd and cosine
+-- similarity live on incomparable scales, so raw blending let the semantic side
+-- silently dominate. RRF is scale-free: each source contributes 1/(k + rank).)
+-- Canonical implementation: agents/_lib/search.py (shared by cli/recall.py and /recall).
 WITH query_input AS (
     SELECT
         plainto_tsquery('english', $1) AS tsq,
         $2::vector(768) AS query_embedding
 ),
-fts_results AS (
-    SELECT
-        f.id,
-        ts_rank_cd(f.content_tsv, q.tsq) AS lex_score
-    FROM facts f, query_input q
-    WHERE f.content_tsv @@ q.tsq
+fts AS (
+    SELECT f.id,
+           ROW_NUMBER() OVER (
+               ORDER BY ts_rank_cd(f.content_tsv, qi.tsq) DESC, f.id
+           ) AS rnk
+    FROM facts f, query_input qi
+    WHERE f.content_tsv @@ qi.tsq
+      AND (f.expires_at IS NULL OR f.expires_at > now())
 ),
-vec_results AS (
-    SELECT
-        f.id,
-        1 - (f.embedding <=> q.query_embedding) AS sem_score
-    FROM facts f, query_input q
+vec_candidates AS (
+    -- Top-50 by pure distance first (index-friendly: no filter inside the
+    -- ordered scan); the similarity floor is applied afterwards.
+    SELECT f.id, f.embedding <=> qi.query_embedding AS dist
+    FROM facts f, query_input qi
     WHERE f.embedding IS NOT NULL
-    ORDER BY f.embedding <=> q.query_embedding
+      AND (f.expires_at IS NULL OR f.expires_at > now())
+    ORDER BY dist
     LIMIT 50
 ),
+vec AS (
+    SELECT id, ROW_NUMBER() OVER (ORDER BY dist, id) AS rnk
+    FROM vec_candidates
+    WHERE (1 - dist) >= $4          -- min similarity floor, default 0.55
+),
 combined AS (
-    SELECT
-        COALESCE(fts.id, vec.id) AS id,
-        COALESCE(fts.lex_score, 0) * 0.4 + COALESCE(vec.sem_score, 0) * 0.6 AS score
-    FROM fts_results fts
-    FULL OUTER JOIN vec_results vec USING (id)
+    SELECT COALESCE(fts.id, vec.id) AS id,
+           COALESCE(1.0 / (60 + fts.rnk), 0)
+         + COALESCE(1.0 / (60 + vec.rnk), 0) AS score
+    FROM fts FULL OUTER JOIN vec USING (id)
 )
 SELECT f.*, c.score
 FROM combined c
 JOIN facts f ON f.id = c.id
-ORDER BY c.score DESC
+ORDER BY c.score DESC, f.id
 LIMIT $3;
 ```
 
@@ -450,9 +468,17 @@ LIMIT $3;
 
 <tuning_notes>
 
-- **Weights (0.4 lex / 0.6 sem)**: Tunable. Sem-heavy for "what did we discuss about X" recall. Lex-heavy for name lookups. Start at 0.4/0.6 and adjust based on result quality.
+- **RRF constant (k=60)**: the literature default; larger k flattens the rank curve. No
+  per-source weights to tune — that's the point of RRF.
+- **Similarity floor (0.55)**: without it, the nearest-50 vector search returns *something*
+  for every query, including gibberish. For gemini-embedding-001 @768 normalized: relevant
+  ~0.65+, noise ~0.5, gibberish ~0.48. Applies to the semantic half only — lexical matches
+  are naturally floored by token overlap.
+- **Expiry**: rows with `expires_at` in the past are excluded from both sources (enforced
+  as of the 2026-07 refactor).
 - **Vector candidate pool**: Limit the vector subquery to 50 candidates before joining. HNSW indexes are fast but unbounded `ORDER BY embedding <=> ...` over a large table is wasteful.
-- **Wrap as a Postgres function** for reuse: `hybrid_search_facts(query_text, query_embedding, limit, lex_weight, sem_weight)`.
+- **Wrap as a Postgres function** for reuse once a second consumer beyond
+  `agents/_lib/search.py` appears.
 
 </tuning_notes>
 
@@ -481,22 +507,18 @@ Deferring this to a later phase is intentional. RLS adds debugging complexity an
 
 <backup_strategy>
 
-Supabase Pro provides daily managed backups with 7-day retention. This is sufficient as a baseline.
+Local Postgres means there are no managed backups — `pg_dump` is the only line of defense,
+so it is pulled forward from Phase 12 (facts and outcomes are already irreplaceable):
 
-Additional belt-and-suspenders:
-
-- **Weekly `pg_dump`** to encrypted local storage on the Mac mini, retained for 90 days.
+- **Nightly `pg_dump | gzip`** to local storage on the Mac mini (picked up by Time Machine),
+  retained for 90 days.
 - **Schema versioning in git**: every migration is a numbered SQL file in the architecture repo. The brain can be rebuilt from migrations + a dump.
 
 <backup_script_sketch>
 
 ```bash
-# ~/Scripts/brain_backup.sh, run by launchd weekly Sunday 3am
-PGPASSWORD="$(security find-generic-password -s supabase-db-password -w)" \
-  pg_dump \
-    --host=db.PROJECT.supabase.co \
-    --username=postgres \
-    --dbname=postgres \
+# ~/Scripts/brain_backup.sh, run by launchd nightly 3am (barry-agent)
+pg_dump "$(security find-generic-password -s db-url -w)" \
     --no-owner --no-acl \
     --file=/tmp/brain_$(date +%Y%m%d).sql
 
@@ -524,6 +546,7 @@ find /Volumes/Backup/brain -name 'brain_*.sql.age' -mtime +90 -delete
 - Numbered SQL files: `migrations/0001_initial_schema.sql`, `migrations/0002_add_buffer_posts.sql`, etc.
 - One migration per logical change. No squashing.
 - Forward-only by convention; rollback by writing a forward migration that undoes.
-- Apply via Supabase SQL editor for v1; later, automate via the Supabase CLI.
+- Apply via `psql aiadaptive_cos -f migrations/NNNN_*.sql` (barry-admin socket superuser) or
+  `psql "$DB_URL" -f ...` from barry-agent.
 
 </migration_convention>

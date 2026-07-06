@@ -19,7 +19,8 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg
 
-from agents._lib.runs import DAILY_CEILINGS, _keychain_get
+from agents._lib.creds import keychain_get
+from agents._lib.runs import DAILY_CEILINGS
 
 
 def parse_since(s: str) -> timedelta:
@@ -165,7 +166,7 @@ def main() -> int:
     args = parser.parse_args()
 
     since = datetime.now(timezone.utc) - args.since
-    db_url = _keychain_get("db-url")
+    db_url = keychain_get("db-url")
 
     with psycopg.connect(db_url) as conn:
         if args.by == "agent":

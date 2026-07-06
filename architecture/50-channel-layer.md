@@ -120,7 +120,7 @@ Estimated post time: tomorrow 09:00 if approved now
 **Bot behavior**:
 1. React to the message with ⏳ to acknowledge receipt
 2. Forward to fact extraction job (Claude Haiku) — extracts atomic claims, identifies domain, attaches source provenance (`source_type='discord'`, `source_ref=<message_id>`)
-3. Each extracted fact written to `facts` table with embedding (Gemini text-embedding-004)
+3. Facts extracted via a forced tool call (schema-validated JSON), embedded (Gemini `gemini-embedding-001` @768), near-duplicates (cosine ≥ 0.95 vs existing facts) skipped, remainder written to `facts` in one transaction
 4. Replace ⏳ with ✅ once stored; reply in thread with a one-line summary of facts extracted
 
 **Edge cases**:
@@ -222,7 +222,7 @@ Discord's reaction events have known reliability gotchas. Defensive patterns:
 ~/agents/discord-bot/
 ├── run.py              # entry point, loads cogs, connects
 ├── config.py           # channel IDs, command prefix
-├── brain.py            # Supabase client helpers (read/write)
+├── brain.py            # Postgres write helpers (via the shared agents/_lib/db.py pool)
 ├── cogs/
 │   ├── task_tinder.py   # buttons + reactions for #task-tinder
 │   ├── approvals.py     # buttons + thread handling for #approvals
@@ -246,7 +246,7 @@ Each cog is self-contained. Adding a new interaction pattern (e.g., a meeting-pr
 The operator interacts with the brain from the laptop primarily through Claude Code sessions, not Discord (though Discord is reachable from the laptop too).
 
 Claude Code session pattern:
-- Session reads from Supabase using the anon key (RLS-scoped where applicable; v1 has no RLS)
+- Session reads from local Postgres (socket or `db-url`, depending on account; v1 has no RLS)
 - Writes for things the operator decides explicitly (a new decision, a new fact, a new person record) go through dedicated CLI helpers in `~/agents/cli/`
 - High-privilege writes (modifying agent code, changing source trust scores) happen on the laptop only through Claude Code editing the git repo; deployment to the Mac mini is a `git pull` on the agent account
 

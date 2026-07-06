@@ -57,7 +57,7 @@ CREATE TABLE agent_runs (
     llm_model       TEXT,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
-    usd_cost        NUMERIC(10,4),
+    usd_cost        NUMERIC(14,8),  -- widened from (10,4) in migration 0002: 4dp truncated cheap embedding calls to $0.0000
     correlation_id  TEXT,                 -- e.g. content_item_id, prospect_id
     correlation_kind TEXT,                -- 'content_item', 'prospect', 'transcript', etc.
     error_text      TEXT
@@ -179,7 +179,7 @@ Example structure:
 ```python
 PRICE_TABLE = {
     ("gemini", "gemini-2.5-flash"): {"input": 0.075/1_000_000, "output": 0.30/1_000_000},
-    ("gemini", "text-embedding-004"): {"input": 0.0/1_000_000, "output": 0.0},  # free tier
+    ("gemini", "gemini-embedding-001"): {"input": 0.15/1_000_000, "output": 0.0},  # the embedContent model served on our key
     ("anthropic", "claude-sonnet-4-5"): {"input": 3.0/1_000_000, "output": 15.0/1_000_000},
     ("anthropic", "claude-haiku-4-5"): {"input": 1.0/1_000_000, "output": 5.0/1_000_000},
 }
@@ -205,12 +205,19 @@ The cost-emission helper enforces all three. They layer to prevent spirals at di
 
 **Where it lives**: Inside `RunContext.call_*` methods. The cap values are required parameters — no caller can call an LLM without specifying them.
 
+**Estimate gating (2026-07 refactor)**: the provider-side `count_tokens` round trip roughly
+doubled pre-call latency for short calls that could never trip the cap (a Discord message is
+bounded at ~1,000 tokens against a 4,000 cap). The helper now estimates locally (chars/3 —
+conservative so non-Latin text still trips the gate) and only makes the real `count_tokens`
+call when the estimate reaches 80% of the cap. Enforcement for large-input agents
+(meeting-processor, briefing) is unchanged; the common case saves one network round trip.
+
 **Default caps by call type** (starting points; tune from agent_runs data):
 
 | Agent | Model | Max input tokens | Max output tokens |
 |-------|-------|------------------|---------------------|
 | Tartt summarize | Gemini Flash | 4,000 | 500 |
-| Tartt embed | Gemini text-embedding-004 | 2,000 | n/a |
+| Tartt embed | Gemini gemini-embedding-001 | 2,000 | n/a |
 | Roy Kent qualify | Claude Haiku | 3,000 | 600 |
 | Keeley Strategy triage | Claude Sonnet | 8,000 | 1,000 |
 | Keeley Content draft | Claude Sonnet | 16,000 | 2,000 |
@@ -230,7 +237,12 @@ The cost-emission helper enforces all three. They layer to prevent spirals at di
 
 **What it does**: Refuses any LLM call that would cause an agent's running daily spend to exceed its ceiling.
 
-**Where it lives**: The `agent_run` context manager checks the ceiling on entry.
+**Where it lives**: The `agent_run` context manager checks the ceilings on entry — the
+agent's own ceiling AND a system-wide `GLOBAL_DAILY_CEILING` ($20/day) in one query, so a
+bug spread across several agents is still bounded. "Today" starts at **local** midnight
+(2026-07 refactor; previously UTC, which reset ceilings mid-afternoon local time). The check
+is check-then-act: concurrent runs can overshoot by roughly one call's cost, which is
+acceptable at these ceilings.
 
 **Starting ceilings**:
 

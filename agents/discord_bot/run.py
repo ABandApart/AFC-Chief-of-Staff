@@ -6,24 +6,23 @@ keychain):
     cd ~/agents
     uv run python -m agents.discord_bot.run
 
-Sub-phase 3.1 scope: connect, announce in #system, stay running.
-- No message listeners
-- No slash commands
-- No DB writes
-- No launchd (manual run only; launchd plist arrives in 3.5)
-
-Press Ctrl+C to exit cleanly.
+Handles SIGTERM cleanly (required for launchd supervision in 3.5): the
+handler closes the Discord client, in-flight work drains, and the pool is
+shut down. Ctrl+C (SIGINT) exits the same way via KeyboardInterrupt.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import subprocess
+import signal
 import sys
 
 import discord
 from discord.ext import commands
 
+from agents._lib import db
+from agents._lib.creds import keychain_get
 from agents.discord_bot.config import GUILD_ID
 
 logging.basicConfig(
@@ -31,22 +30,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-def keychain_get(item_name: str) -> str:
-    """Fetch a credential from the current user's macOS Keychain."""
-    result = subprocess.run(
-        ["security", "find-generic-password", "-w", "-s", item_name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Keychain item '{item_name}' not found. "
-            f"Run scripts/keychain_setup.sh."
-        )
-    return result.stdout.strip()
 
 
 class CosBot(commands.Bot):
@@ -59,6 +42,7 @@ class CosBot(commands.Bot):
         await self.load_extension("agents.discord_bot.cogs.system")
         await self.load_extension("agents.discord_bot.cogs.capture")
         await self.load_extension("agents.discord_bot.cogs.outcomes")
+        await self.load_extension("agents.discord_bot.cogs.recall")
         # Sync app (slash) commands to our single guild for instant
         # availability (global sync lags ~1h). copy_global_to moves the
         # cog-registered commands into the guild scope, then sync registers.
@@ -66,14 +50,14 @@ class CosBot(commands.Bot):
         self.tree.copy_global_to(guild=guild)
         synced = await self.tree.sync(guild=guild)
         logger.info(
-            "Cogs loaded (system, capture, outcomes); synced %d app command(s) "
-            "to guild %s; connecting to Discord...",
+            "Cogs loaded (system, capture, outcomes, recall); synced %d app "
+            "command(s) to guild %s; connecting to Discord...",
             len(synced),
             GUILD_ID,
         )
 
 
-def main() -> int:
+async def _amain() -> None:
     intents = discord.Intents.default()
     # message_content: required for #capture (3.2)
     # members:         useful for future multi-user features; harmless now
@@ -92,11 +76,25 @@ def main() -> int:
             [g.name for g in bot.guilds],
         )
 
+    loop = asyncio.get_running_loop()
+
+    def _on_sigterm() -> None:
+        logger.info("SIGTERM received — closing bot...")
+        asyncio.ensure_future(bot.close())
+
+    loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+
+    async with bot:
+        await bot.start(keychain_get("discord-bot-token"))
+
+
+def main() -> int:
     try:
-        # bot.run() handles asyncio.run() + signal handling internally.
-        bot.run(keychain_get("discord-bot-token"))
+        asyncio.run(_amain())
     except KeyboardInterrupt:
         logger.info("Shutdown via Ctrl+C")
+    finally:
+        db.close_pool()
 
     logger.info("Bot shutting down...")
     return 0

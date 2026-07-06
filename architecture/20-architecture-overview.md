@@ -140,7 +140,7 @@ This file is the structural overview that bridges strategy and implementation. I
 - Maintains the Discord bot as a long-running process
 
 **What it does NOT do**:
-- Persist anything outside the brain (no local caches that diverge from Supabase)
+- Persist anything outside the brain (no local caches that diverge from Postgres)
 - Make decisions classified as Tier 2 or 3 without human gate
 - Self-modify code without commit-and-deploy through the git-gate
 
@@ -310,8 +310,8 @@ Triggered: Discord #capture message, meeting transcript, email.
 
 1. Capture source writes raw input to `00-inbox` equivalent staging table or directly to source-specific table
 2. Fact extraction job (Claude Haiku for cost) pulls discrete claims
-3. Each fact embedded (Gemini embedding-004) and written to `facts` with source provenance
-4. Retrieval on demand via hybrid search: `ts_rank_cd(tsvector, query)` + `1 - (embedding <=> query_embedding)` weighted
+3. Each fact embedded (Gemini `gemini-embedding-001` @768, L2-normalized via the cost helper) and written to `facts` with source provenance
+4. Retrieval on demand via hybrid search: Reciprocal Rank Fusion of FTS rank and vector-cosine rank, with a 0.55 similarity floor on the semantic side (see `30-memory-layer.md`)
 
 Detail: `30-memory-layer.md`
 </flow>
@@ -339,16 +339,16 @@ Detail: `40-action-layer.md`
 Code is written in the admin macOS account, committed to a git repo, then pulled into the agent account for execution. This boundary is enforced by macOS account separation; the agent account cannot write back to the admin repo.
 </boundary>
 
-<boundary id="TB2" name="Agent account → Supabase (credentials)">
-The agent account holds the Supabase service-role key in macOS Keychain. The key never appears in committed code or environment files in the repo. Reads from non-privileged contexts (Claude Code sessions on the laptop) use the anon key + RLS.
+<boundary id="TB2" name="Agent account → Postgres (credentials)">
+The agent account holds the Postgres connection string (`db-url`) and API keys in macOS Keychain. No credential appears in committed code or environment files in the repo. The brain is local (no network exposure); Postgres listens on the local socket only.
 </boundary>
 
-<boundary id="TB3" name="Laptop → Supabase (RLS-scoped reads)">
-The laptop can query the brain using the anon key. RLS policies restrict what the anon key can see and prevent writes that should require service-role.
+<boundary id="TB3" name="Build account → Postgres (admin access)">
+The barry-admin account (which owns the Postgres LaunchAgent) connects via local socket as superuser for migrations and ad-hoc admin queries. Runtime writes happen only from barry-agent via `db-url`.
 </boundary>
 
-<boundary id="TB4" name="Supabase → external APIs (none)">
-Supabase does not call out to external services. All external API calls (Buffer, Gemini, Claude, RSS sources) originate on the Mac mini. This prevents lateral expansion of the trust boundary.
+<boundary id="TB4" name="Postgres → external APIs (none)">
+The database does not call out to external services. All external API calls (Buffer, Gemini, Claude, RSS sources) originate on the Mac mini processes. This prevents lateral expansion of the trust boundary.
 </boundary>
 
 </trust_boundaries>

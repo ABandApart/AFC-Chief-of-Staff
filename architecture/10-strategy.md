@@ -34,7 +34,7 @@ The architecture exists to serve these KRs. Every workflow (see `90-workflows.md
 <principles:list>
 
 <principle id="P1" name="Separable layers">
-Channel, action, memory, and telemetry are independent layers. Any one can be replaced without rebuilding the others. Channel today is Discord; tomorrow it could be iMessage. Action today is Claude Code + Python; tomorrow it could include OpenClaw. Memory today is Supabase Postgres; the schema is portable to any Postgres elsewhere. Telemetry is its own layer alongside the other three; it observes the system rather than living inside it.
+Channel, action, memory, and telemetry are independent layers. Any one can be replaced without rebuilding the others. Channel today is Discord; tomorrow it could be iMessage. Action today is Claude Code + Python; tomorrow it could include OpenClaw. Memory today is local Postgres 17 on the Mac mini; the schema is portable to any Postgres elsewhere. Telemetry is its own layer alongside the other three; it observes the system rather than living inside it.
 </principle>
 
 <principle id="P2" name="Three-tier handoff">

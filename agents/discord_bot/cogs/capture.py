@@ -3,16 +3,19 @@
 Flow (per `architecture/50-channel-layer.md` capture interaction):
   1. Operator posts a thought in #capture.
   2. Bot reacts ⏳.
-  3. Claude Haiku (via the cost helper) extracts atomic facts as JSON.
-  4. Gemini text-embedding-004 (via the cost helper) embeds each fact.
-  5. Each fact is written to the `facts` table with provenance
-     (source_type='discord', source_ref=<message_id>).
-  6. ⏳ is replaced with ✅ and the bot replies with a one-line summary.
+  3. Claude Haiku (via the cost helper) extracts atomic facts through a
+     forced tool call — schema-validated JSON, no prompt-and-parse.
+  4. Gemini embeddings (via the cost helper) embed each fact.
+  5. Facts already captured (cosine ≥ 0.95 against an existing fact) are
+     skipped — re-captured thoughts don't pile up as near-duplicates.
+  6. Remaining facts are written to `facts` in one transaction with
+     provenance (source_type='discord', source_ref=<message_id>).
+  7. ⏳ is replaced with ✅ and the bot replies with a one-line summary.
 
 Edge cases:
   - Empty message → ask for text, no LLM call.
   - No extractable facts (e.g. a bare URL) → 🤔 + a nudge, nothing written.
-  - Unparseable extraction → ⚠️ + a rephrase nudge, nothing written.
+  - Everything a near-duplicate → ✅ + "already captured", nothing written.
 
 The blocking pipeline (LLM calls + DB writes) runs in a worker thread via
 `asyncio.to_thread` so the Discord event loop stays responsive.
@@ -23,12 +26,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import Any
 
 import discord
 from discord.ext import commands
 
 from agents._lib.runs import agent_run
-from agents.discord_bot.brain import insert_fact
+from agents.discord_bot import brain
 from agents.discord_bot.config import CAPTURE_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
@@ -39,54 +43,64 @@ EXTRACTION_MODEL = "claude-haiku-4-5"
 # match the facts.embedding vector(768) column.
 EMBEDDING_MODEL = "gemini-embedding-001"
 
-EXTRACTION_SYSTEM_PROMPT = """You extract atomic facts from a person's captured note.
+# Cosine similarity at or above which a new fact is treated as a re-capture
+# of an existing one and skipped. Same embedding space as recall's floor
+# (relevant ~0.65+, noise ~0.5): 0.95 only fires on genuine restatements.
+DEDUP_THRESHOLD = 0.95
 
-Return ONLY valid JSON of this exact shape:
-{"facts": [{"content": "<one atomic claim>", "domain": "<short category>", "confidence": <number 0.0-1.0>}]}
+EXTRACTION_SYSTEM_PROMPT = """You extract atomic facts from a person's captured note.
 
 Rules:
 - Each fact is ONE atomic, self-contained claim. Split compound statements into separate facts.
 - Write each fact as a complete sentence that is understandable on its own, without the original note.
 - `domain` is a short lowercase category, e.g.: business, project, decision, contact, personal, idea, task, preference.
 - `confidence` reflects how explicitly the note states the fact (1.0 = stated outright, lower = inferred).
-- If the note has no extractable facts (e.g. it is only a URL with no commentary, or it is empty), return {"facts": []}.
-- Never invent facts that the note does not support.
-- Output JSON only. No prose. No markdown code fences."""
+- If the note has no extractable facts (e.g. it is only a URL with no commentary, or it is empty), record an empty facts list.
+- Never invent facts that the note does not support."""
+
+# Forced-tool schema: the model must call record_facts with this shape, so
+# the output is validated JSON by construction (no fence-stripping).
+FACTS_TOOL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "One atomic, self-contained claim.",
+                    },
+                    "domain": {"type": "string", "description": "Short lowercase category."},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": ["content"],
+            },
+        }
+    },
+    "required": ["facts"],
+}
 
 
-def parse_facts(raw: str) -> list[dict]:
-    """Parse the model's extraction output into a list of validated facts.
+def validate_facts(data: Any) -> list[dict[str, Any]]:
+    """Validate/normalize an extraction payload into a list of fact dicts.
 
-    Tolerant of markdown code fences. Returns a (possibly empty) list of
-    dicts: {"content": str, "domain": str|None, "confidence": float}.
+    Returns a (possibly empty) list of dicts:
+    {"content": str, "domain": str|None, "confidence": float}.
 
-    Raises ValueError if the payload is not parseable JSON or is missing the
-    `facts` key — the caller treats that as a graceful "couldn't structure
-    this" rather than writing garbage.
+    Raises ValueError if the payload is missing the `facts` list — the caller
+    treats that as a graceful "couldn't structure this" rather than writing
+    garbage.
     """
-    text = raw.strip()
-
-    # Strip a leading ```json / ``` fence and trailing ``` if present.
-    if text.startswith("```"):
-        lines = text.splitlines()
-        lines = lines[1:]  # drop opening fence line
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]  # drop closing fence
-        text = "\n".join(lines).strip()
-
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"extraction output is not valid JSON: {e}") from e
-
     if not isinstance(data, dict) or "facts" not in data:
-        raise ValueError("extraction JSON missing 'facts' key")
+        raise ValueError("extraction payload missing 'facts' key")
 
     facts_in = data["facts"]
     if not isinstance(facts_in, list):
         raise ValueError("'facts' is not a list")
 
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for item in facts_in:
         if not isinstance(item, dict):
             continue
@@ -105,7 +119,32 @@ def parse_facts(raw: str) -> list[dict]:
     return out
 
 
-def format_summary(facts: list[dict]) -> str:
+def parse_facts(raw: str) -> list[dict[str, Any]]:
+    """Parse a raw JSON string into validated facts (legacy text path).
+
+    The live capture flow gets schema-validated dicts from the forced tool
+    call and uses `validate_facts` directly; this wrapper remains for text
+    payloads. Tolerant of markdown code fences.
+    """
+    text = raw.strip()
+
+    # Strip a leading ```json / ``` fence and trailing ``` if present.
+    if text.startswith("```"):
+        lines = text.splitlines()
+        lines = lines[1:]  # drop opening fence line
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]  # drop closing fence
+        text = "\n".join(lines).strip()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"extraction output is not valid JSON: {e}") from e
+
+    return validate_facts(data)
+
+
+def format_summary(facts: list[dict[str, Any]]) -> str:
     """Build the one-line (or short) reply summarizing what was captured."""
     n = len(facts)
     domains = sorted({f["domain"] for f in facts if f["domain"]})
@@ -123,14 +162,17 @@ class CaptureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    def _process_capture(self, text: str, message_id: str) -> list[dict]:
-        """Synchronous pipeline: extract → embed → insert. Runs in a thread.
+    def _process_capture(
+        self, text: str, message_id: str
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Synchronous pipeline: extract → embed → dedup → insert (batch).
 
-        Returns the list of inserted facts (each with an added `id`). Empty
-        list means the model found nothing to remember. Raises ValueError on
-        an unparseable extraction; other exceptions propagate as failures.
+        Runs in a thread. Returns (inserted_facts, skipped_duplicate_count).
+        Empty list + 0 skips means the model found nothing to remember.
+        Raises ValueError on an unusable extraction; other exceptions
+        propagate as failures.
         """
-        # 1. Extract (Anthropic — its own agent_runs row)
+        # 1. Extract (Anthropic, forced tool — its own agent_runs row)
         with agent_run(
             "fact-extraction",
             "infrastructure",
@@ -138,17 +180,20 @@ class CaptureCog(commands.Cog):
             correlation_id=message_id,
             correlation_kind="discord_message",
         ) as run:
-            raw = run.call_anthropic(
+            payload = run.call_anthropic_structured(
                 messages=[{"role": "user", "content": text}],
                 model=EXTRACTION_MODEL,
                 max_input_tokens=4000,
                 max_output_tokens=600,
                 system=EXTRACTION_SYSTEM_PROMPT,
+                tool_name="record_facts",
+                tool_description="Record the atomic facts extracted from the note.",
+                input_schema=FACTS_TOOL_SCHEMA,
             )
 
-        facts = parse_facts(raw)
+        facts = validate_facts(payload)
         if not facts:
-            return []
+            return [], 0
 
         # 2. Embed (Gemini — its own agent_runs row)
         contents = [f["content"] for f in facts]
@@ -161,19 +206,30 @@ class CaptureCog(commands.Cog):
         ) as run:
             embeddings = run.call_embedding(contents, model=EMBEDDING_MODEL)
 
-        # 3. Insert each fact with its embedding
-        inserted: list[dict] = []
+        # 3. Skip near-duplicates (one indexed vector lookup per fact)
+        fresh: list[dict[str, Any]] = []
+        skipped = 0
         for fact, emb in zip(facts, embeddings):
-            fid = insert_fact(
-                content=fact["content"],
-                source_type="discord",
-                source_ref=message_id,
-                domain=fact["domain"],
-                confidence=fact["confidence"],
-                embedding=emb,
-            )
-            inserted.append({**fact, "id": fid})
-        return inserted
+            dup = brain.find_near_duplicate(emb, threshold=DEDUP_THRESHOLD)
+            if dup is not None:
+                skipped += 1
+                logger.info(
+                    "capture msg %s: skipping near-duplicate of fact %d (sim %.3f): %s",
+                    message_id, dup[0], dup[1], fact["content"],
+                )
+                continue
+            fresh.append({**fact, "embedding": emb})
+
+        if not fresh:
+            return [], skipped
+
+        # 4. Insert the batch atomically
+        ids = brain.insert_facts(fresh, source_type="discord", source_ref=message_id)
+        inserted = [
+            {k: v for k, v in fact.items() if k != "embedding"} | {"id": fid}
+            for fact, fid in zip(fresh, ids)
+        ]
+        return inserted, skipped
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -193,10 +249,12 @@ class CaptureCog(commands.Cog):
 
         await message.add_reaction("⏳")
         try:
-            facts = await asyncio.to_thread(self._process_capture, text, str(message.id))
+            facts, skipped = await asyncio.to_thread(
+                self._process_capture, text, str(message.id)
+            )
             await _safe_remove_hourglass(message, self.bot)
 
-            if not facts:
+            if not facts and not skipped:
                 await message.add_reaction("🤔")
                 await message.reply(
                     "I didn't find anything to remember there — add a sentence about why it matters.",
@@ -205,12 +263,24 @@ class CaptureCog(commands.Cog):
                 return
 
             await message.add_reaction("✅")
-            await message.reply(format_summary(facts), mention_author=False)
+            if not facts:
+                await message.reply(
+                    f"Already captured — {skipped} near-duplicate fact"
+                    f"{'s' if skipped != 1 else ''}, nothing new written.",
+                    mention_author=False,
+                )
+                return
+
+            summary = format_summary(facts)
+            if skipped:
+                summary += f"\n(skipped {skipped} near-duplicate{'s' if skipped != 1 else ''})"
+            await message.reply(summary, mention_author=False)
             logger.info(
-                "capture msg %s → %d fact(s) [%s]",
+                "capture msg %s → %d fact(s) [%s], %d duplicate(s) skipped",
                 message.id,
                 len(facts),
                 ", ".join(str(f["id"]) for f in facts),
+                skipped,
             )
 
         except ValueError as e:

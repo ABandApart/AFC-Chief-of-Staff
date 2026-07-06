@@ -13,8 +13,9 @@ psycopg cursor.execute call.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -26,7 +27,6 @@ from agents._lib.runs import (
     agent_run,
 )
 
-
 # =============================================================================
 # Test infrastructure: capturing what gets written to agent_runs
 # =============================================================================
@@ -35,8 +35,10 @@ from agents._lib.runs import (
 class FakeCursor:
     """Records INSERT statements for inspection."""
 
-    def __init__(self, today_spend: float = 0.0):
+    def __init__(self, today_spend: float = 0.0, global_spend: float | None = None):
         self.today_spend = today_spend
+        # G2 reads (agent_spend, global_spend) in one query.
+        self.global_spend = today_spend if global_spend is None else global_spend
         self.inserts: list[tuple[str, tuple[Any, ...]]] = []
         self.select_count = 0
 
@@ -46,8 +48,8 @@ class FakeCursor:
         elif "SELECT COALESCE(SUM(usd_cost)" in query:
             self.select_count += 1
 
-    def fetchone(self) -> tuple[float]:
-        return (self.today_spend,)
+    def fetchone(self) -> tuple[float, float]:
+        return (self.today_spend, self.global_spend)
 
     def __enter__(self) -> FakeCursor:
         return self
@@ -70,6 +72,16 @@ class FakeConnection:
         pass
 
 
+def _patch_pool(monkeypatch, cursor: FakeCursor) -> None:
+    """Route agents._lib.db.connection() to a FakeConnection."""
+
+    @contextmanager
+    def fake_connection():
+        yield FakeConnection(cursor)
+
+    monkeypatch.setattr("agents._lib.db.connection", fake_connection)
+
+
 @pytest.fixture
 def fake_cursor():
     """Returns a FakeCursor that captures agent_runs INSERTs."""
@@ -78,12 +90,11 @@ def fake_cursor():
 
 @pytest.fixture
 def patched_db(fake_cursor, monkeypatch):
-    """Patches psycopg.connect to return a FakeConnection."""
-    monkeypatch.setattr(
-        "agents._lib.runs.psycopg.connect",
-        lambda *args, **kwargs: FakeConnection(fake_cursor),
-    )
-    # Also patch keychain to a known value (for db-url lookup at minimum)
+    """Patches the shared pool to a FakeConnection and keychain to test values.
+
+    Also resets the cached SDK clients so each test's provider mocks are used.
+    """
+    _patch_pool(monkeypatch, fake_cursor)
     monkeypatch.setattr(
         "agents._lib.runs._keychain_get",
         lambda name: {
@@ -92,6 +103,8 @@ def patched_db(fake_cursor, monkeypatch):
             "gemini-api-key": "AIza-test-key",
         }.get(name, "test-placeholder"),
     )
+    monkeypatch.setattr("agents._lib.runs._ANTHROPIC_CLIENTS", {})
+    monkeypatch.setattr("agents._lib.runs._GENAI_CLIENT", None)
     return fake_cursor
 
 
@@ -143,10 +156,11 @@ def test_successful_anthropic_call_writes_valid_row(patched_db, monkeypatch):
     assert params[9] == 50  # output_tokens
     # Haiku 4.5: $1/1M input + $5/1M output
     # = 100 * 1e-6 + 50 * 5e-6 = 1e-4 + 2.5e-4 = 3.5e-4 USD
-    # Rounded to 4dp this lands on the boundary (banker's rounding gives 0.0003 or 0.0004);
-    # accept either.
-    assert params[10] in (0.0003, 0.0004)
+    # Recorded at 8dp since migration 0002 — no boundary rounding.
+    assert params[10] == pytest.approx(0.00035)
     assert params[13] is None  # error_text
+    # Input was tiny: G1's local estimate must skip the count_tokens round trip.
+    mock_client.messages.count_tokens.assert_not_called()
 
 
 def test_successful_gemini_call_writes_valid_row(patched_db, monkeypatch):
@@ -236,14 +250,7 @@ def test_daily_ceiling_exceeded_writes_no_row(monkeypatch):
 
     # Simulate barely-over the $0.50 ceiling for phase-2-smoke
     fake_cursor = FakeCursor(today_spend=0.50)
-    monkeypatch.setattr(
-        "agents._lib.runs.psycopg.connect",
-        lambda *args, **kwargs: FakeConnection(fake_cursor),
-    )
-    monkeypatch.setattr(
-        "agents._lib.runs._keychain_get",
-        lambda name: "postgresql://test:test@localhost/test",
-    )
+    _patch_pool(monkeypatch, fake_cursor)
 
     with pytest.raises(DailyCeilingExceeded) as exc_info:
         with agent_run("phase-2-smoke", "infrastructure") as run:
@@ -426,3 +433,89 @@ def test_call_embedding_requests_768_and_normalizes(patched_db, monkeypatch):
     _, params = patched_db.inserts[0]
     assert params[6] == "gemini"
     assert params[7] == "gemini-embedding-001"
+
+
+# =============================================================================
+# 2026-07 refactor additions: global ceiling, pre-call pricing, structured call
+# =============================================================================
+
+
+def test_global_ceiling_exceeded_writes_no_row(monkeypatch):
+    """System-wide spend at/over GLOBAL_DAILY_CEILING refuses on entry even
+    when the individual agent is under its own ceiling."""
+    fake_cursor = FakeCursor(today_spend=0.10, global_spend=25.0)
+    _patch_pool(monkeypatch, fake_cursor)
+
+    with pytest.raises(DailyCeilingExceeded) as exc_info:
+        with agent_run("phase-2-smoke", "infrastructure"):
+            pass
+
+    assert "System-wide" in str(exc_info.value)
+    assert len(fake_cursor.inserts) == 0
+
+
+def test_unpriced_model_refuses_before_call(patched_db, monkeypatch):
+    """A model missing from PRICE_TABLE must raise BEFORE the paid API call
+    is made (the run itself is recorded as failed)."""
+    mock_client = MagicMock()
+    monkeypatch.setattr(
+        "agents._lib.runs.anthropic.Anthropic",
+        lambda **kwargs: mock_client,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        with agent_run("phase-2-smoke", "infrastructure") as run:
+            run.call_anthropic(
+                messages=[{"role": "user", "content": "Hi"}],
+                model="claude-not-a-model",
+                max_input_tokens=1000,
+                max_output_tokens=500,
+            )
+
+    assert "PRICE_TABLE" in str(exc_info.value)
+    mock_client.messages.create.assert_not_called()
+    # The run wrote a failed row (money was never spent).
+    assert len(patched_db.inserts) == 1
+    assert patched_db.inserts[0][1][5] == "failed"
+
+
+def test_structured_call_returns_tool_input(patched_db, monkeypatch):
+    """call_anthropic_structured forces the named tool and returns its
+    schema-validated input dict, with cost recorded normally."""
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "record_facts"
+    tool_block.input = {"facts": [{"content": "A fact.", "confidence": 1.0}]}
+
+    mock_response = MagicMock()
+    mock_response.content = [tool_block]
+    mock_response.usage = MagicMock(input_tokens=120, output_tokens=60)
+
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+
+    monkeypatch.setattr(
+        "agents._lib.runs.anthropic.Anthropic",
+        lambda **kwargs: mock_client,
+    )
+
+    with agent_run("phase-2-smoke", "infrastructure") as run:
+        out = run.call_anthropic_structured(
+            messages=[{"role": "user", "content": "note text"}],
+            model="claude-haiku-4-5",
+            max_input_tokens=4000,
+            max_output_tokens=600,
+            tool_name="record_facts",
+            tool_description="Record extracted facts.",
+            input_schema={"type": "object"},
+        )
+
+    assert out == {"facts": [{"content": "A fact.", "confidence": 1.0}]}
+    create_kwargs = mock_client.messages.create.call_args.kwargs
+    assert create_kwargs["tool_choice"] == {"type": "tool", "name": "record_facts"}
+    assert create_kwargs["tools"][0]["name"] == "record_facts"
+    # Cost recorded as usual.
+    _, params = patched_db.inserts[0]
+    assert params[5] == "success"
+    assert params[8] == 120
+    assert params[9] == 60
