@@ -14,6 +14,7 @@ formatter, which were previously duplicated across brain.py and recall.py.
 
 from __future__ import annotations
 
+import atexit
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -54,6 +55,13 @@ def close_pool() -> None:
     if _pool is not None:
         _pool.close()
         _pool = None
+
+
+# One-shot CLIs never reach an explicit close_pool(); without this, the
+# pool's __del__ fires during interpreter finalization and Python 3.14
+# raises PythonFinalizationError ("cannot join thread") on every run.
+# Idempotent, so the bot's explicit close_pool() on SIGTERM is unaffected.
+atexit.register(close_pool)
 
 
 def vector_literal(embedding: list[float]) -> str:

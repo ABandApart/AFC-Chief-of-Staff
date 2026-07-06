@@ -102,6 +102,10 @@ class OutcomeModal(discord.ui.Modal, title="Record an outcome"):
                 attributed_fact_id=self.fact_id,
             )
         except pg_errors.ForeignKeyViolation:
+            logger.warning(
+                "outcome rejected — no fact with id %s (type=%s, value=%s)",
+                self.fact_id, self.outcome_type, value,
+            )
             await interaction.response.send_message(
                 f"⚠️ No fact with id {self.fact_id}. Outcome not saved — "
                 f"re-run and pick a fact from the suggestions (or leave it blank).",

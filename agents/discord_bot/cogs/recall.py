@@ -59,6 +59,7 @@ class RecallCog(commands.Cog):
             )
             return
 
+        logger.info("recall query %r → %d result(s)", query, len(rows))
         text = search.format_results(query, rows)
         if len(text) > MAX_REPLY_CHARS:
             text = text[:MAX_REPLY_CHARS] + "…"

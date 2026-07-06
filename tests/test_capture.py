@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from agents.discord_bot.cogs.capture import format_summary, parse_facts
+from agents.discord_bot.cogs.capture import format_summary, message_hash, parse_facts
 
 
 # --- parse_facts: happy paths --------------------------------------------
@@ -127,3 +127,27 @@ def test_summary_truncates_beyond_five():
     s = format_summary(facts)
     assert "Captured 7 facts" in s
     assert "…and 2 more" in s
+
+
+# --- message_hash (message-level dedup key) -------------------------------
+
+
+def test_message_hash_stable():
+    text = "Refactor smoke test: validated on the runtime account."
+    assert message_hash(text) == message_hash(text)
+
+
+def test_message_hash_normalizes_whitespace_and_case():
+    a = message_hash("Barry  prefers   async standups.")
+    b = message_hash("barry prefers async\nstandups.")
+    assert a == b
+
+
+def test_message_hash_differs_for_different_text():
+    assert message_hash("Barry prefers tea.") != message_hash("Barry prefers coffee.")
+
+
+def test_message_hash_is_sha256_hex():
+    h = message_hash("anything")
+    assert len(h) == 64
+    assert set(h) <= set("0123456789abcdef")

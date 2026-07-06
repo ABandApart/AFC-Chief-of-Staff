@@ -63,6 +63,36 @@ def insert_facts(
     return ids
 
 
+def capture_message_seen(content_hash: str) -> bool:
+    """True if a message with this normalized-text hash was already captured.
+
+    Message-level dedup guard: checked before extraction, so an exact re-post
+    costs no LLM calls and can't mint new facts (extraction is
+    non-deterministic — per-fact cosine dedup alone lets re-posts leak rows).
+    """
+    with db.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM capture_messages WHERE content_hash = %s",
+                (content_hash,),
+            )
+            return cur.fetchone() is not None
+
+
+def record_capture_message(content_hash: str, message_id: str) -> None:
+    """Record a processed capture message's hash (idempotent)."""
+    with db.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO capture_messages (content_hash, message_id)
+                VALUES (%s, %s)
+                ON CONFLICT (content_hash) DO NOTHING
+                """,
+                (content_hash, message_id),
+            )
+
+
 def find_near_duplicate(embedding: list[float], *, threshold: float) -> tuple[int, float] | None:
     """Return (fact_id, similarity) of the nearest stored fact if it is at or
     above `threshold` cosine similarity; else None.

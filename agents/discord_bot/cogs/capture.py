@@ -3,19 +3,27 @@
 Flow (per `architecture/50-channel-layer.md` capture interaction):
   1. Operator posts a thought in #capture.
   2. Bot reacts ⏳.
-  3. Claude Haiku (via the cost helper) extracts atomic facts through a
+  3. Message-level dedup: the normalized raw text is hashed and checked
+     against `capture_messages` — an exact re-post short-circuits here,
+     before any LLM call (extraction is non-deterministic, so per-fact
+     dedup alone can't guarantee a re-post writes nothing).
+  4. Claude Haiku (via the cost helper) extracts atomic facts through a
      forced tool call — schema-validated JSON, no prompt-and-parse.
-  4. Gemini embeddings (via the cost helper) embed each fact.
-  5. Facts already captured (cosine ≥ 0.95 against an existing fact) are
+  5. Gemini embeddings (via the cost helper) embed each fact.
+  6. Facts already captured (cosine ≥ 0.95 against an existing fact) are
      skipped — re-captured thoughts don't pile up as near-duplicates.
-  6. Remaining facts are written to `facts` in one transaction with
-     provenance (source_type='discord', source_ref=<message_id>).
-  7. ⏳ is replaced with ✅ and the bot replies with a one-line summary.
+  7. Remaining facts are written to `facts` in one transaction with
+     provenance (source_type='discord', source_ref=<message_id>), and the
+     message hash is recorded.
+  8. ⏳ is replaced with ✅ and the bot replies with a one-line summary.
 
 Edge cases:
   - Empty message → ask for text, no LLM call.
-  - No extractable facts (e.g. a bare URL) → 🤔 + a nudge, nothing written.
+  - No extractable facts (e.g. a bare URL) → 🤔 + a nudge, nothing written
+    (the hash is NOT recorded, so a rephrase-then-identical-repost still
+    gets a fresh extraction attempt).
   - Everything a near-duplicate → ✅ + "already captured", nothing written.
+  - Exact re-post of a captured message → ✅ + "already captured", no LLM.
 
 The blocking pipeline (LLM calls + DB writes) runs in a worker thread via
 `asyncio.to_thread` so the Discord event loop stays responsive.
@@ -24,6 +32,7 @@ The blocking pipeline (LLM calls + DB writes) runs in a worker thread via
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any
@@ -81,6 +90,16 @@ FACTS_TOOL_SCHEMA: dict[str, Any] = {
     },
     "required": ["facts"],
 }
+
+
+def message_hash(text: str) -> str:
+    """sha256 hex of the normalized message text (message-level dedup key).
+
+    Normalization: collapse all whitespace runs and casefold, so re-posts
+    that differ only in spacing/case still count as the same message.
+    """
+    normalized = " ".join(text.split()).casefold()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def validate_facts(data: Any) -> list[dict[str, Any]]:
@@ -164,14 +183,24 @@ class CaptureCog(commands.Cog):
 
     def _process_capture(
         self, text: str, message_id: str
-    ) -> tuple[list[dict[str, Any]], int]:
-        """Synchronous pipeline: extract → embed → dedup → insert (batch).
+    ) -> tuple[list[dict[str, Any]], int, bool]:
+        """Synchronous pipeline: hash-check → extract → embed → dedup → insert.
 
-        Runs in a thread. Returns (inserted_facts, skipped_duplicate_count).
-        Empty list + 0 skips means the model found nothing to remember.
-        Raises ValueError on an unusable extraction; other exceptions
-        propagate as failures.
+        Runs in a thread. Returns (inserted_facts, skipped_duplicate_count,
+        exact_repost). exact_repost=True means the message's normalized text
+        was captured before — nothing ran, nothing written. Empty list +
+        0 skips means the model found nothing to remember. Raises ValueError
+        on an unusable extraction; other exceptions propagate as failures.
         """
+        # 0. Message-level dedup — before any LLM spend
+        msg_hash = message_hash(text)
+        if brain.capture_message_seen(msg_hash):
+            logger.info(
+                "capture msg %s: exact re-post (hash %s…) — skipped before extraction",
+                message_id, msg_hash[:12],
+            )
+            return [], 0, True
+
         # 1. Extract (Anthropic, forced tool — its own agent_runs row)
         with agent_run(
             "fact-extraction",
@@ -193,7 +222,9 @@ class CaptureCog(commands.Cog):
 
         facts = validate_facts(payload)
         if not facts:
-            return [], 0
+            # Hash deliberately not recorded: nothing was captured, so an
+            # identical retry should get a fresh extraction attempt.
+            return [], 0, False
 
         # 2. Embed (Gemini — its own agent_runs row)
         contents = [f["content"] for f in facts]
@@ -221,15 +252,17 @@ class CaptureCog(commands.Cog):
             fresh.append({**fact, "embedding": emb})
 
         if not fresh:
-            return [], skipped
+            brain.record_capture_message(msg_hash, message_id)
+            return [], skipped, False
 
-        # 4. Insert the batch atomically
+        # 4. Insert the batch atomically, then record the message hash
         ids = brain.insert_facts(fresh, source_type="discord", source_ref=message_id)
+        brain.record_capture_message(msg_hash, message_id)
         inserted = [
             {k: v for k, v in fact.items() if k != "embedding"} | {"id": fid}
             for fact, fid in zip(fresh, ids)
         ]
-        return inserted, skipped
+        return inserted, skipped, False
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -249,10 +282,18 @@ class CaptureCog(commands.Cog):
 
         await message.add_reaction("⏳")
         try:
-            facts, skipped = await asyncio.to_thread(
+            facts, skipped, exact_repost = await asyncio.to_thread(
                 self._process_capture, text, str(message.id)
             )
             await _safe_remove_hourglass(message, self.bot)
+
+            if exact_repost:
+                await message.add_reaction("✅")
+                await message.reply(
+                    "Already captured — I've seen this exact note before; nothing new written.",
+                    mention_author=False,
+                )
+                return
 
             if not facts and not skipped:
                 await message.add_reaction("🤔")

@@ -28,11 +28,13 @@ from agents._lib.runs import agent_run
 # nearest-50 vector search returns *something* for every query (including
 # gibberish), since no fact is ever infinitely far away. Tuned for
 # gemini-embedding-001 (768, normalized): empirically relevant matches score
-# ~0.65+, unrelated/noise ~0.5, gibberish ~0.48 — so 0.55 cleanly separates
-# signal from noise. Lexical matches (`@@ tsq`) are naturally floored by token
+# ~0.65+, unrelated/noise ~0.5, gibberish ~0.48 — but a vague low-information
+# fact was measured at 0.551 vs pure gibberish (refactor validation,
+# 2026-07-06), so 0.55 sat exactly at the noise ceiling. 0.57 keeps margin
+# on both sides. Lexical matches (`@@ tsq`) are naturally floored by token
 # overlap, so the floor only applies to the semantic half. Revisit as the
 # fact corpus grows.
-DEFAULT_MIN_SIM = 0.55
+DEFAULT_MIN_SIM = 0.57
 
 # RRF constant. Larger k flattens the rank curve; 60 is the literature default.
 RRF_K = 60
