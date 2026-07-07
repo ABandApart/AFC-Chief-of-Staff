@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Morning briefing skeleton, 6:00 local (Phase 3.5).
+     One-shot: runs and exits; no KeepAlive. If the Mac is asleep at 6:00,
+     launchd runs the job once on wake (StartCalendarInterval semantics). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aiadaptive.cos.briefing</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>cd /Users/barry-agent/agents &amp;&amp; exec uv run python -m agents.briefing.run</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/barry-agent/agents/logs/briefing.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/barry-agent/agents/logs/briefing.log</string>
+</dict>
+</plist>

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Discord bot under launchd supervision (Phase 3.5).
+     User LaunchAgent for barry-agent: keychain (discord-bot-token, db-url)
+     is only unlocked in a logged-in user session, so this cannot be a
+     system LaunchDaemon. Fast User Switching keeps the session alive.
+     zsh -lc so uv resolves from the login PATH under launchd's bare env. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aiadaptive.cos.discord-bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>cd /Users/barry-agent/agents &amp;&amp; exec uv run python -m agents.discord_bot.run</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Relaunch on crash only. A clean exit (SIGTERM handler → exit 0,
+         e.g. launchctl bootout) must not fight the supervisor. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- launchd sends SIGTERM on unload; give the handler time to drain
+         in-flight captures and close the pool before SIGKILL. -->
+    <key>ExitTimeOut</key>
+    <integer>20</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/barry-agent/agents/logs/discord-bot.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/barry-agent/agents/logs/discord-bot.log</string>
+</dict>
+</plist>
