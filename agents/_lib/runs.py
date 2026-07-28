@@ -1,40 +1,37 @@
-"""Cost-emission helper for AFC Richmond agents.
+"""Cost-emission helper for AFC Richmond's own agents.
 
-Every LLM call from every agent goes through `agent_run()` (context manager)
-and the `RunContext` class. This module is the single enforcement point for:
+Every LLM call from an *own-agent* goes through `agent_run()` (context manager)
+and `RunContext`. Cognee's internal calls are attributed separately, via the
+labeling callback in `_lib/telemetry_context.py` — but both paths write the same
+`agent_runs` rows, so downstream (`cli/spend.py`, Higgins, Ted) reads one table.
 
-  - **G1 (per-run token cap)** — before any call, estimate input tokens
-    locally (chars/3, conservative); only when the estimate is within 80%
-    of `max_input_tokens` is a real provider-side count made (an extra
-    network round trip). Over-cap calls are refused with a
-    `token_cap_exceeded` agent_runs row.
-  - **G2 (per-day spend ceiling)** — on context entry, query today's total
-    spend for this agent AND system-wide (one query). Raises
-    `DailyCeilingExceeded` if at or over the `DAILY_CEILINGS` value or the
-    `GLOBAL_DAILY_CEILING`. "Today" starts at *local* midnight — ceilings
-    reset when the operator's day does, not at UTC midnight. No row is
-    written for refused-before-start runs.
-  - **Cost capture** — every successful call updates the run's input/output
-    token counts and USD cost from `PRICE_TABLE`. Models must be priced
-    *before* the call is made — an unknown model refuses without spending.
+**Telemetry model (Phase 3.7 / W1.2 — the cognee-pivot re-plumb).** There is
+**no pre-flight per-call refusal** anymore. The old G1 per-run token cap and the
+per-agent Anthropic keys are gone: cognee owns the call site for most spend and
+can't support per-call gating, so the model is uniform — label + record every
+call, and bound spend with a **soft daily breaker** that blocks the *next*
+invocation once a ceiling is crossed. `cli/reconcile.py` (provider-bill vs
+ledger) is the backstop that justifies dropping the hard gate.
+
+  - **Daily breaker (soft ceiling)** — `assert_under_ceiling()` runs on
+    `agent_run` entry, and is callable directly before a cognee operation. If
+    today's spend for the agent is at/over `DAILY_CEILINGS[agent]`, or
+    system-wide spend is at/over `GLOBAL_DAILY_CEILING`, it raises
+    `DailyCeilingExceeded` and no row is written. It cannot prevent the call that
+    crosses the line (that call already happened, or happens inside cognee) — it
+    blocks the next one. "Today" starts at *local* midnight.
+  - **Cost capture** — every call records tokens + USD from `PRICE_TABLE`. An
+    unknown model raises `ValueError` *before* the paid call (never pay for a
+    call whose cost can't be recorded).
   - **Provider error capture** — any exception inside the block writes a
-    `failed` row with `error_text` set.
+    `failed` row.
 
-G3 (anomaly detection) is **not** in this module — that's Ted's job in
-Phase 11, runs as pure Python against `agent_runs`, no enforcement here.
+One Anthropic key for own-agents (`anthropic-api-key`) and one Gemini key
+(`gemini-api-key`). Per-agent provider keys were dropped with the pivot —
+spend attribution now lives entirely in the `agent_runs` ledger (by
+`agent_name` / `function_label` / `correlation_id`), not in provider dashboards.
 
-See `architecture/80-telemetry-layer.md` for the architectural design.
-
-Phase-1 architectural deviation: per-agent Anthropic API keys (see
-`architecture/70-build-order.md` decision log). The `call_anthropic` method
-looks up the right key by agent name via `KEY_BY_AGENT`. Agents not in
-that mapping raise `MissingAgentKeyError` — keys must be provisioned
-explicitly before a new agent goes live.
-
-2026-07 refactor: credentials cached via `_lib/creds.py`, DB access pooled
-via `_lib/db.py`, SDK clients cached per key, costs recorded at 8 decimal
-places (migration 0002), and `call_anthropic_structured` added for
-schema-validated tool-use output.
+G3 (anomaly detection) stays Ted's job (Phase 11) — pure Python over agent_runs.
 """
 
 from __future__ import annotations
@@ -57,9 +54,6 @@ from agents._lib import creds, db
 # =============================================================================
 
 # Price table — USD per token. Update via PR; bump module version on change.
-# Sources verified 2026-05-19:
-#   Anthropic — platform.claude.com models table
-#   Gemini — ai.google.dev/pricing
 PRICE_TABLE: dict[tuple[str, str], dict[str, float]] = {
     # (provider, model) -> {"input": USD/token, "output": USD/token}
     ("anthropic", "claude-opus-4-7"):    {"input":  5.0 / 1_000_000, "output": 25.0 / 1_000_000},
@@ -69,17 +63,16 @@ PRICE_TABLE: dict[tuple[str, str], dict[str, float]] = {
     ("gemini",    "gemini-2.5-flash"):   {"input":  0.075 / 1_000_000, "output": 0.30 / 1_000_000},
     # Embeddings. text-embedding-004 is not served on our Gemini key (404 on
     # embedContent, confirmed 2026-06-16) — gemini-embedding-001 is the
-    # available model. Priced at the paid-tier rate (verify periodically at
-    # ai.google.dev/pricing); embeddings have no billable "output" tokens.
+    # available model. Priced at the paid-tier rate; no billable "output" tokens.
     ("gemini",    "gemini-embedding-001"): {"input": 0.15 / 1_000_000, "output": 0.0},
     ("gemini",    "text-embedding-004"):   {"input": 0.0,              "output": 0.0},  # kept for reference; unavailable on this key
 }
 
-# Per-agent daily spend ceilings (G2). USD/day.
-# Source: architecture/80-telemetry-layer.md "Starting ceilings" table.
-# Total daily blast radius for fully-populated system: ~$15.
+# Per-agent daily spend ceilings (the soft breaker). USD/day.
+# Total daily blast radius for the fully-populated system: ~$15.
 DAILY_CEILINGS: dict[str, float] = {
-    "phase-2-smoke":     0.50,   # Phase 2 verification only; remove when Phase 2 closes
+    "phase-2-smoke":     0.50,   # Phase 2 verification only
+    "cognee":            5.00,   # Phase 3.7 — unlabeled cognee calls (labeled ones use the agent's own ceiling)
     "tartt":             5.00,   # Phase 4
     "keeley-strategy":   1.50,   # Phase 8 (combined ceiling with keeley-content per arch)
     "keeley-content":    1.50,   # Phase 8
@@ -94,34 +87,12 @@ DAILY_CEILINGS: dict[str, float] = {
     "recall":            0.50,   # Phase 3.3 — query embeddings only (gemini, cheap)
 }
 
-# System-wide kill switch: total spend across ALL agents per day. A single
-# runaway agent is bounded by its own ceiling; this bounds the whole box.
+# System-wide kill switch: total spend across ALL agents per day.
 GLOBAL_DAILY_CEILING = 20.00
 
-# G1 gating: skip the provider-side count_tokens round trip unless the local
-# estimate reaches this fraction of the cap. ~3 chars/token is conservative
-# (Latin text runs ~4; CJK runs ~1-2, which is why we don't use 4).
-G1_COUNT_THRESHOLD = 0.8
-
-# Per-agent Anthropic API key dispatch (Phase 1 architectural deviation).
-# Maps agent name -> keychain item name. Agents without an entry here cannot
-# make Anthropic calls — they must be added explicitly before going live.
-# Gemini uses a single shared `gemini-api-key` (no per-agent split for Gemini).
-KEY_BY_AGENT: dict[str, str] = {
-    "phase-2-smoke":   "anthropic-key-ted",   # smoke test piggybacks on ted's key
-    "ted":             "anthropic-key-ted",
-    "keeley-strategy": "anthropic-key-keeley-strategy",
-    "keeley-content":  "anthropic-key-keeley-content",
-    "roy-kent":        "anthropic-key-roy-kent",
-    "nate-shelley":    "anthropic-key-nate-shelley",
-    "higgins":         "anthropic-key-higgins",
-    "fact-extraction": "anthropic-key-fact-extraction",  # Phase 3.2
-    # Agents below need keys provisioned at their respective phases:
-    # "tartt":           gemini-only (Phase 4) — no anthropic key needed
-    # "briefing":        anthropic-key-briefing (Phase 3.5)
-    # "sam":             anthropic-key-sam (Phase 8)
-    # "meeting-processor": anthropic-key-meeting-processor (Phase 7)
-}
+# One key per provider for own-agents (per-agent keys dropped with the pivot).
+ANTHROPIC_KEY_ITEM = "anthropic-api-key"
+GEMINI_KEY_ITEM = "gemini-api-key"
 
 
 # =============================================================================
@@ -129,16 +100,9 @@ KEY_BY_AGENT: dict[str, str] = {
 # =============================================================================
 
 
-class TokenCapExceeded(Exception):
-    """G1: a single call's input token count would exceed the declared cap."""
-
-
 class DailyCeilingExceeded(Exception):
-    """G2: the agent (or the whole system) has reached its per-day spend ceiling."""
-
-
-class MissingAgentKeyError(Exception):
-    """The agent has no `anthropic-key-<slug>` entry in `KEY_BY_AGENT`."""
+    """The soft breaker: the agent (or the whole system) is at/over its
+    per-day spend ceiling, so the next invocation is blocked."""
 
 
 # =============================================================================
@@ -151,23 +115,22 @@ def _keychain_get(item_name: str) -> str:
     return creds.keychain_get(item_name)
 
 
-# SDK clients are reusable and thread-safe; construct once per key.
-_ANTHROPIC_CLIENTS: dict[str, anthropic.Anthropic] = {}
+# SDK clients are reusable and thread-safe; construct once.
+_ANTHROPIC_CLIENT: anthropic.Anthropic | None = None
 _GENAI_CLIENT: genai.Client | None = None
 
 
-def _anthropic_client(key_item: str) -> anthropic.Anthropic:
-    client = _ANTHROPIC_CLIENTS.get(key_item)
-    if client is None:
-        client = anthropic.Anthropic(api_key=_keychain_get(key_item))
-        _ANTHROPIC_CLIENTS[key_item] = client
-    return client
+def _anthropic_client() -> anthropic.Anthropic:
+    global _ANTHROPIC_CLIENT
+    if _ANTHROPIC_CLIENT is None:
+        _ANTHROPIC_CLIENT = anthropic.Anthropic(api_key=_keychain_get(ANTHROPIC_KEY_ITEM))
+    return _ANTHROPIC_CLIENT
 
 
 def _gemini_client() -> genai.Client:
     global _GENAI_CLIENT
     if _GENAI_CLIENT is None:
-        _GENAI_CLIENT = genai.Client(api_key=_keychain_get("gemini-api-key"))
+        _GENAI_CLIENT = genai.Client(api_key=_keychain_get(GEMINI_KEY_ITEM))
     return _GENAI_CLIENT
 
 
@@ -177,11 +140,6 @@ def _l2_normalize(vec: list[float]) -> list[float]:
     if norm == 0.0:
         return vec
     return [x / norm for x in vec]
-
-
-def _estimate_tokens(char_count: int) -> int:
-    """Local token estimate used to gate the provider-side count (G1)."""
-    return char_count // 3
 
 
 def _price_for(provider: str, model: str) -> dict[str, float]:
@@ -194,6 +152,48 @@ def _price_for(provider: str, model: str) -> dict[str, float]:
             f"Update PRICE_TABLE before using this model."
         )
     return price
+
+
+# =============================================================================
+# Daily breaker (soft ceiling)
+# =============================================================================
+
+
+def assert_under_ceiling(agent_name: str) -> None:
+    """Raise `DailyCeilingExceeded` if today's spend is at/over a ceiling.
+
+    Checks the system-wide ceiling always, and the agent's own ceiling when it
+    has a `DAILY_CEILINGS` entry (agents without one — rare — are bounded only
+    by the global ceiling). Callable directly before a cognee operation to block
+    the next cognify invocation once spend is over. "Today" = local midnight.
+    """
+    now = datetime.now(UTC)
+    local_tz = datetime.now().astimezone().tzinfo
+    today_start = now.astimezone(local_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    with db.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(SUM(usd_cost) FILTER (WHERE agent_name = %s), 0), "
+                "       COALESCE(SUM(usd_cost), 0) "
+                "FROM agent_runs "
+                "WHERE started_at >= %s",
+                (agent_name, today_start),
+            )
+            row = cur.fetchone()
+            spent_today = float(row[0]) if row else 0.0
+            spent_global = float(row[1]) if row else 0.0
+
+    if spent_global >= GLOBAL_DAILY_CEILING:
+        raise DailyCeilingExceeded(
+            f"System-wide spend is ${spent_global:.4f} today; global daily "
+            f"ceiling is ${GLOBAL_DAILY_CEILING:.2f}. Next invocation blocked."
+        )
+    ceiling = DAILY_CEILINGS.get(agent_name)
+    if ceiling is not None and spent_today >= ceiling:
+        raise DailyCeilingExceeded(
+            f"Agent '{agent_name}' has spent ${spent_today:.4f} today; "
+            f"daily ceiling is ${ceiling:.2f}. Next invocation blocked."
+        )
 
 
 # =============================================================================
@@ -237,50 +237,19 @@ class RunContext:
         messages: list[dict[str, Any]],
         *,
         model: str,
-        max_input_tokens: int,
         max_output_tokens: int,
         system: str | None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | None = None,
     ) -> Any:
-        """Shared Anthropic call path: key dispatch, pricing, G1, cost capture.
+        """Shared Anthropic call path: pricing + call + cost capture.
 
         Returns the raw Messages API response.
         """
-        agent_name = self._state.agent_name
-        key_item = KEY_BY_AGENT.get(agent_name)
-        if key_item is None:
-            raise MissingAgentKeyError(
-                f"Agent '{agent_name}' has no Anthropic key registered in "
-                f"KEY_BY_AGENT (agents/_lib/runs.py). Add an entry mapping the "
-                f"agent slug to a keychain item name (e.g. "
-                f"'anthropic-key-{agent_name}') before calling."
-            )
-
         # Price check first: an unknown model must refuse BEFORE spending.
         price = _price_for("anthropic", model)
-        client = _anthropic_client(key_item)
+        client = _anthropic_client()
 
-        # G1: local estimate gates the provider-side count round trip.
-        char_total = sum(len(str(m.get("content", ""))) for m in messages)
-        if system is not None:
-            char_total += len(system)
-        if _estimate_tokens(char_total) >= G1_COUNT_THRESHOLD * max_input_tokens:
-            count_kwargs: dict[str, Any] = {"model": model, "messages": messages}
-            if system is not None:
-                count_kwargs["system"] = system
-            token_count = client.messages.count_tokens(**count_kwargs)
-            if token_count.input_tokens > max_input_tokens:
-                self._state.status = "token_cap_exceeded"
-                self._state.error_text = (
-                    f"input tokens {token_count.input_tokens} exceeds cap {max_input_tokens}"
-                )
-                self._state.llm_provider = "anthropic"
-                self._state.llm_model = model
-                self._state.input_tokens = token_count.input_tokens
-                raise TokenCapExceeded(self._state.error_text)
-
-        # Make the actual call
         create_kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_output_tokens,
@@ -311,22 +280,18 @@ class RunContext:
         messages: list[dict[str, Any]],
         *,
         model: str,
-        max_input_tokens: int,
         max_output_tokens: int,
         system: str | None = None,
     ) -> str:
         """Call Anthropic Messages API. Returns concatenated text content.
 
         Raises:
-            MissingAgentKeyError: agent has no key registered in KEY_BY_AGENT
             ValueError: model has no PRICE_TABLE entry (raised before calling)
-            TokenCapExceeded: counted input tokens > max_input_tokens
             (provider errors propagate; caught and recorded by agent_run)
         """
         response = self._anthropic_call(
             messages,
             model=model,
-            max_input_tokens=max_input_tokens,
             max_output_tokens=max_output_tokens,
             system=system,
         )
@@ -337,7 +302,6 @@ class RunContext:
         messages: list[dict[str, Any]],
         *,
         model: str,
-        max_input_tokens: int,
         max_output_tokens: int,
         tool_name: str,
         tool_description: str,
@@ -347,8 +311,7 @@ class RunContext:
         """Call Anthropic with a single forced tool — schema-validated output.
 
         The model MUST call the named tool, so the return value is the tool's
-        input dict, already shaped by `input_schema`. Replaces prompt-and-parse
-        JSON extraction (no markdown fences, no unparseable-output path).
+        input dict, already shaped by `input_schema`.
 
         Raises RuntimeError if the response contains no tool_use block (rare:
         e.g. the call hit max_output_tokens mid-generation).
@@ -356,7 +319,6 @@ class RunContext:
         response = self._anthropic_call(
             messages,
             model=model,
-            max_input_tokens=max_input_tokens,
             max_output_tokens=max_output_tokens,
             system=system,
             tools=[{
@@ -379,34 +341,16 @@ class RunContext:
         prompt: str,
         *,
         model: str,
-        max_input_tokens: int,
         max_output_tokens: int,
     ) -> str:
         """Call Gemini generateContent. Returns response text.
 
-        Uses the shared `gemini-api-key` keychain item (Gemini is not split
-        per-agent in v1 — only Anthropic is, for spend attribution).
-
         Raises:
             ValueError: model has no PRICE_TABLE entry (raised before calling)
-            TokenCapExceeded: counted input tokens > max_input_tokens
             (provider errors propagate; caught and recorded by agent_run)
         """
         price = _price_for("gemini", model)
         client = _gemini_client()
-
-        # G1: local estimate gates the provider-side count round trip.
-        if _estimate_tokens(len(prompt)) >= G1_COUNT_THRESHOLD * max_input_tokens:
-            count_resp = client.models.count_tokens(model=model, contents=prompt)
-            if count_resp.total_tokens > max_input_tokens:
-                self._state.status = "token_cap_exceeded"
-                self._state.error_text = (
-                    f"input tokens {count_resp.total_tokens} exceeds cap {max_input_tokens}"
-                )
-                self._state.llm_provider = "gemini"
-                self._state.llm_model = model
-                self._state.input_tokens = count_resp.total_tokens
-                raise TokenCapExceeded(self._state.error_text)
 
         response = client.models.generate_content(
             model=model,
@@ -439,12 +383,7 @@ class RunContext:
         System standard is 768 dims, matching the `vector(768)` columns.
         `gemini-embedding-001` defaults to 3072 dims and only ships
         pre-normalized at that size; at 768 (a Matryoshka truncation) the
-        vectors are NOT normalized by the API, so we L2-normalize here. That
-        keeps cosine search correct and also makes dot-product / L2 behave,
-        and keeps stored facts and query embeddings on the same footing.
-
-        (`text-embedding-004` is not served on our Gemini key — returns 404 on
-        embedContent. See PRICE_TABLE note. 2026-06-16.)
+        vectors are NOT normalized by the API, so we L2-normalize here.
         """
         price = _price_for("gemini", model)
         client = _gemini_client()
@@ -485,41 +424,21 @@ def agent_run(
     correlation_id: str | None = None,
     correlation_kind: str | None = None,
 ) -> Iterator[RunContext]:
-    """Context manager wrapping every LLM call from every agent.
+    """Context manager wrapping every LLM call from an own-agent.
 
-    On entry: checks G2 (per-day spend ceilings). If today's spend for this
-    agent is at or over `DAILY_CEILINGS[agent_name]`, or system-wide spend is
-    at or over `GLOBAL_DAILY_CEILING`, raises `DailyCeilingExceeded`
-    immediately and writes **no** agent_runs row. "Today" starts at local
-    midnight. Note: the check is check-then-act — concurrent runs that pass
-    the check together can overshoot the ceiling by roughly one call's cost;
-    acceptable at these ceilings.
+    On entry: runs the soft daily breaker (`assert_under_ceiling`). If the agent
+    or the system is already at/over its ceiling, raises `DailyCeilingExceeded`
+    and writes **no** row (the next invocation is what's blocked; the crossing
+    call already happened). The check is check-then-act — concurrent runs can
+    overshoot by roughly one call's cost, which is acceptable at these ceilings.
 
-    On exit: writes exactly one row to agent_runs with the accumulated
-    tokens, cost, status, and any error. Always writes — success, partial,
-    failed, or token_cap_exceeded.
-
-    Usage:
-        with agent_run("tartt", "news_aggregation",
-                       correlation_id=str(item_id),
-                       correlation_kind="content_item") as run:
-            summary = run.call_gemini(
-                prompt=build_summary_prompt(item_text),
-                model="gemini-2.5-flash",
-                max_input_tokens=4000,
-                max_output_tokens=500,
-            )
+    On exit: writes exactly one row to agent_runs (success or failed).
 
     Args:
-        agent_name: matches DAILY_CEILINGS entry and agent_runs.agent_name
-        function_label: matches a value from architecture/80-telemetry-layer.md
-            function labels table (news_aggregation, topic_research,
-            action_surfacing, customer_discovery, infrastructure, telemetry)
+        agent_name: matches a DAILY_CEILINGS entry and agent_runs.agent_name
+        function_label: matches architecture/80-telemetry-layer.md function labels
         trigger_kind: 'scheduled' | 'event' | 'manual'
-        correlation_id: id of the entity this run is about (content_item_id,
-            prospect_id, etc.) — facilitates joining agent_runs to entities
-        correlation_kind: type tag for correlation_id ('content_item',
-            'prospect', 'transcript', etc.)
+        correlation_id/correlation_kind: the entity this run is about
 
     Raises:
         ValueError: agent_name has no DAILY_CEILINGS entry
@@ -541,50 +460,21 @@ def agent_run(
         started_at=started_at,
     )
 
-    # G2: pre-flight ceiling checks (agent + global in one query).
-    # Refused runs write no row. "Today" = local midnight, not UTC.
-    local_tz = datetime.now().astimezone().tzinfo
-    today_start = started_at.astimezone(local_tz).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    with db.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT COALESCE(SUM(usd_cost) FILTER (WHERE agent_name = %s), 0), "
-                "       COALESCE(SUM(usd_cost), 0) "
-                "FROM agent_runs "
-                "WHERE started_at >= %s",
-                (agent_name, today_start),
-            )
-            row = cur.fetchone()
-            spent_today = float(row[0]) if row else 0.0
-            spent_global = float(row[1]) if row else 0.0
-
-    if spent_global >= GLOBAL_DAILY_CEILING:
-        raise DailyCeilingExceeded(
-            f"System-wide spend is ${spent_global:.4f} today; global daily "
-            f"ceiling is ${GLOBAL_DAILY_CEILING:.2f}. No call made; no row written."
-        )
-    ceiling = DAILY_CEILINGS[agent_name]
-    if spent_today >= ceiling:
-        raise DailyCeilingExceeded(
-            f"Agent '{agent_name}' has spent ${spent_today:.4f} today; "
-            f"daily ceiling is ${ceiling:.2f}. No call made; no row written."
-        )
+    # Soft daily breaker — blocks the next invocation once over; writes no row.
+    assert_under_ceiling(agent_name)
 
     ctx = RunContext(state)
     try:
         yield ctx
     except BaseException as exc:
-        # TokenCapExceeded has already set status/error on state; anything
-        # else (provider errors, programmer errors) is recorded as failed.
+        # Any exception (provider errors, programmer errors) → failed row.
         if state.status == "success":
             state.status = "failed"
             state.error_text = f"{type(exc).__name__}: {exc}"
         raise
     finally:
-        # Write the row regardless of success/failure.
-        # Suppress write errors so the original exception (if any) propagates.
+        # Write the row regardless of success/failure. Suppress write errors so
+        # the original exception (if any) propagates.
         ended_at = datetime.now(UTC)
         try:
             with db.connection() as conn:
@@ -613,8 +503,6 @@ def agent_run(
                         ),
                     )
         except Exception:
-            # If we can't write the ledger, raise visibility but don't mask
-            # the original failure.
             import sys
             import traceback
             print(

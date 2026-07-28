@@ -7,14 +7,25 @@ workstreams, not appended.
 
 ## W1 — Telemetry re-plumb (M1) · ~1.5–2 days
 
-- [~] **W1.1** — `agents/_lib/telemetry_context.py`: contextvar `labeled()` +
-  litellm callback that writes conformant `agent_runs` rows
-  (`correlation_kind='cognify_run'`). **Additive, non-breaking — STARTED.**
-- [ ] **W1.2** — Deprecate pre-flight refusal (G1 token cap, G2 hard ceiling) +
-  per-agent keys (`KEY_BY_AGENT`) in `runs.py`; replace with a soft post-hoc
-  ceiling + one key per subsystem. Rewrite the AC1–AC4 gate tests.
+- [x] **W1.1** — `agents/_lib/telemetry_context.py`: contextvar `labeled()` +
+  litellm callback writing conformant `agent_runs` rows
+  (`correlation_kind='cognify_run'`). Additive, non-breaking. (commit `7aa632d`)
+- [x] **W1.2** — Deprecated pre-flight refusal + per-agent keys in `runs.py`:
+  **G1 removed** (no `count_tokens`, no `max_input_tokens`, no `TokenCapExceeded`);
+  **`KEY_BY_AGENT`/`MissingAgentKeyError` removed** → one `anthropic-api-key`;
+  **G2 reframed as a soft breaker** — `assert_under_ceiling()` (extracted, also
+  callable before a cognee op) blocks the next invocation once over. Callers
+  updated (`capture.py`, `run_smoke.py`, `_lib/__init__.py`); gate tests rewritten
+  (AC2/missing-key deleted, breaker + direct-`assert_under_ceiling` tests added).
+  Suite 82/82.
 - [ ] **W1.3** — `cli/reconcile.py`: monthly ledger-vs-provider spend compare
-  (the safety net for dropping the hard gate).
+  (the safety net for dropping the hard gate). **NEXT.**
+
+> ⚠️ **Runtime prerequisite before deploying W1.2 (barry-agent):** per-agent
+> Anthropic keys are gone — the runtime keychain needs a single **`anthropic-api-key`**
+> (point it at the existing key or a fresh one). Without it, capture/agents fail
+> the keychain lookup. The old `anthropic-key-*` items become unused. Ties into
+> the still-open H4 key rotation. Gemini unchanged (`gemini-api-key`).
 
 ## W2 — Cognee stand-up on local Postgres · ~1–2 days
 

@@ -4,18 +4,16 @@ Exercises the cost helper end-to-end with **real** API calls:
   - 5 Claude Haiku 4.5 calls (each summarizes one short paragraph)
   - 5 Gemini 2.5 Flash calls (same task)
 
-After running:
-  - Verifies 10 rows landed in agent_runs with non-null tokens/cost
-  - Triggers G1 (token cap exceeded) with a deliberately tiny cap
-  - Prints final summary + spend breakdown
+After running, verifies 10 rows landed in agent_runs with non-null tokens/cost.
 
-Run from the `barry-agent` account where the keychain holds the agent keys:
+Run from the `barry-agent` account where the keychain holds `anthropic-api-key`,
+`gemini-api-key`, and `db-url`:
     uv run python -m agents.test.run_smoke
 
 Budget: under $0.01 total spend. Phase-2-smoke daily ceiling is $0.50.
 
-This script is removed (or its daily ceiling is dropped to $0.00) once
-Phase 2 is closed and real agents start running.
+(Phase 3.7 / W1.2: the old G1 token-cap step was removed — pre-flight per-call
+refusal is deprecated with the cognee pivot.)
 """
 
 from __future__ import annotations
@@ -24,7 +22,7 @@ import sys
 
 import psycopg
 
-from agents._lib.runs import TokenCapExceeded, _keychain_get, agent_run
+from agents._lib.runs import _keychain_get, agent_run
 
 # Short paragraphs to summarize. Bounded inputs keep the smoke cost minimal.
 PARAGRAPHS = [
@@ -42,8 +40,7 @@ PARAGRAPHS = [
 
     "Telemetry is the fourth architectural layer, not an afterthought. Every "
     "LLM call goes through a cost helper that writes one row to agent_runs and "
-    "enforces three guards: per-run token cap, per-day spend ceiling, and "
-    "anomaly detection.",
+    "enforces a soft daily spend breaker.",
 
     "The north star is sustainable long-term contract engagements. Every "
     "workflow ties to at least one of three key results: new engagements per "
@@ -67,7 +64,6 @@ def summarize_with_anthropic(text: str, idx: int) -> str:
                 }
             ],
             model="claude-haiku-4-5",
-            max_input_tokens=500,
             max_output_tokens=100,
         )
 
@@ -83,30 +79,8 @@ def summarize_with_gemini(text: str, idx: int) -> str:
         return run.call_gemini(
             prompt=f"Summarize this in one sentence:\n\n{text}",
             model="gemini-2.5-flash",
-            max_input_tokens=500,
             max_output_tokens=100,
         )
-
-
-def trigger_token_cap_exceeded() -> None:
-    """Deliberately exceed a token cap to prove G1 enforcement."""
-    long_text = "Lorem ipsum dolor sit amet. " * 200  # ~1000 tokens
-    try:
-        with agent_run(
-            "phase-2-smoke",
-            "infrastructure",
-            correlation_id="smoke-g1-test",
-            correlation_kind="smoke_test",
-        ) as run:
-            run.call_anthropic(
-                messages=[{"role": "user", "content": long_text}],
-                model="claude-haiku-4-5",
-                max_input_tokens=50,  # impossibly low
-                max_output_tokens=50,
-            )
-        print("  FAIL: G1 should have raised TokenCapExceeded")
-    except TokenCapExceeded as e:
-        print(f"  OK   G1 raised TokenCapExceeded ({e})")
 
 
 def verify_rows_in_db(expected_count: int) -> bool:
@@ -150,7 +124,7 @@ def main() -> int:
     print("Phase 2 cost-helper smoke test")
     print("=" * 60)
     print()
-    print("[1/3] Running 5 Anthropic + 5 Gemini calls...")
+    print("[1/2] Running 5 Anthropic + 5 Gemini calls...")
     for i, paragraph in enumerate(PARAGRAPHS, 1):
         a_result = summarize_with_anthropic(paragraph, i)
         print(f"  Anthropic call {i}/5: {a_result[:70]}...")
@@ -158,19 +132,15 @@ def main() -> int:
         print(f"  Gemini    call {i}/5: {g_result[:70]}...")
 
     print()
-    print("[2/3] Triggering G1 (per-run token cap exceeded)...")
-    trigger_token_cap_exceeded()
-
-    print()
-    print("[3/3] Verifying agent_runs rows...")
-    ok = verify_rows_in_db(expected_count=11)  # 10 + 1 G1 row
+    print("[2/2] Verifying agent_runs rows...")
+    ok = verify_rows_in_db(expected_count=10)
 
     print()
     if ok:
         print("✅ Phase 2 smoke test PASSED")
         return 0
     else:
-        print("❌ Phase 2 smoke test FAILED — expected >= 11 rows")
+        print("❌ Phase 2 smoke test FAILED — expected >= 10 rows")
         return 1
 
 

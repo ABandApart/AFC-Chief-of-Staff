@@ -212,7 +212,6 @@ class CaptureCog(commands.Cog):
             payload = run.call_anthropic_structured(
                 messages=[{"role": "user", "content": text}],
                 model=EXTRACTION_MODEL,
-                max_input_tokens=4000,
                 max_output_tokens=600,
                 system=EXTRACTION_SYSTEM_PROMPT,
                 tool_name="record_facts",
