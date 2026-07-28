@@ -1,0 +1,11 @@
+Why "AI Strategy" Is the Wrong First Purchase for a Professional-Services Firm
+
+Most small professional-services firms — law practices, accounting shops, advisory boutiques — are being sold an AI strategy. A roadmap, a capabilities assessment, a platform. It is almost always the wrong first purchase, and the reason is simple: strategy is a bet on a future state, and a ten-person firm cannot afford to pay for a bet before it has seen a single win.
+
+The firms that get value from AI early do the opposite. They pick one workflow that everybody hates, and they remove it. Not augment it, not "enable" it — remove the manual version entirely and replace it with something that runs while a human approves the output. Contract intake triage at a law firm. Month-end reconciliation exceptions at an accounting practice. Turning a messy discovery call into a client-ready summary at an advisory shop. One workflow, chosen because it is high-friction and high-frequency, is a far better first engagement than any strategy deck.
+
+There are three reasons this works better. First, it is measurable: you can put a number on hours saved per week, and that number either shows up or it doesn't. Second, it builds trust in the right order — the firm sees a concrete win before being asked to believe in a platform vision. Third, it compounds: the data and context captured while removing the first workflow becomes the substrate for the second, so the second engagement is cheaper to deliver than the first.
+
+The trap on the vendor side is leading with the platform. It is tempting, because the platform is where the recurring revenue and the defensibility live. But leading with it inverts the trust sequence and asks the client to buy the hard-to-measure thing first. Lead with the one workflow. Let the platform be the second conversation — the one the client initiates, because the first thing worked.
+
+For the firm evaluating offers: ask the vendor which single workflow they would remove first, and how they would measure it. If the answer is a roadmap, keep looking. If the answer is a specific, measurable workflow with a fixed scope and a human in the loop, you have found someone who understands that adoption is earned one workflow at a time.

@@ -28,6 +28,14 @@ dev = [
     "pytest>=8.0",
     "pytest-mock>=3.12",
 ]
+# THROWAWAY — cognee viability spike only (architecture/SPIKE-cognee-eval-2026-07.md).
+# NOT synced by default; NOT merged to main. Install for the spike with:
+#   uv sync --group spike
+# Version pinned exact per Q7 (upstream churn). Heavy tree (LiteLLM, LanceDB,
+# NetworkX, Docling, SQLAlchemy, possibly Transformers) — this is what Q5 measures.
+spike = [
+    "cognee[postgres]==1.4.0",
+]
 
 [tool.ruff]
 line-length = 100

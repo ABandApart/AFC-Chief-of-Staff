@@ -1,0 +1,40 @@
+Discovery call — Two Rivers Advisory — 2026-07-02
+Participants: Barry Baldwin (AI Adaptive), Elena Ruiz (Managing Partner, Two Rivers Advisory), David Okafor (Operations Lead, Two Rivers Advisory)
+
+Barry: Thanks both for making time. To start — paint me a picture of where the week actually goes. Where does the time disappear?
+
+Elena: Honestly, it's the after-meeting work. We do maybe fifteen client and prospect calls a week between the four advisors. Every one of them generates notes, action items, follow-ups. Right now that lives in people's heads and scattered Google Docs. By Thursday nobody remembers what they promised whom on Monday.
+
+David: And the client-facing summaries. After a discovery call a client expects a recap — what we heard, what we recommend, next steps. Producing that is an hour of an advisor's time each, and they hate doing it, so it slips. We've lost at least two engagements this year because the follow-up went cold for a week.
+
+Barry: So two distinct pains. One is internal — commitments falling through the cracks. The other is external — the client-ready summary being slow and inconsistent. Which one costs you more?
+
+Elena: The external one costs us revenue directly. The internal one costs us trust, which eventually costs revenue too, but it's harder to point at.
+
+David: I'd add a third if I'm honest. We have no memory across calls. If a prospect mentioned in March that their fiscal year ends in June, and they come back in July, nobody surfaces that. We re-ask questions we already have answers to. It makes us look like we weren't listening.
+
+Barry: That third one is the interesting one to me, because it's the one tools usually don't solve — they capture within a meeting but not across them. Let me play back the shape. You want: discovery-call notes turned into a client-ready summary within, say, an hour, not a week; internal action items tracked so commitments don't drop; and a persistent memory so what a client told you six months ago shows up when they come back. Is that the order of priority — summary first?
+
+Elena: Summary first, because that's the bleeding wound. But the memory piece is what would actually differentiate us. Every competitor sends a recap email. None of them remember.
+
+David: Agreed. And the summary has to sound like us, not like a robot. We've tried a generic transcription tool and the output was unusable — accurate but toneless. Clients could tell.
+
+Barry: That's fair, and it's the part I'd want to get right before scaling it. My instinct is a fixed-scope first engagement: just the discovery-to-summary workflow, tuned to your voice, with a human approval step before anything goes to a client. Prove that saves each advisor an hour a call and reads like you. Then phase two is the cross-call memory — that's the harder build and I wouldn't bundle it into a first engagement.
+
+Elena: What does a first engagement like that run, roughly?
+
+Barry: I'll send exact numbers in the proposal, but directionally it's a fixed-scope build over about six weeks, then a monthly maintenance retainer once it's live. I'd rather under-scope the first one and earn the second than sell you the platform on day one.
+
+Elena: That's the opposite of what everyone else pitches, which is refreshing. Send the proposal. If the summary workflow does what you say, we'll want to talk about the memory piece quickly.
+
+David: One constraint — anything touching client data has to stay in our control. We can't have transcripts sitting on some vendor's servers indefinitely.
+
+Barry: Understood, and that's a design constraint I take seriously — local-first, you hold the data, I'll spell out exactly what's stored where. I'll get the proposal over by Friday.
+
+Elena: Perfect. Thanks Barry.
+
+Action items:
+- Barry to send fixed-scope proposal for the discovery-to-summary workflow by Friday 2026-07-04, with pricing and a data-residency section.
+- Barry to include a phase-two outline for cross-call memory, priced separately.
+- David to send a sample of two past discovery calls (sanitized) so the voice can be tuned.
+- Elena to loop in the other two advisors before the proposal review.
