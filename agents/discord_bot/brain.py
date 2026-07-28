@@ -4,63 +4,15 @@ All access goes through the shared pool in `agents/_lib/db.py` — no
 per-operation connections. There is no ORM; the schema is small and SQL is
 explicit.
 
-2026-07 refactor: facts are inserted as a batch in one transaction (a
-mid-batch failure no longer leaves a partial capture), and a near-duplicate
-lookup guards the corpus against re-captured thoughts.
+W4 (cognee pivot): capture no longer writes the `facts` table — notes are
+cognified into the graph (`aiadaptive_cognee`). What remains here is the
+message-level dedup guard (still SQL, in `aiadaptive_cos`), the `/outcome`
+write, and the fact autocomplete (transitional — rewired to the graph in W5).
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 from agents._lib import db
-from agents._lib.db import EMBEDDING_DIM, vector_literal
-
-
-def insert_facts(
-    facts: list[dict[str, Any]], *, source_type: str, source_ref: str | None
-) -> list[int]:
-    """Insert fact rows atomically (one transaction). Returns new ids in order.
-
-    Each fact dict needs: content, domain, confidence, embedding, and
-    optionally context. Raises ValueError if any embedding has the wrong
-    dimension (a cheap guard against a silent provider/model mismatch that
-    would otherwise fail at the DB with a less obvious error).
-    """
-    for fact in facts:
-        if len(fact["embedding"]) != EMBEDDING_DIM:
-            raise ValueError(
-                f"embedding has {len(fact['embedding'])} dims, expected {EMBEDDING_DIM} "
-                f"(check the embedding model — facts.embedding is vector(768))"
-            )
-
-    ids: list[int] = []
-    with db.connection() as conn:
-        with conn.transaction():
-            with conn.cursor() as cur:
-                for fact in facts:
-                    cur.execute(
-                        """
-                        INSERT INTO facts
-                            (content, source_type, source_ref, context, domain,
-                             confidence, embedding)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s::vector)
-                        RETURNING id
-                        """,
-                        (
-                            fact["content"],
-                            source_type,
-                            source_ref,
-                            fact.get("context"),
-                            fact["domain"],
-                            fact["confidence"],
-                            vector_literal(fact["embedding"]),
-                        ),
-                    )
-                    row = cur.fetchone()
-                    assert row is not None
-                    ids.append(row[0])
-    return ids
 
 
 def capture_message_seen(content_hash: str) -> bool:
@@ -91,32 +43,6 @@ def record_capture_message(content_hash: str, message_id: str) -> None:
                 """,
                 (content_hash, message_id),
             )
-
-
-def find_near_duplicate(embedding: list[float], *, threshold: float) -> tuple[int, float] | None:
-    """Return (fact_id, similarity) of the nearest stored fact if it is at or
-    above `threshold` cosine similarity; else None.
-
-    One indexed vector lookup — used at capture time so re-captured thoughts
-    don't accumulate as near-identical facts that pollute recall.
-    """
-    vec = vector_literal(embedding)
-    with db.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, 1 - (embedding <=> %s::vector) AS sim
-                FROM facts
-                WHERE embedding IS NOT NULL
-                ORDER BY embedding <=> %s::vector
-                LIMIT 1
-                """,
-                (vec, vec),
-            )
-            row = cur.fetchone()
-    if row is not None and float(row[1]) >= threshold:
-        return (row[0], float(row[1]))
-    return None
 
 
 def search_facts(term: str, limit: int = 20) -> list[tuple[int, str]]:

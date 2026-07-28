@@ -39,6 +39,12 @@ class CosBot(commands.Bot):
     """
 
     async def setup_hook(self) -> None:
+        # Configure cognee (dedicated DB, M1 routing) + install the litellm
+        # telemetry callback BEFORE any cog can call cognee (capture ingests
+        # into the graph). W4.
+        from agents._lib import cognee_setup
+        cognee_setup.configure_cognee()
+
         await self.load_extension("agents.discord_bot.cogs.system")
         await self.load_extension("agents.discord_bot.cogs.capture")
         await self.load_extension("agents.discord_bot.cogs.outcomes")

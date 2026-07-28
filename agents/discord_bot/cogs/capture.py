@@ -1,271 +1,89 @@
-"""Capture cog — #capture listener → facts.
+"""Capture cog — #capture listener → cognee graph memory (W4 pivot).
 
-Flow (per `architecture/50-channel-layer.md` capture interaction):
-  1. Operator posts a thought in #capture.
-  2. Bot reacts ⏳.
-  3. Message-level dedup: the normalized raw text is hashed and checked
-     against `capture_messages` — an exact re-post short-circuits here,
-     before any LLM call (extraction is non-deterministic, so per-fact
-     dedup alone can't guarantee a re-post writes nothing).
-  4. Claude Haiku (via the cost helper) extracts atomic facts through a
-     forced tool call — schema-validated JSON, no prompt-and-parse.
-  5. Gemini embeddings (via the cost helper) embed each fact.
-  6. Facts already captured (cosine ≥ 0.95 against an existing fact) are
-     skipped — re-captured thoughts don't pile up as near-duplicates.
-  7. Remaining facts are written to `facts` in one transaction with
-     provenance (source_type='discord', source_ref=<message_id>), and the
-     message hash is recorded.
-  8. ⏳ is replaced with ✅ and the bot replies with a one-line summary.
+Flow:
+  1. Operator posts a thought in #capture. Bot reacts ⏳.
+  2. Message-level dedup: the normalized raw text is hashed and checked against
+     `capture_messages`. An exact re-post short-circuits here, before any
+     cognee/LLM spend.
+  3. `cognee.add(text)` + `cognify()` build the note into the graph — cognee's
+     LLM extracts the entities and relationships (people, orgs, workflows, …)
+     and resolves them against what's already there. Run under a `labeled()`
+     block so the spend lands in `agent_runs` (agent `fact-extraction`, via the
+     M1 litellm callback).
+  4. Record the message hash; ⏳ → ✅.
 
-Edge cases:
-  - Empty message → ask for text, no LLM call.
-  - No extractable facts (e.g. a bare URL) → 🤔 + a nudge, nothing written
-    (the hash is NOT recorded, so a rephrase-then-identical-repost still
-    gets a fresh extraction attempt).
-  - Everything a near-duplicate → ✅ + "already captured", nothing written.
-  - Exact re-post of a captured message → ✅ + "already captured", no LLM.
+W4 replaced the forced-tool fact extraction + `facts`-table write with cognee
+ingestion. Extraction/resolution is now cognee's, so capture no longer produces
+a discrete fact list — the reply is a simple confirmation (the note is
+recallable via `/recall`). The typed ontology (`agents/_lib/ontology`) is used
+by the structured agents (meetings, content), not free-text capture.
 
-The blocking pipeline (LLM calls + DB writes) runs in a worker thread via
-`asyncio.to_thread` so the Discord event loop stays responsive.
+`configure_cognee()` must have run at bot startup (see `run.py`) before the
+first capture. cognee is imported lazily so this module imports without it.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
-from typing import Any
 
 import discord
 from discord.ext import commands
 
-from agents._lib.runs import agent_run
+from agents._lib.telemetry_context import labeled
 from agents.discord_bot import brain
 from agents.discord_bot.config import CAPTURE_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 
-EXTRACTION_MODEL = "claude-haiku-4-5"
-# gemini-embedding-001 is the embedContent model available on our key
-# (text-embedding-004 returns 404). The cost helper requests 768 dims to
-# match the facts.embedding vector(768) column.
-EMBEDDING_MODEL = "gemini-embedding-001"
-
-# Cosine similarity at or above which a new fact is treated as a re-capture
-# of an existing one and skipped. Same embedding space as recall's floor
-# (relevant ~0.65+, noise ~0.5): 0.95 only fires on genuine restatements.
-DEDUP_THRESHOLD = 0.95
-
-EXTRACTION_SYSTEM_PROMPT = """You extract atomic facts from a person's captured note.
-
-Rules:
-- Each fact is ONE atomic, self-contained claim. Split compound statements into separate facts.
-- Write each fact as a complete sentence that is understandable on its own, without the original note.
-- `domain` is a short lowercase category, e.g.: business, project, decision, contact, personal, idea, task, preference.
-- `confidence` reflects how explicitly the note states the fact (1.0 = stated outright, lower = inferred).
-- If the note has no extractable facts (e.g. it is only a URL with no commentary, or it is empty), record an empty facts list.
-- Never invent facts that the note does not support."""
-
-# Forced-tool schema: the model must call record_facts with this shape, so
-# the output is validated JSON by construction (no fence-stripping).
-FACTS_TOOL_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "facts": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "content": {
-                        "type": "string",
-                        "description": "One atomic, self-contained claim.",
-                    },
-                    "domain": {"type": "string", "description": "Short lowercase category."},
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                },
-                "required": ["content"],
-            },
-        }
-    },
-    "required": ["facts"],
-}
+CAPTURE_DATASET = "capture"
 
 
 def message_hash(text: str) -> str:
     """sha256 hex of the normalized message text (message-level dedup key).
 
-    Normalization: collapse all whitespace runs and casefold, so re-posts
-    that differ only in spacing/case still count as the same message.
+    Normalization: collapse all whitespace runs and casefold, so re-posts that
+    differ only in spacing/case still count as the same message.
     """
     normalized = " ".join(text.split()).casefold()
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def validate_facts(data: Any) -> list[dict[str, Any]]:
-    """Validate/normalize an extraction payload into a list of fact dicts.
-
-    Returns a (possibly empty) list of dicts:
-    {"content": str, "domain": str|None, "confidence": float}.
-
-    Raises ValueError if the payload is missing the `facts` list — the caller
-    treats that as a graceful "couldn't structure this" rather than writing
-    garbage.
-    """
-    if not isinstance(data, dict) or "facts" not in data:
-        raise ValueError("extraction payload missing 'facts' key")
-
-    facts_in = data["facts"]
-    if not isinstance(facts_in, list):
-        raise ValueError("'facts' is not a list")
-
-    out: list[dict[str, Any]] = []
-    for item in facts_in:
-        if not isinstance(item, dict):
-            continue
-        content = item.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        domain = item.get("domain")
-        domain = domain.strip() if isinstance(domain, str) and domain.strip() else None
-        conf_raw = item.get("confidence", 1.0)
-        try:
-            conf = float(conf_raw)
-        except (TypeError, ValueError):
-            conf = 1.0
-        conf = max(0.0, min(1.0, conf))
-        out.append({"content": content.strip(), "domain": domain, "confidence": conf})
-    return out
-
-
-def parse_facts(raw: str) -> list[dict[str, Any]]:
-    """Parse a raw JSON string into validated facts (legacy text path).
-
-    The live capture flow gets schema-validated dicts from the forced tool
-    call and uses `validate_facts` directly; this wrapper remains for text
-    payloads. Tolerant of markdown code fences.
-    """
-    text = raw.strip()
-
-    # Strip a leading ```json / ``` fence and trailing ``` if present.
-    if text.startswith("```"):
-        lines = text.splitlines()
-        lines = lines[1:]  # drop opening fence line
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]  # drop closing fence
-        text = "\n".join(lines).strip()
-
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"extraction output is not valid JSON: {e}") from e
-
-    return validate_facts(data)
-
-
-def format_summary(facts: list[dict[str, Any]]) -> str:
-    """Build the one-line (or short) reply summarizing what was captured."""
-    n = len(facts)
-    domains = sorted({f["domain"] for f in facts if f["domain"]})
-    dstr = f" ({', '.join(domains)})" if domains else ""
-    if n == 1:
-        return f"Captured 1 fact{dstr}: {facts[0]['content']}"
-    preview = "\n".join(f"• {f['content']}" for f in facts[:5])
-    more = f"\n…and {n - 5} more" if n > 5 else ""
-    return f"Captured {n} facts{dstr}:\n{preview}{more}"
-
-
 class CaptureCog(commands.Cog):
-    """Listens to #capture and turns notes into facts."""
+    """Listens to #capture and ingests notes into the graph."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    def _process_capture(
-        self, text: str, message_id: str
-    ) -> tuple[list[dict[str, Any]], int, bool]:
-        """Synchronous pipeline: hash-check → extract → embed → dedup → insert.
-
-        Runs in a thread. Returns (inserted_facts, skipped_duplicate_count,
-        exact_repost). exact_repost=True means the message's normalized text
-        was captured before — nothing ran, nothing written. Empty list +
-        0 skips means the model found nothing to remember. Raises ValueError
-        on an unusable extraction; other exceptions propagate as failures.
-        """
-        # 0. Message-level dedup — before any LLM spend
+    async def _ingest(self, text: str, message_id: str) -> str:
+        """Ingest one note. Returns 'repost' (seen before, nothing done) or
+        'captured'. Raises on failure (recorded/handled by the caller)."""
         msg_hash = message_hash(text)
-        if brain.capture_message_seen(msg_hash):
+        if await asyncio.to_thread(brain.capture_message_seen, msg_hash):
             logger.info(
-                "capture msg %s: exact re-post (hash %s…) — skipped before extraction",
+                "capture msg %s: exact re-post (hash %s…) — skipped before cognify",
                 message_id, msg_hash[:12],
             )
-            return [], 0, True
+            return "repost"
 
-        # 1. Extract (Anthropic, forced tool — its own agent_runs row)
-        with agent_run(
-            "fact-extraction",
-            "infrastructure",
-            trigger_kind="event",
-            correlation_id=message_id,
-            correlation_kind="discord_message",
-        ) as run:
-            payload = run.call_anthropic_structured(
-                messages=[{"role": "user", "content": text}],
-                model=EXTRACTION_MODEL,
-                max_output_tokens=600,
-                system=EXTRACTION_SYSTEM_PROMPT,
-                tool_name="record_facts",
-                tool_description="Record the atomic facts extracted from the note.",
-                input_schema=FACTS_TOOL_SCHEMA,
-            )
+        import cognee  # lazy — optional `cognee` dependency group
 
-        facts = validate_facts(payload)
-        if not facts:
-            # Hash deliberately not recorded: nothing was captured, so an
-            # identical retry should get a fresh extraction attempt.
-            return [], 0, False
+        with labeled(
+            "fact-extraction", "customer_discovery",
+            trigger_kind="event", correlation_id=message_id,
+        ):
+            await cognee.add(text, dataset_name=CAPTURE_DATASET)
+            await cognee.cognify(datasets=[CAPTURE_DATASET])
 
-        # 2. Embed (Gemini — its own agent_runs row)
-        contents = [f["content"] for f in facts]
-        with agent_run(
-            "fact-extraction",
-            "infrastructure",
-            trigger_kind="event",
-            correlation_id=message_id,
-            correlation_kind="discord_message",
-        ) as run:
-            embeddings = run.call_embedding(contents, model=EMBEDDING_MODEL)
-
-        # 3. Skip near-duplicates (one indexed vector lookup per fact)
-        fresh: list[dict[str, Any]] = []
-        skipped = 0
-        for fact, emb in zip(facts, embeddings):
-            dup = brain.find_near_duplicate(emb, threshold=DEDUP_THRESHOLD)
-            if dup is not None:
-                skipped += 1
-                logger.info(
-                    "capture msg %s: skipping near-duplicate of fact %d (sim %.3f): %s",
-                    message_id, dup[0], dup[1], fact["content"],
-                )
-                continue
-            fresh.append({**fact, "embedding": emb})
-
-        if not fresh:
-            brain.record_capture_message(msg_hash, message_id)
-            return [], skipped, False
-
-        # 4. Insert the batch atomically, then record the message hash
-        ids = brain.insert_facts(fresh, source_type="discord", source_ref=message_id)
-        brain.record_capture_message(msg_hash, message_id)
-        inserted = [
-            {k: v for k, v in fact.items() if k != "embedding"} | {"id": fid}
-            for fact, fid in zip(fresh, ids)
-        ]
-        return inserted, skipped, False
+        # Record the hash only after a successful cognify, so a failed capture
+        # can be retried verbatim.
+        await asyncio.to_thread(brain.record_capture_message, msg_hash, message_id)
+        logger.info("capture msg %s: cognified into the graph", message_id)
+        return "captured"
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        # Only #capture; never react to our own (or any bot's) messages.
         if message.channel.id != CAPTURE_CHANNEL_ID:
             return
         if message.author.bot:
@@ -281,57 +99,19 @@ class CaptureCog(commands.Cog):
 
         await message.add_reaction("⏳")
         try:
-            facts, skipped, exact_repost = await asyncio.to_thread(
-                self._process_capture, text, str(message.id)
-            )
+            result = await self._ingest(text, str(message.id))
             await _safe_remove_hourglass(message, self.bot)
-
-            if exact_repost:
-                await message.add_reaction("✅")
+            await message.add_reaction("✅")
+            if result == "repost":
                 await message.reply(
                     "Already captured — I've seen this exact note before; nothing new written.",
                     mention_author=False,
                 )
-                return
-
-            if not facts and not skipped:
-                await message.add_reaction("🤔")
+            else:
                 await message.reply(
-                    "I didn't find anything to remember there — add a sentence about why it matters.",
+                    "Captured to memory — use `/recall` to find it later.",
                     mention_author=False,
                 )
-                return
-
-            await message.add_reaction("✅")
-            if not facts:
-                await message.reply(
-                    f"Already captured — {skipped} near-duplicate fact"
-                    f"{'s' if skipped != 1 else ''}, nothing new written.",
-                    mention_author=False,
-                )
-                return
-
-            summary = format_summary(facts)
-            if skipped:
-                summary += f"\n(skipped {skipped} near-duplicate{'s' if skipped != 1 else ''})"
-            await message.reply(summary, mention_author=False)
-            logger.info(
-                "capture msg %s → %d fact(s) [%s], %d duplicate(s) skipped",
-                message.id,
-                len(facts),
-                ", ".join(str(f["id"]) for f in facts),
-                skipped,
-            )
-
-        except ValueError as e:
-            await _safe_remove_hourglass(message, self.bot)
-            await message.add_reaction("⚠️")
-            await message.reply(
-                "I couldn't structure that into facts — try rephrasing it.",
-                mention_author=False,
-            )
-            logger.warning("capture parse failure on msg %s: %s", message.id, e)
-
         except Exception:
             await _safe_remove_hourglass(message, self.bot)
             await message.add_reaction("⚠️")

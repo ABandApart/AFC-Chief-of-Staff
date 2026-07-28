@@ -87,8 +87,30 @@ pin takes effect on its next restart — health-check then. Next: **W3** (DataPo
 
 ## W4 — Capture rewrite · ~1 day
 
-- [ ] `#capture` → `cognee.add()`+`cognify()` under `labeled()`; keep the
-  message-hash short-circuit (`capture_messages`), drop the cosine-0.95 layer.
+**Builder-side DONE.** Live validation at the W7 deploy.
+
+- [x] **Mode-1 decision:** capture ingests via `cognee.add(text)` + `cognify()`
+  (cognee extracts + resolves entities — proven in W2), not our DataPoints.
+  Rationale: lowest API risk, plan-literal, free entity resolution. The typed
+  ontology (W3) serves the structured agents (meetings/content), not free-text
+  capture.
+- [x] `cogs/capture.py` rewritten: hash-dedup (kept) → `labeled("fact-extraction")`
+  → add + cognify. Dropped the forced-tool extraction, embedding, cosine-0.95
+  dedup, facts-table insert, and the parse/validate/format helpers.
+- [x] `run.py`: `configure_cognee()` at startup (installs the M1 callback + env
+  before any capture).
+- [x] `brain.py`: removed `insert_facts`/`find_near_duplicate`; kept the
+  capture-hash guard, `insert_outcome`, and `search_facts` (transitional —
+  rewired to the graph in W5).
+- [x] Migration **0004** (applied): `outcomes.attributed_fact_node TEXT`
+  (`attributed_fact_id` kept until W5). The entity↔operational boundary in action.
+- [x] `test_capture.py` trimmed to `message_hash`. Suite 86/86, lint clean.
+- ⚠️ **UX changes:** reply is now a plain "Captured to memory" (no fact echo);
+  no 🤔 "nothing to remember"; ✅ is slower (cognify ~6–40s, but it's a background
+  reaction); no near-dup message (cognee resolves nodes).
+- [ ] **Live validation (barry-agent, W7):** post in #capture → cognified into
+  `aiadaptive_cognee`; exact re-post skipped pre-cognify; ledger shows spend
+  under `fact-extraction`. cognee behavior itself already proven in W2.
 
 ## W5 — Recall rewrite + M2 · ~1–1.5 days
 
