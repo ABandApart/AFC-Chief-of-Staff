@@ -18,8 +18,16 @@ workstreams, not appended.
   updated (`capture.py`, `run_smoke.py`, `_lib/__init__.py`); gate tests rewritten
   (AC2/missing-key deleted, breaker + direct-`assert_under_ceiling` tests added).
   Suite 82/82.
-- [ ] **W1.3** — `cli/reconcile.py`: monthly ledger-vs-provider spend compare
-  (the safety net for dropping the hard gate). **NEXT.**
+- [x] **W1.3** — `cli/reconcile.py`: ledger-vs-provider spend compare. Ledger
+  side automated (by provider, per window); provider side operator-supplied
+  (`--anthropic`/`--gemini` from the dashboards — automating the pull needs
+  org-admin billing creds we don't assume). Flags divergence beyond `--tolerance`
+  (default 15%, or a $0.01 absolute floor for tiny figures); exit 1 on divergence
+  so it can back a monthly routine. Pure logic unit-tested (7); ledger query
+  verified via socket. Suite 89/89.
+
+**W1 (telemetry re-plumb) COMPLETE.** Next: **W2** — cognee stand-up on local
+Postgres with the M1 routing.
 
 > ⚠️ **Runtime prerequisite before deploying W1.2 (barry-agent):** per-agent
 > Anthropic keys are gone — the runtime keychain needs a single **`anthropic-api-key`**
