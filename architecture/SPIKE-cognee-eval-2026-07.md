@@ -161,22 +161,50 @@ not blocked on it. Capture the current lean in the findings block.
 Fill this block at the end of the box. One row per gating question, plus the
 go/no-go call.
 
-### FINDINGS (fill at end of spike)
+### FINDINGS (run: barry-agent 2026-07-28, 3 passes; full capture = run3)
 
-| Q | Measured | Score 🟢/🟡/🔴 | Note / mitigation |
-|---|----------|----------------|-------------------|
-| Q1 Postgres graph | | | |
-| Q2 cognify $/doc | short: __ / transcript: __ | | modeled $/day @30 notes: __ |
-| Q3 label propagation | __% rows labeled | | |
-| Q4 embedding | | | |
-| Q5 RAM headroom | peak RSS __ / free __ | | |
+Source of record: `/Users/Shared/afc-richmond/SPIKE-cognee.md` TASK 3 result +
+`~/spike_cognee_run.log` / `run2.log` / `run3.log` on barry-agent.
 
-**Go / no-go call:**
-- All green → **proceed to migration** (W1–W7, ~9–12 days).
-- Any yellow → **proceed with mitigations**, re-score after real-work W2.
-- Any red → **stop; fall back to Option C** (entity + join tables in the
-  existing Postgres, keep the cost helper) — the ~3–5 day path from the
-  2026-07-05 review.
+| Q | Measured | Score | Note / mitigation |
+|---|----------|-------|-------------------|
+| Q1 Postgres graph | cognify + `GRAPH_COMPLETION` both succeed on local Postgres; provider value **`postgres`** worked first try (Kuzu/networkx/pgsql never needed). Graph is real: 72 nodes / 147 edges / 44 `Entity_name` / 5 summaries; the 2-hop query returned a correct traversal (workflow → asked-by Elena Ruiz + David Okafor). | 🟢 | **No Apache AGE needed** — cognee's postgres graph is plain SQLAlchemy tables over `pgvector`+`pg_trgm` (already installed). The AGE-absent pre-signal is moot. **Single-Postgres premise holds.** |
+| Q2 cognify $/doc | short-note **$0.0043 / $0.0056**; transcript (doc 04) **$0.0139**; all-doc mean **$0.0105**. run3 window total $0.0524 (Haiku $0.0517 + Gemini embed $0.0007). Latency: shorts 6.7–7.0s, transcript 24.9s, longest 43.8s. Dashboard cross-check = **H1 pending**. | 🟢 | Haiku is ~99% of cost; embeddings negligible. **Modeled @30 short notes/day ≈ $0.15/day** — far inside the ~$15/day blast radius. Latency is fine for async capture (not interactive-blocking). |
+| Q3 label propagation | cognify calls **45/45 = 100%** labeled **with correlation_id** (LLM *and* embedding), through the async chunk fan-out. The 5 unlabeled calls are non-cognify (2 startup probes + the graph query's calls), intentionally outside a `labeled()` block. | 🟢 **only with mitigation M1** (else 🔴) | **cognee's default `AnthropicAdapter` calls the raw `anthropic` SDK and bypasses litellm entirely → callback captured 0 LLM calls on run1.** Fix: route Anthropic through cognee's litellm path (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/claude-haiku-4-5` → `GenericAPIAdapter` → `litellm.acompletion`). Verified 100% capture in run3. **Mandatory**, and it deepens the LiteLLM-contract dependency (Q7). |
+| Q4 embedding | dim **768** ✓ (gemini-embedding-001 accepted — the win); **L2-norm ≈ 0.584, NOT unit-norm**. | 🟡 | cognee doesn't renormalize truncated-768 Gemini output. Fix M2: **renormalize on write, or use pgvector cosine `<=>` (normalization-invariant) and never inner-product `<#>`.** Re-score after W2. |
+| Q5 RAM headroom | peak RSS **459 MB** (`/usr/bin/time -l`: 481 MB); install ~67s; `.venv` **837 MB** (+640 MB vs pre-spike). | 🟢 | **>3 GB headroom** on the 16 GB mini even with Postgres + bot resident. |
+
+**Go / no-go call — 🟢 PROCEED WITH MITIGATIONS (barry-admin, 2026-07-28).**
+No 🔴. Q1/Q2/Q5 green; Q3 green *conditional on M1*; Q4 yellow (M2). Per the
+rule (any yellow → proceed with named mitigations, re-score after W2), this is a
+go, not a stop. **Two mitigations carried into the migration:**
+
+- **M1 (telemetry, mandatory):** configure cognee's Anthropic via the litellm
+  `GenericAPIAdapter` (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/…`) so the
+  contextvar+callback telemetry fires for LLM calls, not just embeddings.
+  Without it the ledger silently loses ~99% of spend. Pin the litellm version
+  (Q7) since telemetry now structurally depends on its callback contract.
+- **M2 (embedding):** renormalize the 768-dim Gemini vectors on write, or commit
+  to pgvector cosine `<=>` throughout and forbid `<#>`.
+
+Deferred confirmation: **H1** (compare Q2 estimate to the real Anthropic/Google
+bills) — pending Barry's browser session. Note the dashboard window spans all
+three of today's runs (~$0.10–0.12 Anthropic, <$0.01 Gemini), not just run3.
+
+### Run notes / gotchas for the migration (from the run)
+
+- **Access control:** cognee 1.4.0 defaults to multi-user access control ON; in
+  that mode the pgvector and postgres-graph adapters need **their own**
+  `VECTOR_DB_*` / `GRAPH_DATABASE_*` creds (they don't inherit `DB_*`), and the
+  graph adapter defaulted to port 123. Set `ENABLE_BACKEND_ACCESS_CONTROL=false`
+  for single-user, or supply per-store creds. (W1/W2 config work.)
+- **Install:** `cognee[postgres]` pulls `psycopg2` (source build) even though our
+  runtime uses `psycopg` v3; it failed on keg-only OpenSSL until built with
+  `LDFLAGS/CPPFLAGS` for `openssl@3`+`libpq`. Pin `psycopg2-binary` or set the
+  flags in the real migration.
+- **Harness Q4 bug (fixed 2026-07-28):** the embedding probe used an unquoted
+  mixed-case table name and mis-reported "NOT FOUND"; barry-agent read the vector
+  directly via psql. Probe now quotes identifiers.
 
 ---
 

@@ -275,6 +275,7 @@ def inspect_stores(dsn: str) -> dict:
     import math
 
     import psycopg
+    from psycopg import sql
     out = {"tables": [], "graph_tables": [], "embedding": None, "error": None}
     try:
         with psycopg.connect(dsn) as conn:
@@ -288,23 +289,31 @@ def inspect_stores(dsn: str) -> dict:
                 if any(k in t.lower() for k in ("edge", "graph", "relationship", "node"))
             ]
             # Q4: find a pgvector column, sample one embedding, check dim + norm.
+            # cognee tables are mixed-case (Entity_name, EdgeType_*), so the
+            # identifiers MUST be quoted — sql.Identifier does that. Guard this
+            # probe on its own so a Q4 miss doesn't discard the Q1 table list.
             vec_cols = conn.execute(
                 "SELECT table_name, column_name FROM information_schema.columns "
                 "WHERE udt_name='vector' AND table_schema='public' LIMIT 1"
             ).fetchone()
             if vec_cols:
                 tbl, col = vec_cols
-                row = conn.execute(
-                    f"SELECT {col}::text FROM {tbl} WHERE {col} IS NOT NULL LIMIT 1"
-                ).fetchone()
-                if row and row[0]:
-                    vals = [float(x) for x in row[0].strip("[]").split(",")]
-                    norm = math.sqrt(sum(v * v for v in vals))
-                    out["embedding"] = {
-                        "table": tbl, "column": col,
-                        "dim": len(vals), "l2_norm": round(norm, 4),
-                        "unit_norm": abs(norm - 1.0) < 0.01,
-                    }
+                try:
+                    query = sql.SQL(
+                        "SELECT {col}::text FROM {tbl} WHERE {col} IS NOT NULL LIMIT 1"
+                    ).format(col=sql.Identifier(col), tbl=sql.Identifier(tbl))
+                    row = conn.execute(query).fetchone()
+                    if row and row[0]:
+                        vals = [float(x) for x in row[0].strip("[]").split(",")]
+                        norm = math.sqrt(sum(v * v for v in vals))
+                        out["embedding"] = {
+                            "table": tbl, "column": col,
+                            "dim": len(vals), "l2_norm": round(norm, 4),
+                            "unit_norm": abs(norm - 1.0) < 0.01,
+                        }
+                except Exception as e:
+                    out["embedding"] = {"error": f"{type(e).__name__}: {e}",
+                                        "table": tbl, "column": col}
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
     return out
