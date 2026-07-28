@@ -33,6 +33,9 @@ For questions about **what** the system looks like overall (four layers, agents,
 For **where the system is heading** (proposed cognee pivot, control plane, ingest/output channels, trust boundaries):
 → [`25-target-state.md`](./25-target-state.md) — PROPOSED, pending the cognee go/no-go
 
+For **how to get there** (three tracks, cognee pivot W1–W7, M1/M2 mitigations, effort, rollback):
+→ [`26-cognee-migration-plan.md`](./26-cognee-migration-plan.md) — PROPOSED migration plan
+
 For questions about **where data lives and how it is queried** (Postgres schema, vectorization rules, hybrid search):
 → [`30-memory-layer.md`](./30-memory-layer.md)
 

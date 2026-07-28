@@ -15,6 +15,20 @@ The phasing is borrowed in spirit from Logan Currie's COS getting-started docume
 
 ## Phase Overview
 
+> **Target-state re-sequencing (2026-07-28, PROPOSED).** The memory substrate
+> is pivoting from flat `facts` to a cognee entity graph, and a git-authored
+> control plane (skills/loops/playbooks) is being added. Two new phases — **3.6
+> Control plane** and **3.7 Memory migration** — insert before Phase 4, so every
+> agent from Phase 4 on builds against graph memory + the control plane. Phases
+> 4–13 keep their scope and order; what changes underneath them is the memory
+> API (cognee `search`/`cognify` instead of the RRF SQL) and the telemetry model
+> (labeling + soft ceiling + reconciliation, per mitigation M1 — G1/G2 pre-flight
+> gates and per-agent keys are deprecated). New ingest/output channels (email,
+> Drive) and external exposure (tunnel, B3) are added as a later track. See
+> `25-target-state.md` and the full plan in `26-cognee-migration-plan.md`. All of
+> this is gated on the cognee go/no-go (spike verdict: proceed-with-mitigations,
+> `SPIKE-cognee-eval-2026-07.md`).
+
 <phase_overview>
 
 | Phase | Theme | Duration | Outcome |
@@ -22,6 +36,8 @@ The phasing is borrowed in spirit from Logan Currie's COS getting-started docume
 | 1 | Foundation | Week 1 | Brain reachable, repo structure, credentials in place |
 | 2 | Telemetry primitives | Week 2 | agent_runs, cost helper, G1 + G2 guards live; outcomes table scaffolded |
 | 3 | Capture and recall | Weeks 3–4 | Discord bot live with #capture and #briefing |
+| **3.6** | **Control plane** *(new)* | ~2–3 days | skills/loops/playbooks conventions in git; one scheduler daemon owns loops |
+| **3.7** | **Memory migration (cognee)** *(new)* | ~2 weeks | graph memory replaces flat `facts`; telemetry re-plumbed (M1); embeddings normalized (M2) |
 | 4 | Discovery | Weeks 5–6 | Tartt running, content_items populated, reading recommendations in briefing |
 | 5 | Task Tinder | Week 7 | Candidate task surfacing and accept/decline working |
 | 6 | Inbound prospect intake (W1) | Week 8 | Roy Kent live; WordPress webhook; prospects in briefing |
@@ -32,10 +48,18 @@ The phasing is borrowed in spirit from Logan Currie's COS getting-started docume
 | 11 | Dashboard (W7) | Week 14 | Higgins live; #dashboard channel; G3 anomaly detection in Ted |
 | 12 | Hardening | Week 15 | Backups verified, alerts tuned, runbook documented |
 | 13 | Engagement feedback (v2) | Weeks 16+ | Closing the loop: learn from what's published |
+| **14** | **Exposure — tunnel (B3)** *(new)* | ~2–3 days | authenticated API via Cloudflare/Tailscale tunnel; DB stays local |
+| **15** | **Email channel** *(new)* | ~3–4 days | inbound ingest (B1) + drafted replies (B2) |
+| **16** | **Google Drive channel** *(new)* | ~3–4 days | ingest shared docs (B1) + document output (B2) |
 
-Total to a fully-functional v1 (Phases 1–12): ~15 weeks of evenings/weekends.
+Total to a fully-functional v1 (Phases 1–12): ~15 weeks of evenings/weekends,
+plus ~2–3 weeks for the memory migration (3.6 + 3.7) if the pivot is taken.
+Phases 14–16 (channels & exposure) are a later, additive track — each behind the
+trust boundaries B1/B2, with the tunnel (14) before any external channel.
 
-**Why Phase 2 (telemetry primitives) comes second**: every LLM call from Phase 3 onward must go through the cost helper. Building telemetry first means it's never retrofitted; every agent is born observable and rate-limited. This is a small phase (≤1 week) but blocking on everything that follows.
+**Why Phase 2 (telemetry primitives) comes second**: every LLM call from Phase 3 onward must go through the cost helper. Building telemetry first means it's never retrofitted; every agent is born observable and rate-limited. This is a small phase (≤1 week) but blocking on everything that follows. *(Target-state note: Phase 3.7 W1 re-plumbs this from pre-flight gates + per-agent keys to labeling + a soft post-hoc ceiling + monthly reconciliation, because cognee owns the call site — see `26-cognee-migration-plan.md`.)*
+
+**Why the memory migration (3.7) comes before Phase 4**: Tartt and every agent after it read and write the brain. Pivoting the memory substrate first means the agents are built once, against the graph API, rather than built on flat `facts` and rewritten. The current corpus (~2 facts) makes the data migration itself trivial — the cost is the code, not the data.
 
 **Why W1 (Phase 6) comes before W3 content pipeline**: prospects are the highest-leverage workflow for KR1, and the implementation depends only on Phase 3 (Discord bot for surfacing) and Phase 5 (Task Tinder for action proposals). Putting it before the content pipeline gets value to the north star sooner.
 
@@ -478,5 +502,6 @@ These are not commitments. They are evidence that the architecture has headroom.
 | **2026-07 refactor of Phases 1–3.4** (see `architecture/PROPOSAL-2026-07-05-refactor-review.md`) | Full-system review before Phase 3.5. Shipped in one pass: **(R1)** `agent_runs.usd_cost` widened to NUMERIC(14,8) via migration 0002 — 4dp truncated cheap embedding calls to $0.0000 and carried ~5% error on Haiku calls; **(R2)** PRICE_TABLE validated *before* the paid API call; **(R3)** cached keychain reads (`_lib/creds.py`), shared connection pool (`_lib/db.py`), cached SDK clients — a 3-fact capture previously opened 7+ connections and subprocesses; **(R4)** batch, transactional fact inserts; **(R5)** G1 gated by a local chars/3 estimate, real `count_tokens` only within 80% of cap; **(R6)** hybrid search re-ranked with Reciprocal Rank Fusion (raw ts_rank_cd + cosine were on incomparable scales), canonical implementation moved to `_lib/search.py`; **(R7)** `expires_at` now enforced in recall; **(R8)** near-duplicate facts (cosine ≥ 0.95) skipped at capture; **(R9)** fact extraction via forced tool call (schema-validated, no fence-stripping); **(R10)** G2 "today" = local midnight, plus a $20/day `GLOBAL_DAILY_CEILING`; **(R12)** `/recall` slash command (shared search core) and `/outcome` fact autocomplete (fact link moved from modal free-text to a command param; FK constraint replaces the existence pre-check). Bot handles SIGTERM (pulled forward from 3.5). Nightly `pg_dump` pulled forward from Phase 12 (script pending — runtime task). Planned-phase recommendations (LISTEN/NOTIFY over polling, Batch API + prompt caching, context budgets, ack-then-process webhook + tunnel) live in the proposal and apply at their phases. | 2026-07-05 |
 | **Refactor-phase handback fixes** (runtime validation findings, `PHASE-REFACTOR-2026-07.md`) | barry-agent's re-validation went green but surfaced six findings; triage: **(F1)** identical re-posts could still write facts — extraction is non-deterministic, so a re-post minted a new vague fact past the 0.95 per-fact cosine bar. Fixed with **message-level dedup**: capture hashes the normalized raw text (sha256, whitespace-collapsed + casefolded) and short-circuits before any LLM call on a seen hash; hashes live in `capture_messages` (migration 0003, applied 2026-07-06). The hash is only recorded when extraction found facts, so a no-facts 🤔 message can be retried verbatim. **(F2)** that same vague fact scored 0.551 vs pure gibberish, defeating `DEFAULT_MIN_SIM` 0.55 — floor raised to **0.57** (relevant matches ~0.65+, so margin remains). **(F3)** one-shot CLIs hit `PythonFinalizationError` pool-teardown noise on Python 3.14 — `atexit.register(close_pool)` in `_lib/db.py`. **(F4)** observability: `/recall` now logs query + result count on success; `/outcome` logs FK-rejections. **(F5)** Postgres user-LaunchAgent dies on reboot until barry-admin logs in (bit us 2026-07-06 morning) — LaunchDaemon migration folded into Phase 3.5 as a human action. **(F6)** `/outcome`'s required-choice-then-optional-fact parameter order confused on first use — accepted as-is (Discord command UX constraint; fine once known). | 2026-07-06 |
 | **Cognee data-architecture spike (in flight — no decision yet)** | Before committing further to the hand-built `facts`/vectorized-tables memory model, we're evaluating a pivot to a [cognee](https://github.com/topoteretes/cognee)-style entity **knowledge graph** (graph + vector + relational, cognee 1.4.0, targeting the existing local Postgres). A 1-day **throwaway spike** on branch **`spike/cognee`** (NOT merged; harness + scoping doc `architecture/SPIKE-cognee-eval-2026-07.md` live only there) measures five gating questions with green/yellow/red thresholds: **Q1** does cognee's graph run on local Postgres or fall back to Kuzu (early signal: Apache AGE isn't installable on our box — only `vector`/`pg_trgm`); **Q2** cognify $/doc (we'd be dropping the pre-flight cost gate here — capture is ~$0.001 today); **Q3** whether contextvar+litellm-callback telemetry labels survive cognee's async internals (the agreed replacement for per-agent keys + G1/G2 gates); **Q4** keeping `gemini-embedding-001`@768 + L2-norm; **Q5** 16GB RAM footprint. Any red → **fall back to "Option C"** (add an `entities` + join table in the existing Postgres, keep the cost helper — ~3–5 days) rather than the full ~9–12-day pivot. Runtime run handed to barry-agent via `/Users/Shared/afc-richmond/SPIKE-cognee.md`. Full findings + go/no-go will be recorded as a follow-up decision-log entry. Phase 4 (Tartt) is held until the call is made. | 2026-07-28 |
+| **Spike verdict + target-state architecture drafted** | The 2026-07-28 spike (3 runs) returned **proceed-with-mitigations**, no red: **Q1** graph runs on local Postgres via provider `postgres` — no Apache AGE, single-Postgres premise holds; **Q2** ~$0.005/short note, dashboard-confirmed (Anthropic $0.13 vs ~$0.11 est across all runs); **Q3** 100% telemetry-label coverage **only** via mitigation **M1** (route cognee's Anthropic through litellm's GenericAPIAdapter — the native adapter bypasses the callback); **Q4** `gemini-embedding-001`@768 accepted but **not** L2-normalized → mitigation **M2** (renormalize on write, or use pgvector cosine `<=>` only); **Q5** 459 MB peak, ample 16 GB headroom. On that basis the **target-state architecture** was designed and documented (`25-target-state.md`): the memory-plane/control-plane split, cognee graph memory, a git-authored control plane (skills/loops/playbooks) with a one-way playbook→memory publish, ingest/output channels (email, Drive), and four trust boundaries (data / approval / exposure / provenance). The **migration plan** (`26-cognee-migration-plan.md`) breaks it into three tracks — control plane (~2–3d), cognee pivot W1–W7 (~9–12d, M1/M2 baked in), channels & exposure (per-channel). The **telemetry model changes** with the pivot: pre-flight refusal (G1/G2) and per-agent keys are deprecated in favor of contextvar labeling + a litellm callback + a soft post-hoc ceiling + monthly provider reconciliation (cognee owns the call site, so the wrapping gate can't hold). Build order re-sequenced: new Phases **3.6** (control plane) and **3.7** (memory migration) before Phase 4; new Phases **14–16** (tunnel/email/Drive) as a later additive track. **Go decision (spend the effort + accept Track-C external exposure) remains the operator's**; the plan is drafted so the decision has a concrete path attached. | 2026-07-28 |
 
 </decision_log>
