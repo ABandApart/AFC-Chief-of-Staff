@@ -37,11 +37,23 @@ Postgres with the M1 routing.
 
 ## W2 — Cognee stand-up on local Postgres · ~1–2 days
 
-- [ ] Add pinned `cognee[postgres]`; handle the `psycopg2` build (openssl@3/libpq
-  flags or `psycopg2-binary`). Config: graph provider `postgres`,
-  `ENABLE_BACKEND_ACCESS_CONTROL=false`, per-store `VECTOR_DB_*`/`GRAPH_DATABASE_*`
-  creds, **M1 routing** (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/…`). Cognee
-  stores in a dedicated schema/db, isolated from the operational tables.
+**Builder-side DONE.** Runtime smoke pending (barry-agent, `PHASE-3.7-W2.md`).
+
+- [x] Pinned `cognee[postgres]==1.4.0` in a `cognee` dependency group (not
+  default-synced; the heavy tree + psycopg2 build stay out of the dev/CI env).
+  ⚠️ locking it nudged a shared transitive (`websockets` 16→15.0.1) — tests pass.
+- [x] `agents/_lib/cognee_setup.py`: `build_cognee_env` (pure, tested) +
+  `configure_cognee()` — dedicated **`aiadaptive_cognee`** DB (created by
+  barry-admin, `vector`+`pg_trgm`), all three stores point there,
+  `ENABLE_BACKEND_ACCESS_CONTROL=false`, per-store creds, **M1 routing**
+  (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/claude-haiku-4-5`), embedder kept
+  (`gemini/gemini-embedding-001` @768), installs the litellm callback.
+- [x] `agents/test/cognee_smoke.py` — runtime smoke (cognify 2 docs → graph query
+  → confirm ledger got `cognify_run` rows). `tests/test_cognee_setup.py` (4).
+  Suite 93/93, lint clean, imports without cognee present.
+- [ ] **Runtime (barry-agent):** provision `anthropic-api-key`; `uv sync --group
+  cognee` (psycopg2 build flags); run the smoke; confirm cognify + graph query +
+  ledger. Exit: green smoke.
 
 ## W3 — Domain modeling as DataPoints · ~2–3 days
 

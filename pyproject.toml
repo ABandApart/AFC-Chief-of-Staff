@@ -32,6 +32,13 @@ dev = [
     "pytest>=8.0",
     "pytest-mock>=3.12",
 ]
+# Phase 3.7 / W2 — cognee memory. NOT synced by default (heavy tree; also pulls
+# a psycopg2 source build that needs openssl@3/libpq build flags — see the W2
+# handoff). Install where cognee runs: `uv sync --group cognee`. Pinned exact
+# (Q7 — telemetry structurally depends on litellm's callback contract).
+cognee = [
+    "cognee[postgres]==1.4.0",
+]
 
 [tool.ruff]
 line-length = 100
