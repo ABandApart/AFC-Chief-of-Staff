@@ -30,6 +30,9 @@ For questions about **why** the system is designed this way (principles, three-t
 For questions about **what** the system looks like overall (four layers, agents, data flow):
 → [`20-architecture-overview.md`](./20-architecture-overview.md)
 
+For **where the system is heading** (proposed cognee pivot, control plane, ingest/output channels, trust boundaries):
+→ [`25-target-state.md`](./25-target-state.md) — PROPOSED, pending the cognee go/no-go
+
 For questions about **where data lives and how it is queried** (Postgres schema, vectorization rules, hybrid search):
 → [`30-memory-layer.md`](./30-memory-layer.md)
 
