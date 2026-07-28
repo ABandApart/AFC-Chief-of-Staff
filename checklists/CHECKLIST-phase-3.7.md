@@ -67,9 +67,23 @@ pin takes effect on its next restart — health-check then. Next: **W3** (DataPo
 
 ## W3 — Domain modeling as DataPoints · ~2–3 days
 
-- [ ] Fact/Person/Decision/Meeting/ICPSignal/ContentItem/InterestSignal as
-  `DataPoint` classes; draw the entity↔operational boundary (graph node-id as
-  TEXT on the SQL side, joined in app code, no cross-boundary FK).
+**Builder-side DONE.** Runtime shape-check folds into W4 validation.
+
+- [x] `agents/_lib/ontology.py`: 8 knowledge DataPoints — Organization, Person,
+  Fact, Decision, Meeting, ICPSignal, ContentItem, InterestSignal — with typed
+  relationship fields (edges) and `metadata["index_fields"]`. Added Organization
+  beyond the plan's 7 (the entity-resolution target — "everything about Acme").
+  cognee-or-pydantic-fallback base so the classes import + test without cognee.
+- [x] **Entity↔operational boundary drawn** (ontology docstring): knowledge → the
+  graph; operational state (prospects, tasks, follow_ups, content_pipeline,
+  approval_queue, buffer_posts, outcomes, agent_runs, dashboard, sources) stays
+  SQL; cross-links via a cognee node-id **TEXT** column on the SQL side, joined in
+  app code (no cross-DB FK). Those columns land in W4/W5, not W3.
+- [x] `tests/test_ontology.py` (9 structural tests incl. a 2-hop chain); suite
+  102/102, lint clean.
+- [ ] **Runtime shape-check** (`agents/test/ontology_shape.py`): construct a
+  structured example → `add_data_points` → 2-hop `GRAPH_COMPLETION`. ⚠️ verify the
+  `cognee.low_level.add_data_points` API against 1.4.0. Run with W4 (barry-agent).
 
 ## W4 — Capture rewrite · ~1 day
 
