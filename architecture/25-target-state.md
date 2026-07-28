@@ -119,13 +119,14 @@ aiadaptive-cos/
 **Frontmatter schemas** (YAML)
 
 ```yaml
-# loops/<name>.md
-name: morning-briefing
-schedule: "0 6 * * *"        # cron; owned by the scheduler daemon
-agent: briefing
-playbook: daily-briefing     # references playbooks/daily-briefing.md
+# loops/<name>.md — a loop runs EITHER an agent (+optional playbook) OR a command
+name: morning-briefing       # must match the filename stem
+schedule: "0 6 * * *"        # 5-field cron; owned by the scheduler daemon
 trigger_kind: scheduled
 enabled: true
+agent: briefing              # agent variant …
+playbook: daily-briefing     # … + optional playbook (references playbooks/daily-briefing.md)
+# command: "scripts/pg_backup.sh"   # …or the command variant (non-agent jobs, e.g. backups)
 ```
 
 ```yaml

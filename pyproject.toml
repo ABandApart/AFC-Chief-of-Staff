@@ -17,6 +17,8 @@ dependencies = [
     "google-genai>=2.0.0,<3.0",
     # Phase 3: Discord bot.
     "discord.py>=2.4.0,<3.0",
+    # Phase 3.6: control plane — YAML frontmatter for loop/playbook manifests.
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]
