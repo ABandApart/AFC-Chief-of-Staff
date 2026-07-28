@@ -19,6 +19,8 @@ dependencies = [
     "discord.py>=2.4.0,<3.0",
     # Phase 3.6: control plane — YAML frontmatter for loop/playbook manifests.
     "pyyaml>=6.0",
+    # Phase 3.6: scheduler daemon — cron evaluation for loop manifests.
+    "croniter>=2.0",
 ]
 
 [dependency-groups]

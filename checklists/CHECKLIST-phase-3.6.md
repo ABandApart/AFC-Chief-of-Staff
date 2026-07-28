@@ -21,15 +21,31 @@ Cognee-independent — this stands regardless of the pivot go/no-go.
   the real seed content validates clean (`tests/test_control_plane.py`, 17 tests;
   suite 67/67). Lint clean.
 
-## Deferred to a follow-up (runtime — barry-agent)
+## Scheduler daemon — builder-side DONE
 
-- [ ] **Scheduler daemon** that reads `discover().enabled_loops()` and fires them,
-  replacing the per-job launchd plists (refactor A7). Build builder-side, then
-  cut over in runtime. **Do NOT bootout launchd** until the daemon is validated
-  live — and not before Phase 3.5 runtime is closed (the launchd jobs it
-  installs aren't validated yet).
+- [x] **AC7** — `agents/scheduler/run.py`: reads `discover().enabled_loops()`,
+  computes cron fire times (`croniter`), fires agent loops as
+  `uv run python -m agents.<agent>.run` (with `COS_PLAYBOOK`) and command loops
+  as their command, from the repo root under a login shell. `--dry-run` prints
+  the schedule. SIGTERM/SIGINT exit cleanly (launchd KeepAlive target).
+- [x] **AC8** — `launchd/com.aiadaptive.cos.scheduler.plist` (KeepAlive).
+- [x] **AC9** — Tests (`tests/test_scheduler.py`, 9; suite 76/76): build_command
+  agent/command variants, cron next-fire, plan() over the real seed loops
+  (backup 02:00 before briefing 06:00). Lint clean. `--dry-run` verified.
+
+## Runtime cutover (barry-agent — `/Users/Shared/afc-richmond/PHASE-3.6.md`)
+
+- [ ] Pull; `uv sync` (new deps `croniter`, `pyyaml`); `--dry-run` sanity.
+- [ ] **Cut over:** `bootout` the `briefing` + `pg-backup` calendar plists, then
+  `bootstrap` the scheduler plist. The `discord-bot` plist STAYS (daemon, not a
+  loop). Do NOT run old + new together (loops would double-fire).
+- [ ] Validate: `launchctl kickstart` a test fire; confirm briefing + backup
+  still run under the scheduler. **Not before Phase 3.5 runtime is closed.**
+
+## Deferred to Track B
+
 - [ ] `cli/publish_playbooks.py` (git→cognee publish for `publish_to_memory`
-  playbooks) — belongs to Track B / W5, once the graph exists to publish into.
+  playbooks) — Track B / W5, once the graph exists to publish into.
 
 ## Notes
 

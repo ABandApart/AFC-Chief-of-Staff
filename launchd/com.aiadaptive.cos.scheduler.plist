@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Control-plane scheduler daemon (Phase 3.6). KeepAlive: launchd keeps the
+     daemon alive; the daemon owns loop timing. REPLACES the per-job calendar
+     plists (briefing, pg-backup) — bootout those two at cutover so loops don't
+     double-fire. The discord-bot plist stays (the bot is a daemon, not a loop). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aiadaptive.cos.scheduler</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>cd /Users/barry-agent/agents &amp;&amp; exec uv run python -m agents.scheduler.run</string>
+    </array>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/barry-agent/agents/logs/scheduler.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/barry-agent/agents/logs/scheduler.log</string>
+</dict>
+</plist>
