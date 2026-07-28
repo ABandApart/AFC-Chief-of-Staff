@@ -9,11 +9,11 @@ Meeting → participant → works_at → Organization.
 Run (barry-agent, after `uv sync --group cognee`):
     uv run python -m agents.test.ontology_shape
 
-⚠️ API note: the low-level insert is documented as `cognee.low_level.add_data_points`.
-If the import path or signature differs in cognee 1.4.0, adjust the import below
-(and record the working form) — this is the same "verify against the installed
-version" step the W2 config went through. Writes to `aiadaptive_cognee`; prune
-with the rest before W4 go-live.
+API confirmed against cognee 1.4.0 (2026-07-28): the insert is
+`from cognee.tasks.storage import add_data_points` — an async
+`(data_points, custom_edges=None, embed_triplets=False, ctx=None)`. (It is NOT
+in `cognee.low_level`, which exports only `DataPoint` + `setup`.) Writes to
+`aiadaptive_cognee`.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ async def main() -> int:
     cognee_setup.configure_cognee()
     import cognee
     from cognee import SearchType
-    from cognee.low_level import add_data_points  # adjust if 1.4.0 differs
+    from cognee.tasks.storage import add_data_points  # confirmed 1.4.0
 
     print("[1/2] add_data_points(meeting) — recursive into people/org/fact...")
     meeting = build_example()
