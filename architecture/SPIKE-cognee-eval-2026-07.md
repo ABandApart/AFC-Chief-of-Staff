@@ -169,7 +169,7 @@ Source of record: `/Users/Shared/afc-richmond/SPIKE-cognee.md` TASK 3 result +
 | Q | Measured | Score | Note / mitigation |
 |---|----------|-------|-------------------|
 | Q1 Postgres graph | cognify + `GRAPH_COMPLETION` both succeed on local Postgres; provider value **`postgres`** worked first try (Kuzu/networkx/pgsql never needed). Graph is real: 72 nodes / 147 edges / 44 `Entity_name` / 5 summaries; the 2-hop query returned a correct traversal (workflow → asked-by Elena Ruiz + David Okafor). | 🟢 | **No Apache AGE needed** — cognee's postgres graph is plain SQLAlchemy tables over `pgvector`+`pg_trgm` (already installed). The AGE-absent pre-signal is moot. **Single-Postgres premise holds.** |
-| Q2 cognify $/doc | short-note **$0.0043 / $0.0056**; transcript (doc 04) **$0.0139**; all-doc mean **$0.0105**. run3 window total $0.0524 (Haiku $0.0517 + Gemini embed $0.0007). Latency: shorts 6.7–7.0s, transcript 24.9s, longest 43.8s. Dashboard cross-check = **H1 pending**. | 🟢 | Haiku is ~99% of cost; embeddings negligible. **Modeled @30 short notes/day ≈ $0.15/day** — far inside the ~$15/day blast radius. Latency is fine for async capture (not interactive-blocking). |
+| Q2 cognify $/doc | short-note **$0.0043 / $0.0056**; transcript (doc 04) **$0.0139**; all-doc mean **$0.0105**. run3 window total $0.0524 (Haiku $0.0517 + Gemini embed $0.0007). Latency: shorts 6.7–7.0s, transcript 24.9s, longest 43.8s. **Dashboard cross-check (H1) ✅ 2026-07-28: Anthropic today = $0.13 actual vs ~$0.10–0.12 estimated across all 3 runs — within ~15%, no hidden spend.** | 🟢 | Haiku is ~99% of cost; embeddings negligible. **Modeled @30 short notes/day ≈ $0.15/day** — far inside the ~$15/day blast radius. Latency is fine for async capture (not interactive-blocking). |
 | Q3 label propagation | cognify calls **45/45 = 100%** labeled **with correlation_id** (LLM *and* embedding), through the async chunk fan-out. The 5 unlabeled calls are non-cognify (2 startup probes + the graph query's calls), intentionally outside a `labeled()` block. | 🟢 **only with mitigation M1** (else 🔴) | **cognee's default `AnthropicAdapter` calls the raw `anthropic` SDK and bypasses litellm entirely → callback captured 0 LLM calls on run1.** Fix: route Anthropic through cognee's litellm path (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/claude-haiku-4-5` → `GenericAPIAdapter` → `litellm.acompletion`). Verified 100% capture in run3. **Mandatory**, and it deepens the LiteLLM-contract dependency (Q7). |
 | Q4 embedding | dim **768** ✓ (gemini-embedding-001 accepted — the win); **L2-norm ≈ 0.584, NOT unit-norm**. | 🟡 | cognee doesn't renormalize truncated-768 Gemini output. Fix M2: **renormalize on write, or use pgvector cosine `<=>` (normalization-invariant) and never inner-product `<#>`.** Re-score after W2. |
 | Q5 RAM headroom | peak RSS **459 MB** (`/usr/bin/time -l`: 481 MB); install ~67s; `.venv` **837 MB** (+640 MB vs pre-spike). | 🟢 | **>3 GB headroom** on the 16 GB mini even with Postgres + bot resident. |
@@ -187,9 +187,11 @@ go, not a stop. **Two mitigations carried into the migration:**
 - **M2 (embedding):** renormalize the 768-dim Gemini vectors on write, or commit
   to pgvector cosine `<=>` throughout and forbid `<#>`.
 
-Deferred confirmation: **H1** (compare Q2 estimate to the real Anthropic/Google
-bills) — pending Barry's browser session. Note the dashboard window spans all
-three of today's runs (~$0.10–0.12 Anthropic, <$0.01 Gemini), not just run3.
+**H1 confirmed (2026-07-28):** Anthropic dashboard today = **$0.13** vs the
+~$0.10–0.12 local estimate across all three runs (run3 alone $0.052) — within
+~15%, corroborating the harness's per-doc cost and confirming no
+uninstrumented Anthropic spend. Google side left unverified (spike est <$0.01,
+negligible). **Q2 is now dashboard-backed, not just modeled.**
 
 ### Run notes / gotchas for the migration (from the run)
 
