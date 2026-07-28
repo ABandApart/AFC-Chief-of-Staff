@@ -51,9 +51,19 @@ Postgres with the M1 routing.
 - [x] `agents/test/cognee_smoke.py` — runtime smoke (cognify 2 docs → graph query
   → confirm ledger got `cognify_run` rows). `tests/test_cognee_setup.py` (4).
   Suite 93/93, lint clean, imports without cognee present.
-- [ ] **Runtime (barry-agent):** provision `anthropic-api-key`; `uv sync --group
-  cognee` (psycopg2 build flags); run the smoke; confirm cognify + graph query +
-  ledger. Exit: green smoke.
+- [x] **Runtime (barry-agent):** `anthropic-api-key` provisioned; `uv sync --group
+  cognee` clean (OpenSSL/libpq flags fixed the psycopg2 build); smoke **GREEN**
+  (2026-07-28). cognify + `GRAPH_COMPLETION` + M1 ledger all pass.
+
+**W2 COMPLETE — runtime-proven (2026-07-28).** cognee 1.4.0 stands up on local
+Postgres (graph provider `postgres`, no AGE). Graph query returned the correct
+2-hop answer for both firms. **M1 confirmed in production:** the ledger captured
+18 `cognify_run` calls (anthropic 5 = $0.0095, gemini 13 = $0.0001), agent
+`cognee`, per-doc correlation intact — the native adapter would have logged 0
+Anthropic calls, so the litellm routing is doing its job. Peak RSS ~466 MB.
+⚠️ `aiadaptive_cognee` still holds smoke data — barry-admin prunes/recreates it
+before W4 go-live. ⚠️ bot still on pre-sync modules; the `websockets==15.0.1`
+pin takes effect on its next restart — health-check then. Next: **W3** (DataPoints).
 
 ## W3 — Domain modeling as DataPoints · ~2–3 days
 
