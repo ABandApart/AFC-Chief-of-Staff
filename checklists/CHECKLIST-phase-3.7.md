@@ -110,15 +110,18 @@ pin takes effect on its next restart — health-check then. Next: **W3** (DataPo
   the primary ingestion channel (it's for status/queries/kickoffs/digest); API +
   tools are primary, so the intake confirmation is an easy trade. **Mode-1 is
   final — no hybrid.**
-- [ ] **Follow-on (W5 or Track C):** extract the ingest core (`CaptureCog._ingest`
-  — hash-dedup → `labeled` → add+cognify) into a reusable `agents/_lib/ingest.py
-  ingest_note(text, source_ref, source_type)` so the **API ingestion endpoint**
-  (the primary path) shares it, not just Discord.
+- [x] **Ingest core extracted** → `agents/_lib/ingest.py ingest_note(text, *,
+  source_ref, source_type)` (hash-dedup + capture_messages moved here from
+  brain; labeled add+cognify). `cogs/capture.py` is now a thin caller; the API
+  endpoint (Track C) will share it.
 - [ ] **Live validation (barry-agent, W7):** post in #capture → cognified into
   `aiadaptive_cognee`; exact re-post skipped pre-cognify; ledger shows spend
   under `fact-extraction`. cognee behavior itself already proven in W2.
 
-## W5 — Recall rewrite + M2 · ~1–1.5 days   ← NEXT
+## W5 — Recall rewrite + M2 · ~1–1.5 days   ← IN PROGRESS
+
+**Core DONE (ingest extraction + graph recall).** Remaining: /outcome rewire,
+publish_playbooks, M2 runtime check, orphaned facts.
 
 Build against these confirmed facts (cognee 1.4.0, verified 2026-07-28):
 `from cognee import SearchType` → `SearchType.GRAPH_COMPLETION`; `cognee.search(...)`
@@ -126,11 +129,11 @@ and `cognee.add/cognify` are async; `configure_cognee()` (from
 `agents/_lib/cognee_setup`) must run once before any search — the bot does it in
 `run.py setup_hook`, so a **CLI must call it at startup too**.
 
-- [ ] New `agents/_lib/graph_recall.py`: `async recall(query, limit) ->` results
+- [x] `agents/_lib/graph_recall.py`: `async recall(query, limit) ->` results
   via `cognee.search(query_type=SearchType.GRAPH_COMPLETION, query_text=query)`.
   Replaces `agents/_lib/search.py` (RRF `HYBRID_SQL` over the facts table). No
   query-embedding step (cognee handles retrieval internally).
-- [ ] Rewrite `cli/recall.py` (calls `configure_cognee()` then `graph_recall`;
+- [x] Rewrote `cli/recall.py` (calls `configure_cognee()` then `graph_recall`;
   it's async now) and `cogs/recall.py` (`_search` → the graph call). Drop
   `agents/_lib/search.py` + `tests/test_recall.py` (RRF-specific) — or repoint
   them at `graph_recall`.
@@ -150,8 +153,9 @@ and `cognee.add/cognify` are async; `configure_cognee()` (from
 - [ ] **Old facts:** the 2 pre-pivot rows (`facts` #3/#4) are orphaned once recall
   is graph-native — cognify them into the graph or drop the `facts` table (trivial
   at 2 rows). Decide + do at W5 or W7.
-- [ ] Tests for the pure bits (result formatting); runtime capture→recall loop is
-  W7 live validation.
+- [x] Pure tests: `test_ingest.py` (message_hash) + `test_graph_recall.py`
+  (answer normalizer). Removed `_lib/search.py` + test_recall/test_capture.
+  Suite 85/85. Runtime capture→recall loop = W7.
 
 ## W6 — Docs + PRDs · ~2 days
 
