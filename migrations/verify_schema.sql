@@ -3,9 +3,10 @@
 -- =============================================================================
 -- Run via:  psql "$DB_URL" -f migrations/verify_schema.sql
 -- Or paste into Supabase SQL Editor.
--- Expects 19 tables and 2 extensions. Reports FAIL lines if anything missing.
--- (Baseline 0001 was 18 with `facts`; 0006 dropped `facts`, and 0003/0005 added
--- `capture_messages` + `playbook_publications` → 18 - 1 + 2 = 19.)
+-- Expects 20 tables and 2 extensions. Reports FAIL lines if anything missing.
+-- (Baseline 0001 was 18 with `facts`; 0006 dropped `facts`, and 0003/0005/0007
+-- added `capture_messages` + `playbook_publications` + `channel_state`
+-- → 18 - 1 + 3 = 20.)
 -- =============================================================================
 
 \echo
@@ -16,12 +17,13 @@ SELECT
 FROM pg_extension;
 
 \echo
-\echo '=== Expected tables (19) ==='
+\echo '=== Expected tables (20) ==='
 WITH expected(name) AS (VALUES
     ('agent_runs'),
     ('approval_queue'),
     ('buffer_posts'),
     ('capture_messages'),
+    ('channel_state'),
     ('content_items'),
     ('content_pipeline'),
     ('dashboard'),

@@ -6,7 +6,9 @@ exercised by runtime validation). Same dedup-key behavior as pre-pivot capture.
 
 from __future__ import annotations
 
-from agents._lib.ingest import message_hash
+import inspect
+
+from agents._lib.ingest import CAPTURE_DATASET, ingest_note, message_hash
 
 
 def test_hash_stable_for_identical_text():
@@ -27,3 +29,12 @@ def test_hash_differs_for_different_words():
 def test_hash_is_hex_sha256():
     h = message_hash("anything")
     assert len(h) == 64 and all(c in "0123456789abcdef" for c in h)
+
+
+def test_ingest_note_defaults_preserve_discord_behavior():
+    """The Track C dataset/label overrides must default to the original Discord
+    capture values, so existing callers (cogs/capture.py) are unchanged."""
+    params = inspect.signature(ingest_note).parameters
+    assert params["dataset"].default == CAPTURE_DATASET == "capture"
+    assert params["label_agent"].default == "fact-extraction"
+    assert params["label_function"].default == "customer_discovery"

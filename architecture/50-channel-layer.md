@@ -9,6 +9,39 @@
 
 This file defines the Discord bot, channel layout, interaction patterns (Task Tinder, approvals, capture), and the wire between Discord events and brain writes. The bot is a router; all logic lives in the action layer.
 
+> **Scope note (post-pivot).** This doc predates the cognee pivot and the Track C
+> channels; treat it as the **Discord + outbound/approval (B2)** reference, not the
+> ingestion model of record. The current ingestion core is
+> `agents/_lib/ingest.py::ingest_note` (see `30-memory-layer.md`), and the
+> flat-`facts` capture path described below (cosine-0.95 dedup, `brain.insert_facts`)
+> was replaced by `cognee.add`+`cognify` in Phase 3.7.
+
+---
+
+## Track C — ingestion channels (beyond Discord)
+
+<track_c_channels>
+
+Additional ingestion channels feed the **same** `ingest_note` core, each with its
+own cognee dataset and spend label. All are **untrusted → B1** (ingested text is
+data, never instructions).
+
+- **Granola (meetings)** — built (channel 1). A scheduled poller
+  (`agents/granola/run.py`) reads notes from Granola's public REST API and
+  ingests title/date/attendees + summary + transcript into the `granola` dataset
+  (mode-1). ⚠️ supersedes the Phase-7 "Granola export folder" watcher — Granola
+  encrypted its local cache (~Apr 2026); the API is now the path.
+- **Google Drive (docs)** — next. OAuth-scoped folder ingest → `ingest_note`.
+- **Email, inbound API/webhooks** — later; these are the *externally-reachable*
+  channels that require the **B3** tunnel first.
+
+Trust-boundary note: Granola and Drive *ingest* are **pull** channels (the Mac
+mini calls out), so they need **neither B3** (no inbound exposure) **nor B2** (no
+outbound action). B3 gates only inbound-reachable channels; B2 gates outbound
+actions like Drive document *output* or drafted email replies.
+
+</track_c_channels>
+
 ---
 
 ## Discord Server Layout

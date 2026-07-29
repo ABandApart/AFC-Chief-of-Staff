@@ -85,6 +85,7 @@ DAILY_CEILINGS: dict[str, float] = {
     "meeting-processor": 3.00,   # Phase 7 ($1/transcript, capped at $3/day)
     "fact-extraction":   2.00,   # Phase 3
     "recall":            0.50,   # Phase 3.3 — query embeddings only (gemini, cheap)
+    "granola":           3.00,   # Track C — meeting-note ingest (cognify per note)
 }
 
 # System-wide kill switch: total spend across ALL agents per day.
