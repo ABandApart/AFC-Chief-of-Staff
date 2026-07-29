@@ -105,9 +105,15 @@ pin takes effect on its next restart — health-check then. Next: **W3** (DataPo
 - [x] Migration **0004** (applied): `outcomes.attributed_fact_node TEXT`
   (`attributed_fact_id` kept until W5). The entity↔operational boundary in action.
 - [x] `test_capture.py` trimmed to `message_hash`. Suite 86/86, lint clean.
-- ⚠️ **UX changes:** reply is now a plain "Captured to memory" (no fact echo);
-  no 🤔 "nothing to remember"; ✅ is slower (cognify ~6–40s, but it's a background
-  reaction); no near-dup message (cognee resolves nodes).
+- ✅ **UX changes ACCEPTED by operator (2026-07-28):** reply is a plain "Captured
+  to memory" (no fact echo), no 🤔, slower background ✅. Rationale: Discord isn't
+  the primary ingestion channel (it's for status/queries/kickoffs/digest); API +
+  tools are primary, so the intake confirmation is an easy trade. **Mode-1 is
+  final — no hybrid.**
+- [ ] **Follow-on (W5 or Track C):** extract the ingest core (`CaptureCog._ingest`
+  — hash-dedup → `labeled` → add+cognify) into a reusable `agents/_lib/ingest.py
+  ingest_note(text, source_ref, source_type)` so the **API ingestion endpoint**
+  (the primary path) shares it, not just Discord.
 - [ ] **Live validation (barry-agent, W7):** post in #capture → cognified into
   `aiadaptive_cognee`; exact re-post skipped pre-cognify; ledger shows spend
   under `fact-extraction`. cognee behavior itself already proven in W2.
