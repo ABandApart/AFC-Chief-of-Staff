@@ -112,23 +112,80 @@ pin takes effect on its next restart — health-check then. Next: **W3** (DataPo
   `aiadaptive_cognee`; exact re-post skipped pre-cognify; ledger shows spend
   under `fact-extraction`. cognee behavior itself already proven in W2.
 
-## W5 — Recall rewrite + M2 · ~1–1.5 days
+## W5 — Recall rewrite + M2 · ~1–1.5 days   ← NEXT
 
-- [ ] Replace RRF `HYBRID_SQL`/`_lib/search.py` with cognee `GRAPH_COMPLETION`;
-  rewrite `cli/recall.py` + `/recall` cog. **M2**: renormalize the 768-dim Gemini
-  vectors, or use pgvector cosine `<=>` only (+ regression test).
-- [ ] `cli/publish_playbooks.py` — git→cognee publish of `publish_to_memory`
-  playbooks into the trusted `playbooks` dataset (carried from Phase 3.6).
+Build against these confirmed facts (cognee 1.4.0, verified 2026-07-28):
+`from cognee import SearchType` → `SearchType.GRAPH_COMPLETION`; `cognee.search(...)`
+and `cognee.add/cognify` are async; `configure_cognee()` (from
+`agents/_lib/cognee_setup`) must run once before any search — the bot does it in
+`run.py setup_hook`, so a **CLI must call it at startup too**.
+
+- [ ] New `agents/_lib/graph_recall.py`: `async recall(query, limit) ->` results
+  via `cognee.search(query_type=SearchType.GRAPH_COMPLETION, query_text=query)`.
+  Replaces `agents/_lib/search.py` (RRF `HYBRID_SQL` over the facts table). No
+  query-embedding step (cognee handles retrieval internally).
+- [ ] Rewrite `cli/recall.py` (calls `configure_cognee()` then `graph_recall`;
+  it's async now) and `cogs/recall.py` (`_search` → the graph call). Drop
+  `agents/_lib/search.py` + `tests/test_recall.py` (RRF-specific) — or repoint
+  them at `graph_recall`.
+- [ ] **M2 — re-scope for mode-1:** cognee owns retrieval, so our pgvector-cosine
+  fix doesn't apply directly. Instead **verify cognee's recall quality** with its
+  un-normalized 768-dim Gemini vectors (spike found norm ≈ 0.58). If weak,
+  configure cognee's embedding normalization or distance metric (env/config), or
+  re-embed. This is a runtime quality check, not an on-write code fix.
+- [ ] **`/outcome` rewire:** `brain.search_facts` (facts-table autocomplete) →
+  a cognee search returning fact node-ids; `OutcomeModal` writes
+  `attributed_fact_node` (TEXT, migration 0004 done) not `attributed_fact_id`.
+  ⚠️ verify how to search for fact nodes + read their ids in the API.
+- [ ] `cli/publish_playbooks.py` — git→cognee publish of `publish_to_memory: true`
+  playbooks into a dedicated **trusted `playbooks` dataset** (`cognee.add(..., 
+  dataset_name="playbooks")` + `cognify`); agent retrieval scoped to that dataset
+  only (B1). Carried from Phase 3.6.
+- [ ] **Old facts:** the 2 pre-pivot rows (`facts` #3/#4) are orphaned once recall
+  is graph-native — cognify them into the graph or drop the `facts` table (trivial
+  at 2 rows). Decide + do at W5 or W7.
+- [ ] Tests for the pure bits (result formatting); runtime capture→recall loop is
+  W7 live validation.
 
 ## W6 — Docs + PRDs · ~2 days
 
-- [ ] Rewrite `30-memory-layer.md`, `80-telemetry-layer.md`, and the Phase
-  4/7/8/10 PRDs to the graph model + new telemetry model.
+- [ ] Rewrite `30-memory-layer.md`: the `facts`/vectorized-tables schema + RRF
+  hybrid search → cognee graph (DataPoints in `agents/_lib/ontology.py`), the
+  `aiadaptive_cognee` DB, and the entity↔operational boundary (node-id TEXT
+  columns, join in app code, no cross-DB FK).
+- [ ] Rewrite `80-telemetry-layer.md`: G1/G2 pre-flight + per-agent keys are gone
+  → labeling (`_lib/telemetry_context`, M1) + soft breaker (`assert_under_ceiling`)
+  + `cli/reconcile`. Single `anthropic-api-key`.
+- [ ] Decision-log entry in `70-build-order.md`: migration complete (mode-1
+  capture, graph recall, M1/M2 outcomes).
+- [ ] Note: PRDs for Phases 4/7/8/10 don't exist yet — they inherit the graph
+  model when written (not a W6 rewrite target).
 
-## W7 — Validate + redeploy · ~1–1.5 days
+## W7 — Validate + redeploy · ~1–1.5 days (barry-agent runtime)
 
-- [ ] Runtime pull/sync (large dep delta), restart bot, re-drive capture/recall,
-  confirm the ledger fills + reconcile matches. Coordination file for barry-agent.
+Prereqs already done: `anthropic-api-key` provisioned; migration 0004 applied to
+`aiadaptive_cos` (socket); `aiadaptive_cognee` pruned empty. Consider bundling
+with the **3.6 scheduler cutover** and the **3.5 3c** log check (all pending
+runtime).
+
+- [ ] barry-agent: `git pull`; `uv sync --group cognee` (OpenSSL/libpq build
+  flags — see PHASE-3.7-W2.md); expect `websockets==15.0.1`.
+- [ ] Restart the bot (`launchctl kickstart …discord-bot`) — picks up
+  `configure_cognee()` at startup, mode-1 capture, graph recall, and the
+  websockets pin. **Health-check** after (pin only applies on restart).
+- [ ] Live validation: post in `#capture` → cognified into `aiadaptive_cognee`;
+  exact re-post skipped pre-cognify; `/recall` returns a graph answer; `/outcome`
+  links a fact node; `agent_runs` shows the spend (agent `fact-extraction`,
+  `cognify_run`); `cli/reconcile` matches. Run `agents/test/ontology_shape.py`
+  (structured-ingestion path) once too.
+- [ ] Migrate/drop the 2 old `facts` rows if not done in W5.
+
+## Still-open runtime items (carry across the migration)
+
+- 3.5 close-out: barry-agent 3c log-line check.
+- 3.6 scheduler cutover: bootout briefing+pg-backup plists, bootstrap scheduler
+  (CHECKLIST-phase-3.6.md) — not before 3.5 runtime closed; don't run old+new.
+- H4: rotate `anthropic-key-*` → the single `anthropic-api-key` (postponed).
 
 ## Rollback
 
