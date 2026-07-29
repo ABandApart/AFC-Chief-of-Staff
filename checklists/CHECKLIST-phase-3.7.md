@@ -202,34 +202,47 @@ and `cognee.add/cognify` are async; `configure_cognee()` (from
 - [x] Note: PRDs for Phases 4/7/8/10 don't exist yet — they inherit the graph
   model when written (not a W6 rewrite target).
 
-## W7 — Validate + redeploy · ~1–1.5 days (barry-agent runtime)
+## W7 — Validate + redeploy · **DEPLOYED (barry-agent, 2026-07-28)**
 
-Prereqs already done: `anthropic-api-key` provisioned; migration 0004 applied to
-`aiadaptive_cos` (socket); `aiadaptive_cognee` pruned empty. **New runtime steps:**
-apply migrations **0005** (`playbook_publications`) and **0006** (drop `facts` +
-the two `outcomes` fact-link columns) to `aiadaptive_cos`, then run
-`uv run python -m cli.publish_playbooks` once (seeds the trusted `playbooks`
-dataset). Consider bundling with the **3.6 scheduler cutover** and the **3.5 3c**
-log check (all pending runtime).
+**Phase 3.7 is live in production** (`main`@`e8369d3`). Handback:
+`/Users/Shared/afc-richmond/PHASE-3.7-W7.md`. All tasks green; the load-bearing
+order (restart onto new code → smoke → drop `facts`) held.
 
-- [ ] barry-agent: `git pull`; `uv sync --group cognee` (OpenSSL/libpq build
-  flags — see PHASE-3.7-W2.md); expect `websockets==15.0.1`.
-- [ ] Restart the bot (`launchctl kickstart …discord-bot`) — picks up
-  `configure_cognee()` at startup, mode-1 capture, graph recall, and the
-  websockets pin. **Health-check** after (pin only applies on restart).
-- [ ] Live validation: post in `#capture` → cognified into `aiadaptive_cognee`;
-  exact re-post skipped pre-cognify; `/recall` returns a graph answer; `/outcome`
-  links a fact node; `agent_runs` shows the spend (agent `fact-extraction`,
-  `cognify_run`); `cli/reconcile` matches. Run `agents/test/ontology_shape.py`
-  (structured-ingestion path) once too.
-- [ ] Migrate/drop the 2 old `facts` rows if not done in W5.
+- [x] `git pull` → `e8369d3`; `uv sync --group cognee` (OpenSSL/libpq flags)
+  clean; `websockets==15.0.1`; suite 93 passed.
+- [x] Bot restarted (`launchctl kickstart -k …discord-bot`) → **PID 82622**;
+  `configure_cognee()` ran at startup (M1 callback line in the log), gateway
+  clean on websockets 15.0.1 (closes the W2 open item), no errors.
+- [x] Smoke (TASK 3, before the drop): `#capture` → "Captured to memory"
+  (mode-1), exact re-post skipped, `/recall` graph answer, ledger shows
+  `fact-extraction` + `recall` spend. **Then** migrations 0005 + 0006 applied →
+  `facts` dropped, **19 tables**, `playbook_publications` present (pre-drop
+  safety dump of the 2 rows at `~/w7_predrop_safety/`).
+- [x] `cli.publish_playbooks` seeded 2 playbooks (re-run 0 — hash-idempotent).
+  ⚠️ **gotcha:** playbook cognify is slow (~1–2 min/doc) — run it detached, not
+  in a short-timeout foreground.
+- [x] `/outcome` #8 recorded with no fact-link, no error; `cli.reconcile`
+  ledger-only view clean (MTD ~$0.068).
+- [x] **M2 recall-quality gate PASSED** — operator judged recall usefully
+  accurate; the un-normalized 768-dim Gemini vectors caused no visible retrieval
+  problem, so no `cognee_setup.py` normalization/distance change is needed now.
+- [x] Both DBs back up (`aiadaptive_cos` + `aiadaptive_cognee` dumps confirmed).
 
-## Still-open runtime items (carry across the migration)
+## Still-open runtime items
 
-- 3.5 close-out: barry-agent 3c log-line check.
-- 3.6 scheduler cutover: bootout briefing+pg-backup plists, bootstrap scheduler
-  (CHECKLIST-phase-3.6.md) — not before 3.5 runtime closed; don't run old+new.
-- H4: rotate `anthropic-key-*` → the single `anthropic-api-key` (postponed).
+- [x] **3.5 close-out (3c/F4):** recall log-lines confirmed (query + result count).
+- [x] **3.6 scheduler cutover:** `com.aiadaptive.cos.scheduler` bootstrapped
+  (PID 85122, running `morning-briefing` + `nightly-backup`); the `briefing` +
+  `pg-backup` calendar plists `bootout` **and** `disable`d (durable, no
+  double-fire on login); `discord-bot` untouched. Backups now run under the
+  scheduler's `nightly-backup` loop (same dual-DB script).
+- [ ] **H4** (operator/barry-agent): rotate `anthropic-api-key` + retire the old
+  `anthropic-key-*` items, now that mode-1 is live on the single key.
+- [ ] **Cleanup (non-blocking):** prune any `w2_smoke` leftover from
+  `aiadaptive_cognee`; delete the disabled `briefing`/`pg-backup` plist files
+  from `~/Library/LaunchAgents` (they're disabled, so optional).
+- [ ] **Monthly:** run `cli.reconcile --anthropic <$> --gemini <$>` with the
+  provider-dashboard figures for the real divergence check.
 
 ## Rollback
 

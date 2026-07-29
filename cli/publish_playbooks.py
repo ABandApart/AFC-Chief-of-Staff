@@ -15,6 +15,10 @@ playbook would duplicate graph nodes and burn LLM spend. We track the last
 published content hash per playbook in `playbook_publications` (aiadaptive_cos)
 and skip a playbook whose hash is unchanged. `--force` ignores the tracker.
 
+⚠️ cognify is slow (~1–2 min per playbook, observed at the W7 deploy). Run this
+detached rather than in a short-timeout foreground; because it's hash-idempotent,
+a re-run after a mid-cognify interruption resumes on the un-published ones only.
+
 ⚠️ Known limitation: when a playbook *changes*, this re-cognifies the new content
 but does not delete the previous version's nodes from the graph (cognee dataset
 node-deletion API to be verified at runtime — W7). Publishing is git-driven and
