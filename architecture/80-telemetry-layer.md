@@ -7,14 +7,30 @@
 
 ## Purpose
 
-This file defines the telemetry layer: how the system measures itself, prevents runaway token spend, and reports against the north star. It sits alongside channel, action, and memory as the fourth layer — observability for the AFC Richmond agent swarm.
+This file defines the telemetry layer: how the system measures itself, bounds
+token spend, and reports against the north star. It sits alongside channel,
+action, and memory as the fourth layer — observability for the AFC Richmond agent
+swarm.
 
-The layer has four components:
+> **Phase 3.7 re-plumb (M1).** The cognee pivot changed this layer's shape.
+> cognee owns the call site for most LLM spend and can't support per-call gating,
+> so the old **pre-flight refusal** model (a per-run token cap that aborted a
+> call, a hard per-day gate) is gone, and so are per-agent Anthropic keys. The
+> model is now uniform: **label + record every call**, bound spend with a **soft
+> daily breaker** that blocks the *next* invocation once a ceiling is crossed, and
+> verify with a **monthly reconcile** against the provider bills. Attribution
+> lives entirely in the `agent_runs` ledger, not in provider dashboards.
 
-1. The `agent_runs` ledger — every LLM call recorded with cost
-2. The cost-emission helper — single source of truth for ledger writes
-3. Three runaway-prevention guards — per-run cap, per-day ceiling, anomaly detection
-4. Two reporting agents — Ted (reactive, 6-hourly) and Higgins (reflective, weekly)
+The layer has five components:
+
+1. The `agent_runs` ledger — every LLM/embedding call recorded with cost
+2. The cost-emission helper (`_lib/runs.py`) — the write path for our **own**
+   agents' calls
+3. The labeling path (`_lib/telemetry_context.py`, M1) — the write path for
+   **cognee's** internal calls, which we don't own the call site of
+4. Spend discipline — a soft daily breaker (`assert_under_ceiling`) + a monthly
+   `cli/reconcile` backstop, plus retrospective anomaly detection (G3, Ted)
+5. Two reporting agents — Ted (reactive, 6-hourly) and Higgins (reflective, weekly)
 
 ---
 
@@ -40,26 +56,28 @@ Every workflow ultimately serves one or more of these KRs. Every metric ultimate
 
 <agent_runs_table>
 
-Every LLM call from every agent writes one row. This single table feeds spend metrics, cost-per-output calculations, token-discipline tracking, and anomaly detection.
+Every LLM/embedding call — from our own agents *and* from cognee — writes one
+row. This single table feeds spend metrics, cost-per-output calculations,
+token-discipline tracking, the soft breaker, reconcile, and anomaly detection.
 
 ```sql
 CREATE TABLE agent_runs (
     id              BIGSERIAL PRIMARY KEY,
-    agent_name      TEXT NOT NULL,        -- 'tartt', 'keeley_strategy', etc.
+    agent_name      TEXT NOT NULL,        -- 'tartt', 'fact-extraction', 'cognee', …
     function_label  TEXT NOT NULL,        -- 'news_aggregation', 'topic_research',
                                           -- 'action_surfacing', 'customer_discovery',
                                           -- 'infrastructure', 'telemetry'
     trigger_kind    TEXT NOT NULL,        -- 'scheduled', 'event', 'manual'
     started_at      TIMESTAMPTZ NOT NULL,
     ended_at        TIMESTAMPTZ,
-    status          TEXT NOT NULL,        -- 'success', 'partial', 'failed', 'token_cap_exceeded'
+    status          TEXT NOT NULL,        -- 'success', 'partial', 'failed'
     llm_provider    TEXT,                 -- 'gemini', 'anthropic', null for non-LLM agents
     llm_model       TEXT,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
     usd_cost        NUMERIC(14,8),  -- widened from (10,4) in migration 0002: 4dp truncated cheap embedding calls to $0.0000
-    correlation_id  TEXT,                 -- e.g. content_item_id, prospect_id
-    correlation_kind TEXT,                -- 'content_item', 'prospect', 'transcript', etc.
+    correlation_id  TEXT,                 -- e.g. content_item_id, prospect_id, capture source_ref
+    correlation_kind TEXT,                -- 'content_item', 'prospect', 'cognify_run', …
     error_text      TEXT
 );
 
@@ -68,69 +86,79 @@ CREATE INDEX agent_runs_status_idx     ON agent_runs (status) WHERE status != 's
 CREATE INDEX agent_runs_function_idx   ON agent_runs (function_label, started_at DESC);
 ```
 
-**Function labels** match the four core swarm functions plus two for system work:
+> `status` no longer includes `token_cap_exceeded` — the per-run cap that produced
+> it (G1) was removed in the pivot. cognee's calls carry
+> `correlation_kind='cognify_run'`, so `GROUP BY correlation_id` rolls a whole
+> cognify (its per-chunk fan-out) up to one logical operation.
+
+**Function labels** match the four core swarm functions plus two for system work.
+`agent_name` is finer-grained than `function_label`; cognee's work maps in as
+below:
 
 | Label | Agents |
 |-------|--------|
 | `news_aggregation` | Tartt |
 | `topic_research` | Keeley Strategy, Nate Shelley |
 | `action_surfacing` | Briefing, Task extractors, Meeting processor |
-| `customer_discovery` | Roy Kent, Nate Shelley (also contributes), inbound webhooks |
-| `infrastructure` | Sam, Ted, Fact extraction, Discord bot fact extraction |
+| `customer_discovery` | Roy Kent, Nate Shelley, inbound webhooks, **cognee capture** (`agent_name='fact-extraction'`) |
+| `infrastructure` | Sam, **recall** (`graph_recall`), **playbook-publish**, **cognee** (unlabeled internal calls) |
 | `telemetry` | Higgins, Ted's anomaly detection |
 
-Some agents (Nate Shelley) serve more than one function. Each run records the function label active for that specific run.
+Some agents (Nate Shelley) serve more than one function. Each run records the
+function label active for that specific run.
 
 </agent_runs_table>
 
 ---
 
-## The Cost-Emission Helper
+## The Cost-Emission Helper (own agents)
 
 <cost_helper>
 
-Every agent invokes LLMs through a single Python helper. No agent computes its own cost reporting. No agent calls an LLM SDK directly. This is enforced by convention and by code review at the git-gate.
+Our own agents invoke LLMs through a single Python helper, `_lib/runs.py`. No
+agent computes its own cost reporting. No agent calls an LLM SDK directly. This is
+enforced by convention and by code review at the git-gate. (cognee is the
+exception — it *does* call providers itself; that spend is captured by the
+labeling path, next section.)
 
 <helper_interface>
 
 ```python
-# ~/agents/_lib/runs.py
-
-from contextlib import contextmanager
-from typing import Optional, Iterator
-import time
+# agents/_lib/runs.py
 
 @contextmanager
 def agent_run(
-    agent_name: str,
+    agent_name: str,           # must have a DAILY_CEILINGS entry (else ValueError)
     function_label: str,
     *,
-    trigger_kind: str = "scheduled",
-    correlation_id: Optional[str] = None,
-    correlation_kind: Optional[str] = None,
+    trigger_kind: str = "manual",
+    correlation_id: str | None = None,
+    correlation_kind: str | None = None,
 ) -> Iterator["RunContext"]:
+    """Records exactly one agent_runs row per run.
+    On entry: soft daily breaker (assert_under_ceiling) — raises
+      DailyCeilingExceeded and writes no row if the agent/system is over.
+    On exit: writes the row (success or failed) with tokens + cost.
     """
-    Context manager that records an agent_run row.
-    On entry: checks per-day spend ceiling; refuses if exceeded.
-    On exit: writes the row with cost, status, errors.
-    LLM calls within the block go through the RunContext methods
-    so token caps and cost capture are enforced.
-    """
-    # ... see implementation below
 
 
 class RunContext:
-    def call_gemini(self, prompt: str, *, model: str,
-                    max_input_tokens: int, max_output_tokens: int) -> str:
-        """Calls Gemini with enforced caps. Returns response text.
-           Raises TokenCapExceeded if caps would be violated."""
-
+    # No max_input_tokens anywhere — the per-run input cap (G1) was removed.
     def call_anthropic(self, messages: list, *, model: str,
-                       max_input_tokens: int, max_output_tokens: int) -> str:
-        """Calls Anthropic with enforced caps. Returns response text."""
+                       max_output_tokens: int, system: str | None = None) -> str: ...
 
-    def call_embedding(self, texts: list[str], *, model: str) -> list[list[float]]:
-        """Calls embedding provider. Tracks token cost. No output cap (embeddings are bounded)."""
+    def call_anthropic_structured(self, messages: list, *, model: str,
+                       max_output_tokens: int, tool_name: str,
+                       tool_description: str, input_schema: dict,
+                       system: str | None = None) -> dict:
+        """Single forced tool → schema-validated output dict."""
+
+    def call_gemini(self, prompt: str, *, model: str,
+                    max_output_tokens: int) -> str: ...
+
+    def call_embedding(self, texts: list[str], *, model: str = "gemini-embedding-001",
+                       output_dimensionality: int = 768) -> list[list[float]]:
+        """L2-normalizes the 768-dim truncation (the API does not — M2)."""
 ```
 
 </helper_interface>
@@ -138,20 +166,19 @@ class RunContext:
 <helper_usage_example>
 
 ```python
-# In ~/agents/tartt/run.py
-from _lib.runs import agent_run
+from agents._lib.runs import agent_run
 
-def summarize_item(item_text, item_id):
-    with agent_run("tartt", "news_aggregation",
-                   correlation_id=str(item_id),
-                   correlation_kind="content_item") as run:
-        summary = run.call_gemini(
-            prompt=build_summary_prompt(item_text),
-            model="gemini-2.5-flash",
-            max_input_tokens=4000,
-            max_output_tokens=500,
+def qualify(prospect_text, prospect_id):
+    with agent_run("roy-kent", "customer_discovery",
+                   trigger_kind="event",
+                   correlation_id=str(prospect_id),
+                   correlation_kind="prospect") as run:
+        return run.call_anthropic_structured(
+            messages=[{"role": "user", "content": prospect_text}],
+            model="claude-haiku-4-5", max_output_tokens=600,
+            tool_name="qualify", tool_description="Score ICP fit.",
+            input_schema=QUALIFY_SCHEMA,
         )
-        return summary
 ```
 
 </helper_usage_example>
@@ -160,32 +187,46 @@ def summarize_item(item_text, item_id):
 
 The helper handles four responsibilities, in order:
 
-1. **Pre-call check**: queries `SUM(usd_cost) FROM agent_runs WHERE agent_name = ? AND started_at >= today_start()`. If sum exceeds the agent's daily ceiling, raises `DailyCeilingExceeded` and writes no agent_runs row.
+1. **Soft breaker on entry**: `assert_under_ceiling(agent_name)` sums today's
+   spend (the agent's own and the system-wide total) in one query; if either is
+   at/over its ceiling it raises `DailyCeilingExceeded` and writes no row. This
+   blocks the *next* invocation — it can't unwind the call that crossed the line
+   (see the breaker section).
 
-2. **Token cap enforcement**: passes `max_tokens` parameters directly to the provider API. Estimates input token count before the call; if it exceeds `max_input_tokens`, raises `TokenCapExceeded` and writes a `token_cap_exceeded` row.
+2. **Price check before the call**: `_price_for(provider, model)` raises
+   `ValueError` if the model has no `PRICE_TABLE` entry — *before* the paid call,
+   so we never pay for a call whose cost can't be recorded. (This is the only
+   pre-call refusal left; it's about bookkeeping integrity, not spend gating.)
 
-3. **Call execution**: makes the actual API call. Catches provider errors (timeouts, 5xx, rate limits) and writes an appropriate status to agent_runs.
+3. **Call execution**: makes the API call. Any exception inside the block
+   (provider timeouts, 5xx, rate limits, programmer errors) writes a `failed` row
+   and re-raises.
 
-4. **Cost computation**: on successful response, computes `usd_cost` from token counts using a price table baked into the helper. Writes the row.
+4. **Cost capture**: on success, computes `usd_cost` from token counts and the
+   price table, and writes the row. Multi-call runs accumulate.
 
 </helper_behaviors>
 
 <price_table_versioning>
 
-The price table is a constant in the helper module — not a database table. Rationale: prices change rarely (quarterly at most); changes are deliberate and should go through git review; no agent should be able to inflate or deflate its reported cost dynamically.
-
-Example structure:
+The price table is a constant in the helper module — not a database table. Prices
+change rarely and deliberately; changes go through git review; no agent should be
+able to inflate or deflate its reported cost dynamically.
 
 ```python
-PRICE_TABLE = {
-    ("gemini", "gemini-2.5-flash"): {"input": 0.075/1_000_000, "output": 0.30/1_000_000},
-    ("gemini", "gemini-embedding-001"): {"input": 0.15/1_000_000, "output": 0.0},  # the embedContent model served on our key
-    ("anthropic", "claude-sonnet-4-5"): {"input": 3.0/1_000_000, "output": 15.0/1_000_000},
-    ("anthropic", "claude-haiku-4-5"): {"input": 1.0/1_000_000, "output": 5.0/1_000_000},
+PRICE_TABLE = {  # (provider, model) -> USD/token
+    ("anthropic", "claude-haiku-4-5"):     {"input": 1.0/1e6,   "output": 5.0/1e6},
+    ("anthropic", "claude-sonnet-4-6"):    {"input": 3.0/1e6,   "output": 15.0/1e6},
+    ("gemini",    "gemini-2.5-flash"):     {"input": 0.075/1e6, "output": 0.30/1e6},
+    ("gemini",    "gemini-embedding-001"): {"input": 0.15/1e6,  "output": 0.0},
+    # … (opus tiers etc.)
 }
 ```
 
-Update via PR with the changelog entry; the helper version number bumps with each price table change.
+cognee's calls arrive through litellm with provider-prefixed model strings
+(`anthropic/claude-haiku-4-5`), so the labeling path keeps its **own** substring
+price map (`telemetry_context._PRICE`) rather than reusing these exact keys. Keep
+the two in sync when prices change.
 
 </price_table_versioning>
 
@@ -193,89 +234,110 @@ Update via PR with the changelog entry; the helper version number bumps with eac
 
 ---
 
-## Three Runaway-Prevention Guards
+## The Labeling Path (cognee calls — M1)
 
-<guards>
+<labeling_path>
 
-The cost-emission helper enforces all three. They layer to prevent spirals at different time scales: a single bad call (G1), a stuck agent (G2), and gradual prompt regression (G3).
+cognee makes LLM + embedding calls we don't own the call site of, so `agent_run`
+can't wrap them. Instead (`_lib/telemetry_context.py`):
 
-<guard id="G1" name="Per-run token cap">
+- `labeled(agent_name, function_label, *, trigger_kind, correlation_id)` sets a
+  **contextvar** around a cognee operation (e.g. `labeled("fact-extraction",
+  "customer_discovery", correlation_id=source_ref)` in `ingest.py`). It propagates
+  into asyncio child tasks, so it survives cognee's per-chunk fan-out.
+- `install_litellm_callback()` registers a litellm `CustomLogger` that fires on
+  every provider call, reads the current label, and writes a conformant
+  `agent_runs` row (`correlation_kind='cognify_run'`). Installed by
+  `configure_cognee()` at process start.
+- **Routing is load-bearing**: cognee must reach Anthropic *through litellm*
+  (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/…`). cognee's native Anthropic
+  adapter calls the raw SDK and bypasses the callback — under that routing the
+  ledger would silently lose ~all LLM spend. The spike proved the callback reaches
+  100% of cognee's calls under custom routing; W2 confirmed it in production
+  (18 `cognify_run` rows for a 2-doc smoke).
+- **Unlabeled fallback**: a cognee call outside any `labeled()` block is still
+  recorded, under `agent_name='cognee'`, `function_label='unlabeled'` — so nothing
+  cognee spends goes unmeasured. `cognee` has its own `$5/day` ceiling.
 
-**What it does**: Aborts any single LLM call whose input or output would exceed declared caps.
+This is why the ledger is authoritative for spend attribution: both write paths
+land in one table, keyed by `agent_name` / `function_label` / `correlation_id`.
 
-**Where it lives**: Inside `RunContext.call_*` methods. The cap values are required parameters — no caller can call an LLM without specifying them.
+</labeling_path>
 
-**Estimate gating (2026-07 refactor)**: the provider-side `count_tokens` round trip roughly
-doubled pre-call latency for short calls that could never trip the cap (a Discord message is
-bounded at ~1,000 tokens against a 4,000 cap). The helper now estimates locally (chars/3 —
-conservative so non-Latin text still trips the gate) and only makes the real `count_tokens`
-call when the estimate reaches 80% of the cap. Enforcement for large-input agents
-(meeting-processor, briefing) is unchanged; the common case saves one network round trip.
+---
 
-**Default caps by call type** (starting points; tune from agent_runs data):
+## Spend Discipline
 
-| Agent | Model | Max input tokens | Max output tokens |
-|-------|-------|------------------|---------------------|
-| Tartt summarize | Gemini Flash | 4,000 | 500 |
-| Tartt embed | Gemini gemini-embedding-001 | 2,000 | n/a |
-| Roy Kent qualify | Claude Haiku | 3,000 | 600 |
-| Keeley Strategy triage | Claude Sonnet | 8,000 | 1,000 |
-| Keeley Content draft | Claude Sonnet | 16,000 | 2,000 |
-| Sam evaluation | Claude Haiku | 6,000 | 800 |
-| Nate Shelley cluster | Claude Sonnet | 20,000 | 2,000 |
-| Briefing synthesis | Claude Sonnet | 32,000 | 3,000 |
-| Higgins dashboard | Claude Sonnet | 16,000 | 2,000 |
-| Ted alert summary | Claude Haiku | 4,000 | 500 |
-| Fact extraction | Claude Haiku | 4,000 | 600 |
-| Meeting processor | Claude Haiku | 32,000 | 3,000 |
+<spend_discipline>
 
-**Failure mode**: `TokenCapExceeded` raised; agent_runs row written with `status='token_cap_exceeded'` and `error_text` describing which cap was violated; #system alert emitted by Ted on next health check.
+The old three-guard stack (per-run cap G1, hard per-day gate G2, anomaly G3)
+became two-plus-one when cognee took over the call site. **G1 is gone** — a
+per-call token cap can't apply to calls made inside cognee's cognify fan-out.
+What remains: a **soft daily breaker** (was G2, reframed), a **monthly reconcile**
+backstop that makes the soft breaker safe, and **G3** anomaly detection unchanged.
 
-</guard>
+<breaker name="Soft daily breaker (assert_under_ceiling)">
 
-<guard id="G2" name="Per-day spend ceiling">
+**What it does**: bounds spend per agent and system-wide, but does **not** refuse
+the call that crosses the line — that call already happened (or happens inside
+cognee). It blocks the *next* invocation.
 
-**What it does**: Refuses any LLM call that would cause an agent's running daily spend to exceed its ceiling.
+**Where it lives**: `assert_under_ceiling(agent_name)` in `_lib/runs.py`. Runs on
+`agent_run` entry, and is callable directly before a cognee operation. One query
+sums today's spend for the agent *and* the system-wide total, so a bug spread
+across several agents is still bounded by `GLOBAL_DAILY_CEILING` ($20). "Today"
+starts at **local** midnight. Check-then-act: concurrent runs can overshoot by
+roughly one call's cost — acceptable at these ceilings, and reconcile catches
+sustained drift.
 
-**Where it lives**: The `agent_run` context manager checks the ceilings on entry — the
-agent's own ceiling AND a system-wide `GLOBAL_DAILY_CEILING` ($20/day) in one query, so a
-bug spread across several agents is still bounded. "Today" starts at **local** midnight
-(2026-07 refactor; previously UTC, which reset ceilings mid-afternoon local time). The check
-is check-then-act: concurrent runs can overshoot by roughly one call's cost, which is
-acceptable at these ceilings.
+**Starting ceilings** (`DAILY_CEILINGS`, USD/day):
 
-**Starting ceilings**:
+| Agent | Ceiling | Phase |
+|-------|---------|-------|
+| `cognee` (unlabeled internal) | $5.00 | 3.7 |
+| `fact-extraction` (cognee capture) | $2.00 | 3 |
+| `recall` (query embeddings) | $0.50 | 3.3 |
+| `tartt` | $5.00 | 4 |
+| `keeley-strategy` / `keeley-content` | $1.50 each | 8 |
+| `sam` | $1.00 | 8 |
+| `roy-kent` | $1.00 | 6 |
+| `meeting-processor` | $3.00 ($1/transcript) | 7 |
+| `briefing` | $0.50 | 3+ |
+| `nate-shelley` | $0.07 (~$0.50/wk) | 10 |
+| `ted` | $0.20 | 11 |
+| `higgins` | $0.04 (~$0.30/wk) | 11 |
+| **System-wide (`GLOBAL_DAILY_CEILING`)** | **$20.00** | kill switch |
 
-| Agent | Daily ceiling |
-|-------|---------------|
-| Tartt | $5.00 |
-| Keeley Strategy + Content combined | $3.00 |
-| Sam | $1.00 |
-| Briefing | $0.50 |
-| Ted | $0.20 |
-| Roy Kent | $1.00 |
-| Nate Shelley | $0.50/week (so ~$0.07/day) |
-| Meeting processor | $1.00/transcript (capped at $3/day) |
-| Fact extraction | $2.00 |
-| Higgins | $0.30/week (so ~$0.04/day) |
-| **Total daily blast radius** | **~$15** |
-| Steady-state expected | $3–7/day |
+Labeled cognee calls bill to the labeling agent's ceiling (e.g. capture →
+`fact-extraction`); only *unlabeled* cognee internals hit the `cognee` ceiling.
+An `agent_name` with no ceiling entry is bounded only by the global one; own
+agents must have an entry (`agent_run` raises `ValueError` otherwise).
 
-**Why combined for Keeley**: Strategy and Content fire sequentially per content item. Splitting their ceilings creates an artificial cut point where Strategy can budget-out before Content runs. Combined ceiling lets the pipeline allocate naturally.
+**Failure mode**: `DailyCeilingExceeded` raised, no row written. The agent's
+behavior on it is its choice — Tartt skips the item and continues; Briefing falls
+back to template-mode (structured query results, no LLM synthesis); Sam leaves the
+draft at `drafted` and surfaces a #system backlog warning. Ted alerts at 80% of a
+ceiling so you can intervene before service degrades.
 
-**Failure mode**: `DailyCeilingExceeded` raised. The agent's specific behavior on this exception is its choice:
-- Tartt skips the item, logs, continues with the next
-- Keeley Strategy defers the item to tomorrow's run
-- Briefing falls back to template-mode (no LLM synthesis, just structured query results)
-- Sam refuses to evaluate; draft sits at `drafted` and surfaces in #system as a backlog warning
+</breaker>
 
-Ted alerts when any agent crosses 80% of its daily ceiling so you can intervene before service degrades.
+<backstop name="Monthly reconcile (cli/reconcile)">
 
-</guard>
+Dropping the hard pre-flight gate means a code path that bypassed the ledger could
+spend money and log nothing. `cli/reconcile.py` is the backstop that justifies the
+trade: it computes authoritative ledger spend by provider for a window and compares
+it to the **operator-supplied** provider-dashboard figures (`--anthropic`,
+`--gemini` — automating the pull needs org-admin billing creds we don't assume).
+It flags any divergence beyond `--tolerance` (default 15%, or a $0.01 absolute
+floor for tiny figures) and exits nonzero on divergence, so it can back a monthly
+routine/alert. This is what makes "record, don't refuse" safe: if the ledger ever
+drifts from the bill, the month-end check catches it.
+
+</backstop>
 
 <guard id="G3" name="Anomaly detection on tokens-per-output">
 
-**What it does**: Catches gradual efficiency regressions — an agent that's still under its caps but using meaningfully more tokens per output than its historical baseline.
+**What it does**: Catches gradual efficiency regressions — an agent whose spend is still under its ceiling but which is using meaningfully more tokens per output than its historical baseline.
 
 **Where it lives**: Pure Python computation in Ted, running every 6 hours. No LLM calls — this is SQL plus statistics. (If this were an LLM-cost computation we'd hand it to Higgins; since it's free, Ted does it reactively.)
 
@@ -318,7 +380,7 @@ for agent in active_agents:
 
 </guard>
 
-</guards>
+</spend_discipline>
 
 ---
 
@@ -340,7 +402,7 @@ Every agent gets at most three metrics. One is token-discipline (catches spirals
 | Briefing | Tokens per briefing | Tasks accepted from briefing | Decisions logged per briefing read |
 | Task extractors | Tokens per candidate | Acceptance rate (Task Tinder ✅) | Accepted → completed conversion |
 | Meeting processor | Tokens per transcript | Follow-ups generated per transcript | Follow-ups → completed conversion |
-| Fact extraction | Tokens per fact | Hybrid search hit rate on extracted facts | (infrastructure — no outcome metric) |
+| Capture (cognee) | Tokens per note cognified | Recall answer quality (spot-checked) | (infrastructure — no outcome metric) |
 | Ted | Tokens per check cycle | Mean time to alert on failure | Alert precision (true vs. false positives) |
 | Higgins | Tokens per weekly digest | Weeks with KR movement reported | Outcomes recorded per week |
 
@@ -359,7 +421,7 @@ Every 6 hours, Ted:
 1. **Reads dashboard** (existing): timestamps of last successful runs per agent.
 2. **Computes anomaly detection** (new, G3): rolling-median check on tokens-per-output for each agent. Pure SQL plus Python; zero LLM cost.
 3. **Checks ceiling proximity** (new): for each agent, computes today's spend; alerts at 80% of daily ceiling.
-4. **Counts failures** (new): agents with >3 `failed` or `token_cap_exceeded` runs in last 6 hours get flagged.
+4. **Counts failures** (new): agents with >3 `failed` runs in last 6 hours get flagged.
 5. **Posts/updates pinned status in #system** (existing): single message showing all agent health states.
 
 Ted does call Claude Haiku for its alert summarization (deciding how to phrase a complex alert) but only when there's something to alert about. Most 6-hour checks are pure Python with no LLM call and no `agent_runs` row.
@@ -401,7 +463,8 @@ Higgins runs Mondays 7am. One LLM call (Claude Sonnet) to synthesize the structu
   Token discipline flags this week:
     [list of agents that hit G3 anomaly threshold, with deviation]
     [list of agents that crossed 80% daily ceiling, with frequency]
-    [list of token_cap_exceeded events with context]
+    [list of DailyCeilingExceeded blocks, with agent + count]
+    [reconcile: ledger vs provider-bill divergence, if the monthly check ran]
 
 ### Workflow throughput
 
@@ -410,7 +473,7 @@ Higgins runs Mondays 7am. One LLM call (Claude Sonnet) to synthesize the structu
   W3 content pipeline:         N drafted, M approved, P published
   W4 discovery calls:          N processed, M follow-ups extracted
   W5 daily briefings:          7 of 7 posted
-  W6 captures:                 N facts captured to brain
+  W6 captures:                 N notes captured to the graph
   W7 (this dashboard):         posted
 
 ### Outcomes recorded (via /outcome)
@@ -440,7 +503,9 @@ Higgins runs Mondays 7am. One LLM call (Claude Sonnet) to synthesize the structu
 
 <outcomes>
 
-`outcomes` is the scaffolded table for KR1 measurement and metric #11 (outcome attribution). V1 writes to it; v2+ computes against it.
+`outcomes` is the scaffolded table for KR1 measurement and metric #11 (outcome
+attribution). V1 writes to it; v2+ computes against it. Canonical schema lives in
+`30-memory-layer.md`; the shape:
 
 ```sql
 CREATE TABLE outcomes (
@@ -456,8 +521,9 @@ CREATE TABLE outcomes (
     attributed_prospect_id  BIGINT REFERENCES prospects(id),
     attributed_content_id   BIGINT REFERENCES content_items(id),
     attributed_task_id      BIGINT REFERENCES tasks(id),
-    attributed_fact_id      BIGINT REFERENCES facts(id),
     attributed_signal_id    BIGINT REFERENCES icp_signals(id)
+    -- no fact link: the facts table was retired in the cognee pivot and the
+    -- operator chose not to link outcomes to graph fact-nodes (migration 0006)
 );
 
 CREATE INDEX outcomes_type_time_idx ON outcomes (outcome_type, recorded_at DESC);
@@ -466,13 +532,15 @@ CREATE INDEX outcomes_type_time_idx ON outcomes (outcome_type, recorded_at DESC)
 **Capture mechanism**: Discord slash command `/outcome` opens a modal:
 
 ```
-Type: [dropdown]
-Description: [text]
+Type: [dropdown choice on the command]
+Description: [text, required]
 Value $ (optional): [number]
-Linked to (optional): [recent surfaced item / prospect / task]
 ```
 
-Submitting writes a row. No automation backfills this table — it's discipline. Higgins reports the count and surfaces attributions weekly.
+Submitting writes a row. The optional fact-link was removed in the pivot (graph
+facts are auto-extracted nodes, not pickable ids). No automation backfills this
+table — it's discipline. Higgins reports the count and surfaces attributions
+weekly.
 
 </outcomes>
 

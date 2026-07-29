@@ -175,18 +175,31 @@ and `cognee.add/cognify` are async; `configure_cognee()` (from
   (answer normalizer). Removed `_lib/search.py` + test_recall/test_capture.
   Suite 85/85. Runtime capture→recall loop = W7.
 
-## W6 — Docs + PRDs · ~2 days
+## W6 — Docs + PRDs · ~2 days   ← DONE
 
-- [ ] Rewrite `30-memory-layer.md`: the `facts`/vectorized-tables schema + RRF
-  hybrid search → cognee graph (DataPoints in `agents/_lib/ontology.py`), the
-  `aiadaptive_cognee` DB, and the entity↔operational boundary (node-id TEXT
-  columns, join in app code, no cross-DB FK).
-- [ ] Rewrite `80-telemetry-layer.md`: G1/G2 pre-flight + per-agent keys are gone
-  → labeling (`_lib/telemetry_context`, M1) + soft breaker (`assert_under_ceiling`)
-  + `cli/reconcile`. Single `anthropic-api-key`.
-- [ ] Decision-log entry in `70-build-order.md`: migration complete (mode-1
-  capture, graph recall, M1/M2 outcomes).
-- [ ] Note: PRDs for Phases 4/7/8/10 don't exist yet — they inherit the graph
+- [x] Rewrote `30-memory-layer.md`: recast around the **two-store model** (cognee
+  graph `aiadaptive_cognee` for knowledge; operational SQL `aiadaptive_cos`).
+  Removed the `facts` table + RRF hybrid-search pattern; added DataPoints
+  (`_lib/ontology.py`), the two ingestion modes (mode-1 capture / structured
+  `add_data_points`), datasets + B1 trust, GraphRAG recall, M1/M2 notes, and the
+  entity↔operational boundary (node-id TEXT columns, no cross-DB FK). Corrected
+  the operational schema (dropped fact columns, `usd_cost NUMERIC(14,8)`) and
+  flagged the still-SQL knowledge tables (content_items/…/meeting_transcripts)
+  as pending migration to the graph by their phases.
+- [x] Rewrote `80-telemetry-layer.md`: G1 (per-run cap) removed, G2 reframed as
+  the **soft breaker** (`assert_under_ceiling`), per-agent keys gone → single
+  `anthropic-api-key`. Added the **labeling path** (`_lib/telemetry_context`, M1,
+  litellm-routing rationale) and the **monthly `cli/reconcile`** backstop.
+  Corrected the ledger DDL (no `token_cap_exceeded`), function-label table
+  (cognee agents), helper interface (no `max_input_tokens`), ceilings table,
+  Ted/Higgins references, and the outcomes DDL/modal (fact-link removed).
+- [x] Decision-log entry in `70-build-order.md`: "Cognee migration — builder-side
+  complete (W1–W6)".
+- [x] **Backup gap closed (found during W6):** `scripts/pg_backup.sh` dumped only
+  `aiadaptive_cos` — the graph in `aiadaptive_cognee` was unprotected. Now dumps
+  **both** DBs (cognee DSN = db-url with dbname swapped); `nightly-backup` loop
+  desc updated. Runtime picks it up at the next 2:00 run post-deploy.
+- [x] Note: PRDs for Phases 4/7/8/10 don't exist yet — they inherit the graph
   model when written (not a W6 rewrite target).
 
 ## W7 — Validate + redeploy · ~1–1.5 days (barry-agent runtime)

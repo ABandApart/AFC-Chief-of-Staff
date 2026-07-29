@@ -1,13 +1,28 @@
 # Memory Layer
 
 <doc:layer>implementation</doc:layer>
-<doc:stability>medium — schema migrations require versioned migration files</doc:stability>
-<doc:depends_on>10-strategy.md, 20-architecture-overview.md</doc:depends_on>
-<doc:referenced_by>40-action-layer.md, 50-channel-layer.md, 60-content-pipeline.md</doc:referenced_by>
+<doc:stability>medium — schema migrations require versioned migration files; the knowledge model is the cognee graph (Phase 3.7 pivot)</doc:stability>
+<doc:depends_on>10-strategy.md, 20-architecture-overview.md, 25-target-state.md, 26-cognee-migration-plan.md</doc:depends_on>
+<doc:referenced_by>40-action-layer.md, 50-channel-layer.md, 60-content-pipeline.md, 80-telemetry-layer.md</doc:referenced_by>
 
 ## Purpose
 
-This file defines the Postgres schema (local PostgreSQL 17 on the Mac mini), vectorization rules, and the hybrid search pattern. The brain is the single source of truth; all reads and writes flow through this schema.
+The memory layer is **two stores on one local PostgreSQL 17 instance** (Mac mini):
+
+- **The knowledge graph — `aiadaptive_cognee`.** What the brain *knows*: facts,
+  people, organizations, decisions, meetings, ICP signals, content. Managed by
+  **cognee** (GraphRAG) — cognee owns extraction, entity resolution, embedding,
+  and retrieval. This replaced the hand-rolled `facts` table + hybrid search in
+  the Phase 3.7 pivot (see `26-cognee-migration-plan.md`).
+- **The operational store — `aiadaptive_cos`.** What the brain is *doing*: status
+  machines, queues, ledgers, cadence — prospects, tasks, follow-ups, the content
+  pipeline, the telemetry ledger. Plain SQL tables, read/written through the
+  shared pool in `agents/_lib/db.py`.
+
+The split is the **entity↔operational boundary** (`25-target-state.md`):
+knowledge → the graph, operational state → SQL. They cross-link by cognee
+**node-id stored as a TEXT column** on the SQL side, joined in application code —
+never a cross-database foreign key (Postgres can't FK across databases).
 
 ---
 
@@ -15,164 +30,144 @@ This file defines the Postgres schema (local PostgreSQL 17 on the Mac mini), vec
 
 <deployment>
 
-- **Provider**: Local PostgreSQL 17 on the Mac mini (pivoted from hosted Supabase before any
-  infrastructure was provisioned — see `70-build-order.md` decision log, 2026-05-19). Migration
-  to hosted (via `pg_dump`/`pg_restore`) is deferred until a phase needs the *database*
-  externally reachable; Phase 6's webhook only needs an HTTPS endpoint (tunnel), not hosted
-  Postgres.
-- **Extensions enabled**: `pgvector`, `pg_trgm` (for fuzzy text matching on names/titles)
-- **Embedding model**: Gemini `gemini-embedding-001` at `output_dimensionality=768`, L2-normalized
-  by the cost helper (`text-embedding-004` returns 404 on our key — decision log 2026-06-17;
-  the model only ships pre-normalized at its 3072-dim default, so 768-dim truncations must be
-  normalized client-side). All embeddings MUST go through `runs.py call_embedding`.
-- **Dimension lock**: Once embeddings are stored, switching models requires re-embedding. Treat 768 as a hard commitment.
-- **Access**: all code uses the shared connection pool in `agents/_lib/db.py` — no
-  per-operation `psycopg.connect()`.
+- **Provider**: Local PostgreSQL 17 on the Mac mini (pivoted from hosted Supabase
+  before any infrastructure was provisioned — see `70-build-order.md` decision
+  log, 2026-05-19). Migration to hosted is deferred until a phase needs the
+  *database* externally reachable; Phase 6's webhook only needs an HTTPS endpoint
+  (tunnel), not hosted Postgres.
+- **Two databases, one server**:
+  - `aiadaptive_cos` — operational tables. Extensions `pgvector`, `pg_trgm`.
+  - `aiadaptive_cognee` — cognee's three stores (relational + vector + graph) all
+    live here; graph provider is `postgres` (no AGE), vector provider `pgvector`.
+    Created by barry-admin with `vector` + `pg_trgm`. Isolated from the
+    operational tables so a cognee mishap can't touch the ledger/queues.
+- **cognee configuration**: `agents/_lib/cognee_setup.py` (`configure_cognee()`),
+  called once at process start (bot `run.py setup_hook`; every CLI at startup).
+  It points all three stores at `aiadaptive_cognee`, turns access-control off
+  (single-user), and installs the M1 telemetry callback. cognee is an **optional
+  dependency** (`uv sync --group cognee`) — the heavy tree stays out of the
+  dev/CI env; modules that touch it import lazily.
+- **LLM + embedding routing (M1, mandatory)**: cognee's LLM goes through litellm
+  as a *custom* provider (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/claude-haiku-4-5`)
+  so our labeling callback fires on every call; the native Anthropic adapter would
+  bypass telemetry. Embeddings: `gemini/gemini-embedding-001` @ 768. Details in
+  `80-telemetry-layer.md`.
+- **Dimension lock**: 768 is a hard commitment — switching models means
+  re-embedding the whole graph. (M2 note: cognee does **not** L2-normalize the
+  truncated 768-dim Gemini output — spike measured norm ≈ 0.58 — so recall
+  quality is a runtime check; if weak, configure cognee's normalization /
+  distance metric. See Recall, below.)
+- **Access**: all operational SQL uses the shared connection pool in
+  `agents/_lib/db.py` — no per-operation `psycopg.connect()`.
 
 </deployment>
 
 ---
 
-## Vectorization Decision Rules
+## The Knowledge Graph (`aiadaptive_cognee`)
 
-<vectorization_rules>
+### Domain model — DataPoints
 
-<rule>Vectorize when retrieval is semantic — "find things like this concept" without exact keywords.</rule>
-<rule>Do not vectorize when retrieval is structured — by status, date, owner, ID, or state.</rule>
-<rule>Do not vectorize when the same record will be updated frequently — embedding cost compounds.</rule>
-<rule>Vectorize the searchable representation, not raw text. E.g., embed an article summary, not the full HTML.</rule>
+The typed knowledge model lives in **`agents/_lib/ontology.py`**: eight cognee
+`DataPoint` classes with typed relationship fields (edges) and
+`metadata["index_fields"]` (which text fields get embedded):
 
-<vectorize_list>
+`Organization`, `Person`, `Fact`, `Decision`, `Meeting`, `ICPSignal`,
+`ContentItem`, `InterestSignal`.
 
-| Table | Vectorize? | Rationale |
-|-------|------------|-----------|
-| `facts` | Yes | Semantic recall: "what did we discuss about pricing" |
-| `content_items` | Yes | Similarity clustering, interest scoring |
-| `interest_signals` | Yes | Topic vectors that get compared against content_items |
-| `icp_signals` | Yes | Pain-point clustering by Nate Shelley |
-| `meeting_transcripts` | Yes | Cross-meeting semantic search |
-| `follow_ups` | No | Queried by status, deadline, escalation_level |
-| `task_candidates` | No | Queried by status, source, confidence |
-| `tasks` | No | Queried by status, owner, due_date |
-| `decisions` | No | Queried by domain, date; reference text is short |
-| `people` | No | Queried by name, last_contacted_at |
-| `prospects` | No | Queried by fit score, source, status |
-| `sources` | No | Queried by URL, trust_score |
-| `dashboard` | No | Single-row or small-N metrics table |
-| `content_pipeline` | No | State machine — queried by stage |
-| `approval_queue` | No | Queried by status, posted_at |
-| `buffer_posts` | No | Queried by buffer_id, status |
-| `agent_runs` | No | Telemetry ledger; queried by agent, time, status |
-| `outcomes` | No | Queried by type, attribution, time |
+`Organization` is the entity-resolution target ("everything about Acme"). A
+cognee-or-pydantic fallback base lets the classes import and be structurally
+unit-tested (`tests/test_ontology.py`) without cognee present.
 
-</vectorize_list>
+### Two ingestion modes
 
-</vectorization_rules>
+1. **Free-text capture (mode-1)** — the default path for notes.
+   `agents/_lib/ingest.py::ingest_note(text, *, source_ref, source_type)`:
+   normalize + hash the text → skip if already ingested (pre-LLM dedup via the
+   `capture_messages` table) → `cognee.add(text, dataset_name="capture")` +
+   `cognify()`. **cognee does the extraction and entity resolution** — we do not
+   pre-extract into DataPoints. The hash is recorded only after a successful
+   cognify, so a failed ingest is retriable verbatim. This is the shared core:
+   the Discord `#capture` cog (`cogs/capture.py`) is a thin caller, and the
+   primary **API ingestion channel** (Track C) reuses the same function.
+
+2. **Structured DataPoints** — for agents that already hold structured knowledge
+   (meeting processing, content triage; Phases 4/7/8). Construct the ontology
+   objects and call `add_data_points([...])`
+   (`from cognee.tasks.storage import add_data_points`, async) — it walks the
+   relationship fields into graph nodes/edges. Runtime shape-check:
+   `agents/test/ontology_shape.py`.
+
+Knowledge is **not** vectorized in our SQL anymore — cognee owns the vectors
+inside the graph store. (The operational tables are queried structurally and
+carry no embeddings.)
+
+### Datasets + trust boundary (B1)
+
+cognee content is partitioned into **datasets**:
+
+- **`capture`** — free-text ingest. Untrusted: it's whatever a channel fed in.
+- **`playbooks`** — authored, git-tracked playbooks with `publish_to_memory: true`,
+  published by `cli/publish_playbooks.py` (hash-idempotent; tracked in
+  `playbook_publications`). This is the **trusted** memory region.
+
+Trust boundary **B1**: agent retrieval that must not be swayed by untrusted
+ingest is scoped to the trusted dataset only — an injected "fact" in `#capture`
+can't rewrite an operating procedure.
+
+### Recall — GraphRAG
+
+`agents/_lib/graph_recall.py::recall(query)` runs
+`cognee.search(query_type=SearchType.GRAPH_COMPLETION, query_text=query)`:
+cognee's vector search finds relevant triplets, traverses the graph for context,
+and generates a **synthesized answer** (a string, not a ranked row list). There
+is **no RRF and no query-embedding step on our side** — cognee owns retrieval.
+Consumers: the `/recall` slash command (`cogs/recall.py`) and `cli/recall.py`.
+Both run `configure_cognee()` first and execute under `labeled("recall", …)` so
+the query/completion spend lands in the ledger.
+
+> This replaced `agents/_lib/search.py` (Reciprocal Rank Fusion over the `facts`
+> table), removed in W5. The old hybrid-search tuning (RRF k=60, a 0.55 cosine
+> floor) is gone — those knobs now live inside cognee.
+
+**M2 (retrieval quality)** is a **runtime** check, not an on-write code fix:
+verify cognee's recall quality with the un-normalized 768-dim Gemini vectors; if
+weak, configure cognee's embedding normalization or distance metric.
+
+### Telemetry of cognee spend (M1)
+
+cognee makes LLM + embedding calls we don't own the call site of. We label them
+with a contextvar (`agents/_lib/telemetry_context.labeled()`) and a litellm
+callback that writes a conformant `agent_runs` row per provider call
+(`correlation_kind='cognify_run'`). Full treatment in `80-telemetry-layer.md`.
 
 ---
 
-## Schema
+## The Operational Store (`aiadaptive_cos`)
 
-<schema>
+Plain SQL — status machines, queues, ledgers, cadence. Queried structurally (by
+status, date, owner, id, stage), never vectorized. The schema below is
+Postgres-flavored; exact types are pinned in the numbered migrations.
 
-The schema below is illustrative — exact field types and constraints will be refined during migration writing. Postgres-flavored SQL.
-
-### Vectorized Tables
+### Dedup + publish tracking
 
 ```sql
--- Facts: atomic claims with provenance and semantic recall
-CREATE TABLE facts (
+-- capture_messages: message-level capture dedup (pre-cognify). One row per
+-- ingested note; the normalized-text hash is the key. (Migration 0003.)
+CREATE TABLE capture_messages (
     id              BIGSERIAL PRIMARY KEY,
-    content         TEXT NOT NULL,
-    source_type     TEXT NOT NULL,            -- 'meeting', 'email', 'discord', 'manual'
-    source_ref      TEXT,                     -- meeting_id, message_id, etc.
-    context         TEXT,                     -- why this matters
-    domain          TEXT,                     -- 'ai-adaptive', 'lead-engine', 'personal'
-    confidence      REAL NOT NULL DEFAULT 1.0,
-    embedding       vector(768),
-    content_tsv     tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at      TIMESTAMPTZ               -- some facts have shelf life
+    content_hash    TEXT NOT NULL UNIQUE,     -- sha256 hex of normalized text
+    message_id      TEXT NOT NULL,            -- source ref (Discord id, API ref, …)
+    captured_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX facts_embedding_idx ON facts USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX facts_tsv_idx       ON facts USING gin (content_tsv);
-CREATE INDEX facts_domain_idx    ON facts (domain, created_at DESC);
-
--- Content items: discovered articles, videos, papers
-CREATE TABLE content_items (
-    id              BIGSERIAL PRIMARY KEY,
-    url             TEXT UNIQUE NOT NULL,
-    title           TEXT NOT NULL,
-    source_id       BIGINT REFERENCES sources(id),
-    content_type    TEXT NOT NULL,            -- 'article', 'video', 'paper', 'newsletter'
-    raw_text        TEXT,                     -- extracted article body (trafilatura output)
-    summary         TEXT,                     -- Gemini Flash output
-    embedding       vector(768),              -- embedded from summary, not raw_text
-    title_tsv       tsvector GENERATED ALWAYS AS (to_tsvector('english', title)) STORED,
-    cluster_id      BIGINT,                   -- nullable; assigned by clustering job
-    interest_score  REAL,                     -- computed at insert time vs. interest_signals
-    collected_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    engaged_at      TIMESTAMPTZ,
-    engagement_type TEXT                      -- 'read', 'saved', 'used-in-draft', 'declined'
+-- playbook_publications: git→cognee publish dedup for the trusted `playbooks`
+-- dataset. Skips re-cognifying an unchanged playbook. (Migration 0005.)
+CREATE TABLE playbook_publications (
+    name            TEXT PRIMARY KEY,         -- playbook name (== filename stem)
+    content_hash    TEXT NOT NULL,            -- sha256 hex of published content
+    published_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX content_items_embedding_idx ON content_items USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX content_items_tsv_idx       ON content_items USING gin (title_tsv);
-CREATE INDEX content_items_cluster_idx   ON content_items (cluster_id, collected_at DESC);
-CREATE INDEX content_items_interest_idx  ON content_items (interest_score DESC, collected_at DESC);
-
--- Interest signals: topic vectors with weight and decay
-CREATE TABLE interest_signals (
-    id                  BIGSERIAL PRIMARY KEY,
-    topic_label         TEXT NOT NULL,
-    embedding           vector(768) NOT NULL,
-    weight              REAL NOT NULL DEFAULT 1.0,
-    origin              TEXT NOT NULL,        -- 'manual', 'inferred', 'engagement-derived'
-    last_reinforced_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX interest_signals_embedding_idx ON interest_signals USING hnsw (embedding vector_cosine_ops);
-
--- Meeting transcripts: compiled outputs
-CREATE TABLE meeting_transcripts (
-    id              BIGSERIAL PRIMARY KEY,
-    title           TEXT NOT NULL,
-    meeting_date    DATE NOT NULL,
-    participants    TEXT[],
-    raw_path        TEXT,                     -- local path on Mac mini (Granola export)
-    summary         TEXT NOT NULL,
-    decisions_text  TEXT,                     -- structured extract: decisions made
-    actions_text    TEXT,                     -- structured extract: action items
-    embedding       vector(768),              -- embedded from summary
-    summary_tsv     tsvector GENERATED ALWAYS AS (to_tsvector('english', summary)) STORED,
-    processed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX meeting_transcripts_embedding_idx ON meeting_transcripts USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX meeting_transcripts_tsv_idx       ON meeting_transcripts USING gin (summary_tsv);
-CREATE INDEX meeting_transcripts_date_idx      ON meeting_transcripts (meeting_date DESC);
-
--- ICP signals: pain points and friction observed across sources (W2 substrate)
--- Wide-net pattern: every agent that touches ICP-adjacent input writes here as side effect
-CREATE TABLE icp_signals (
-    id                  BIGSERIAL PRIMARY KEY,
-    source_type         TEXT NOT NULL,    -- 'article', 'scorecard', 'meeting',
-                                          -- 'discord_capture', 'email', 'prospect_form'
-    source_agent        TEXT NOT NULL,    -- which agent emitted this
-    source_ref          TEXT,             -- pointer to original (content_item_id, etc.)
-    signal_text         TEXT NOT NULL,    -- the pain/friction language as written
-    embedding           vector(768) NOT NULL,
-    icp_segment_hint    TEXT,             -- 'l_and_d', 'tech_writing', 'hr_od', 'compliance_elearning', null
-    pain_category_hint  TEXT,             -- 'time', 'expertise', 'scale', 'positioning', etc.
-    observed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    cluster_id          BIGINT            -- assigned weekly by Nate Shelley
-);
-
-CREATE INDEX icp_signals_embedding_idx ON icp_signals USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX icp_signals_recency_idx   ON icp_signals (observed_at DESC);
-CREATE INDEX icp_signals_cluster_idx   ON icp_signals (cluster_id) WHERE cluster_id IS NOT NULL;
 ```
 
 ### Structured Tables
@@ -185,7 +180,8 @@ CREATE TABLE follow_ups (
     action              TEXT NOT NULL,
     deadline            DATE,
     source_meeting_id   BIGINT REFERENCES meeting_transcripts(id),
-    source_fact_id      BIGINT REFERENCES facts(id),
+    -- (source_fact_id, the old FK into `facts`, was dropped in 0006; a graph
+    --  node-id link is added when the action layer is actually built — Phase 4)
     status              TEXT NOT NULL DEFAULT 'open',  -- 'open', 'done', 'cancelled'
     escalation_level    SMALLINT NOT NULL DEFAULT 0,   -- 0..3
     draft_followup_msg  TEXT,                          -- pre-drafted nudge for level 3
@@ -223,16 +219,6 @@ CREATE TABLE tasks (
     follow_up_id        BIGINT REFERENCES follow_ups(id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at        TIMESTAMPTZ
-);
-
--- Decisions: key choices with rationale
-CREATE TABLE decisions (
-    id              BIGSERIAL PRIMARY KEY,
-    title           TEXT NOT NULL,
-    rationale       TEXT NOT NULL,
-    domain          TEXT NOT NULL,
-    decided_at      DATE NOT NULL,
-    related_facts   BIGINT[]                  -- fact IDs supporting the decision
 );
 
 -- People: relationship context
@@ -274,6 +260,17 @@ CREATE INDEX prospects_status_idx     ON prospects (status, received_at DESC);
 CREATE INDEX prospects_fit_idx        ON prospects (icp_fit_score DESC NULLS LAST) WHERE status IN ('new', 'qualified');
 CREATE UNIQUE INDEX prospects_wp_idx  ON prospects (wordpress_profile_id);
 
+-- Decisions: key choices with rationale
+CREATE TABLE decisions (
+    id              BIGSERIAL PRIMARY KEY,
+    title           TEXT NOT NULL,
+    rationale       TEXT NOT NULL,
+    domain          TEXT NOT NULL,
+    decided_at      DATE NOT NULL
+    -- (related_facts, a BIGINT[] of fact-row ids, was dropped in 0006; supporting
+    --  facts become cognee node-ids when the decisions layer is built — Phase 4)
+);
+
 -- Sources: trust-scored content origins for Tartt
 CREATE TABLE sources (
     id                  BIGSERIAL PRIMARY KEY,
@@ -286,9 +283,9 @@ CREATE TABLE sources (
     active              BOOLEAN NOT NULL DEFAULT true
 );
 
--- Dashboard: cadence flags, system metrics
+-- Dashboard: cadence flags, system metrics (singleton)
 CREATE TABLE dashboard (
-    id                      INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),  -- singleton
+    id                      INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     briefing_posted_at      TIMESTAMPTZ,
     last_tartt_run_at       TIMESTAMPTZ,
     last_tartt_item_count   INTEGER,
@@ -298,6 +295,15 @@ CREATE TABLE dashboard (
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+
+> **Note on fact links.** Every column that linked an operational row to a `facts`
+> row was dropped in migration 0006 with the table itself: `outcomes` (fact link
+> dropped entirely — operator decision, W5), plus the empty-table columns
+> `follow_ups.source_fact_id` and `decisions.related_facts`. The boundary pattern
+> stands for the future: when an operational row needs to point at a graph fact,
+> it holds the cognee **node-id as a TEXT column**, joined in app code (never a
+> cross-DB FK). Those columns are added by the phases that actually populate the
+> tables (Phase 4 action/decision layers), not carried as speculative int columns.
 
 ### Pipeline Tables
 
@@ -319,7 +325,7 @@ CREATE TABLE content_pipeline (
 
 CREATE INDEX content_pipeline_stage_idx ON content_pipeline (stage, updated_at DESC);
 
--- Approval queue: pending human decisions in Discord
+-- Approval queue: pending human decisions in Discord (trust boundary B2)
 CREATE TABLE approval_queue (
     id                  BIGSERIAL PRIMARY KEY,
     item_type           TEXT NOT NULL,        -- 'content_draft', 'outreach_message', 'other'
@@ -352,25 +358,27 @@ CREATE INDEX buffer_posts_status_idx ON buffer_posts (status, scheduled_for);
 
 ### Telemetry Tables
 
+Full semantics in `80-telemetry-layer.md`; the schema lives here.
+
 ```sql
--- agent_runs: every LLM call recorded; feeds spend metrics, anomaly detection, cost-per-output
+-- agent_runs: every LLM/embedding call recorded — own-agent calls AND cognee's
+-- (labeled via the M1 callback, correlation_kind='cognify_run'). Feeds spend
+-- metrics, the soft breaker, and cli/reconcile.
 CREATE TABLE agent_runs (
     id              BIGSERIAL PRIMARY KEY,
     agent_name      TEXT NOT NULL,
-    function_label  TEXT NOT NULL,          -- 'news_aggregation', 'topic_research',
-                                            -- 'action_surfacing', 'customer_discovery',
-                                            -- 'infrastructure', 'telemetry'
+    function_label  TEXT NOT NULL,          -- 'customer_discovery', 'infrastructure', …
     trigger_kind    TEXT NOT NULL,          -- 'scheduled', 'event', 'manual'
     started_at      TIMESTAMPTZ NOT NULL,
     ended_at        TIMESTAMPTZ,
-    status          TEXT NOT NULL,          -- 'success', 'partial', 'failed', 'token_cap_exceeded'
+    status          TEXT NOT NULL,          -- 'success', 'partial', 'failed'
     llm_provider    TEXT,                   -- 'gemini', 'anthropic', null
     llm_model       TEXT,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
-    usd_cost        NUMERIC(10,4),
-    correlation_id  TEXT,                   -- e.g. content_item_id, prospect_id
-    correlation_kind TEXT,                  -- 'content_item', 'prospect', 'transcript', etc.
+    usd_cost        NUMERIC(14,8),          -- widened from (10,4) in 0002 for sub-cent per-call precision
+    correlation_id  TEXT,                   -- e.g. content_item_id, prospect_id, source_ref
+    correlation_kind TEXT,                  -- 'content_item', 'prospect', 'cognify_run', …
     error_text      TEXT
 );
 
@@ -378,7 +386,8 @@ CREATE INDEX agent_runs_agent_time_idx ON agent_runs (agent_name, started_at DES
 CREATE INDEX agent_runs_status_idx     ON agent_runs (status) WHERE status != 'success';
 CREATE INDEX agent_runs_function_idx   ON agent_runs (function_label, started_at DESC);
 
--- outcomes: attributed business outcomes (KR1 measurement substrate)
+-- outcomes: attributed business outcomes (KR1 measurement substrate). No fact
+-- link (dropped W5 / migration 0006) — outcomes stand on their description.
 CREATE TABLE outcomes (
     id                      BIGSERIAL PRIMARY KEY,
     outcome_type            TEXT NOT NULL,
@@ -392,114 +401,24 @@ CREATE TABLE outcomes (
     attributed_prospect_id  BIGINT REFERENCES prospects(id),
     attributed_content_id   BIGINT REFERENCES content_items(id),
     attributed_task_id      BIGINT REFERENCES tasks(id),
-    attributed_fact_id      BIGINT REFERENCES facts(id),
     attributed_signal_id    BIGINT REFERENCES icp_signals(id)
 );
 
 CREATE INDEX outcomes_type_time_idx ON outcomes (outcome_type, recorded_at DESC);
 ```
 
-</schema>
+### Knowledge tables pending migration to the graph
 
----
-
-## Hybrid Search
-
-<hybrid_search>
-
-Hybrid search combines lexical (full-text) and semantic (vector) ranking. Neither alone is sufficient:
-
-- Full-text catches exact matches (names, specific terms, proper nouns) but misses synonyms.
-- Vector similarity catches conceptual matches but can be noisy and miss specific terms.
-
-The pattern below shows hybrid search over `facts`. The same pattern applies to `content_items` and `meeting_transcripts` — substitute the table name and embedded column.
-
-<query_pattern lang="sql">
-
-```sql
--- Hybrid search over facts: Reciprocal Rank Fusion of FTS rank and vector similarity.
--- (2026-07 refactor: replaced the weighted raw-score blend — ts_rank_cd and cosine
--- similarity live on incomparable scales, so raw blending let the semantic side
--- silently dominate. RRF is scale-free: each source contributes 1/(k + rank).)
--- Canonical implementation: agents/_lib/search.py (shared by cli/recall.py and /recall).
-WITH query_input AS (
-    SELECT
-        plainto_tsquery('english', $1) AS tsq,
-        $2::vector(768) AS query_embedding
-),
-fts AS (
-    SELECT f.id,
-           ROW_NUMBER() OVER (
-               ORDER BY ts_rank_cd(f.content_tsv, qi.tsq) DESC, f.id
-           ) AS rnk
-    FROM facts f, query_input qi
-    WHERE f.content_tsv @@ qi.tsq
-      AND (f.expires_at IS NULL OR f.expires_at > now())
-),
-vec_candidates AS (
-    -- Top-50 by pure distance first (index-friendly: no filter inside the
-    -- ordered scan); the similarity floor is applied afterwards.
-    SELECT f.id, f.embedding <=> qi.query_embedding AS dist
-    FROM facts f, query_input qi
-    WHERE f.embedding IS NOT NULL
-      AND (f.expires_at IS NULL OR f.expires_at > now())
-    ORDER BY dist
-    LIMIT 50
-),
-vec AS (
-    SELECT id, ROW_NUMBER() OVER (ORDER BY dist, id) AS rnk
-    FROM vec_candidates
-    WHERE (1 - dist) >= $4          -- min similarity floor, default 0.55
-),
-combined AS (
-    SELECT COALESCE(fts.id, vec.id) AS id,
-           COALESCE(1.0 / (60 + fts.rnk), 0)
-         + COALESCE(1.0 / (60 + vec.rnk), 0) AS score
-    FROM fts FULL OUTER JOIN vec USING (id)
-)
-SELECT f.*, c.score
-FROM combined c
-JOIN facts f ON f.id = c.id
-ORDER BY c.score DESC, f.id
-LIMIT $3;
-```
-
-</query_pattern>
-
-<tuning_notes>
-
-- **RRF constant (k=60)**: the literature default; larger k flattens the rank curve. No
-  per-source weights to tune — that's the point of RRF.
-- **Similarity floor (0.55)**: without it, the nearest-50 vector search returns *something*
-  for every query, including gibberish. For gemini-embedding-001 @768 normalized: relevant
-  ~0.65+, noise ~0.5, gibberish ~0.48. Applies to the semantic half only — lexical matches
-  are naturally floored by token overlap.
-- **Expiry**: rows with `expires_at` in the past are excluded from both sources (enforced
-  as of the 2026-07 refactor).
-- **Vector candidate pool**: Limit the vector subquery to 50 candidates before joining. HNSW indexes are fast but unbounded `ORDER BY embedding <=> ...` over a large table is wasteful.
-- **Wrap as a Postgres function** for reuse once a second consumer beyond
-  `agents/_lib/search.py` appears.
-
-</tuning_notes>
-
-</hybrid_search>
-
----
-
-## Row Level Security (deferred)
-
-<rls_strategy>
-
-RLS is not enabled in v1 because there is one user. As multi-context use emerges (sharing with partner, family calendar use cases, future client-scoped data), RLS policies will scope reads/writes per context.
-
-When RLS is enabled:
-- A `context_id` column on relevant tables identifies the scope (personal, ai-adaptive-work, family).
-- The anon key sees only `context_id = current_setting('app.context_id')`.
-- The service-role key bypasses RLS (used by the Mac mini agents).
-
-Deferring this to a later phase is intentional. RLS adds debugging complexity and is not load-bearing for v1.
-
-</rls_strategy>
+`content_items`, `interest_signals`, `icp_signals`, and `meeting_transcripts`
+still exist as **vectorized SQL tables** (migration 0001, `vector(768)` +
+HNSW/GIN indexes). In the target state they are graph **DataPoints** (`ContentItem`,
+`InterestSignal`, `ICPSignal`, `Meeting`), and they migrate to `aiadaptive_cognee`
+as their producing phases are built (Tartt content — Phase 4; meetings — Phase 7;
+ICP — Phase 8). Until then they remain as originally defined and are referenced by
+the operational FKs above (`content_pipeline.content_item_id`,
+`outcomes.attributed_content_id/attributed_signal_id`). New free-text knowledge
+goes to the graph today via capture; these tables are not a second write target
+for it.
 
 ---
 
@@ -507,33 +426,21 @@ Deferring this to a later phase is intentional. RLS adds debugging complexity an
 
 <backup_strategy>
 
-Local Postgres means there are no managed backups — `pg_dump` is the only line of defense,
-so it is pulled forward from Phase 12 (facts and outcomes are already irreplaceable):
+Local Postgres means no managed backups — `pg_dump` is the only line of defense,
+pulled forward from Phase 12 because the captured knowledge is irreplaceable.
+**Both** databases are dumped (the graph, `aiadaptive_cognee`, holds all captured
+knowledge — omitting it would leave the brain unprotected):
 
-- **Nightly `pg_dump | gzip`** to local storage on the Mac mini (picked up by Time Machine),
-  retained for 90 days.
-- **Schema versioning in git**: every migration is a numbered SQL file in the architecture repo. The brain can be rebuilt from migrations + a dump.
-
-<backup_script_sketch>
-
-```bash
-# ~/Scripts/brain_backup.sh, run by launchd nightly 3am (barry-agent)
-pg_dump "$(security find-generic-password -s db-url -w)" \
-    --no-owner --no-acl \
-    --file=/tmp/brain_$(date +%Y%m%d).sql
-
-# Encrypt with age (or gpg)
-age -r "$(cat ~/.config/brain-backup.pub)" \
-  -o /Volumes/Backup/brain/brain_$(date +%Y%m%d).sql.age \
-  /tmp/brain_$(date +%Y%m%d).sql
-
-rm /tmp/brain_$(date +%Y%m%d).sql
-
-# Prune > 90 days
-find /Volumes/Backup/brain -name 'brain_*.sql.age' -mtime +90 -delete
-```
-
-</backup_script_sketch>
+- **Nightly `pg_dump | gzip`** of `aiadaptive_cos` *and* `aiadaptive_cognee` to
+  `~/agents/backups/nightly` on the Mac mini (Time Machine picks it up), 14 dumps
+  retained per DB. Implemented in `scripts/pg_backup.sh`, run by the
+  `nightly-backup` loop / `com.aiadaptive.cos.pg-backup` launchd job at 2:00
+  (barry-agent). The cognee DSN is the operational db-url with the dbname swapped
+  (matches `cognee_setup.cognee_dsn`).
+- **Schema versioning in git**: every migration is a numbered SQL file. The
+  operational DB rebuilds from migrations + a dump; the graph rebuilds from a dump
+  (or, in the worst case, by re-cognifying the source notes).
+- **Restore drill**: `gunzip -c <file> | psql <target-db-url>`.
 
 </backup_strategy>
 
@@ -543,10 +450,28 @@ find /Volumes/Backup/brain -name 'brain_*.sql.age' -mtime +90 -delete
 
 <migration_convention>
 
-- Numbered SQL files: `migrations/0001_initial_schema.sql`, `migrations/0002_add_buffer_posts.sql`, etc.
+- Numbered SQL files: `migrations/0001_initial_schema.sql`, … (through 0006).
 - One migration per logical change. No squashing.
 - Forward-only by convention; rollback by writing a forward migration that undoes.
-- Apply via `psql aiadaptive_cos -f migrations/NNNN_*.sql` (barry-admin socket superuser) or
-  `psql "$DB_URL" -f ...` from barry-agent.
+- Apply via `psql aiadaptive_cos -f migrations/NNNN_*.sql` (barry-admin socket
+  superuser) or `psql "$DB_URL" -f ...` from barry-agent. New tables are handed to
+  `barry_agent` explicitly (migrations run as the socket superuser).
+- `migrations/verify_schema.sql` expects the current operational table set (19
+  tables as of 0006). Cognee's own schema is managed by cognee, not by our
+  migrations.
 
 </migration_convention>
+
+---
+
+## Row Level Security (deferred)
+
+<rls_strategy>
+
+RLS is not enabled in v1 because there is one user. As multi-context use emerges
+(sharing with partner, family use cases, future client-scoped data), RLS policies
+will scope reads/writes per context on the operational tables; the graph's
+isolation is handled by cognee datasets + the B1 trust boundary. Deferring RLS is
+intentional — it adds debugging complexity and is not load-bearing for v1.
+
+</rls_strategy>
