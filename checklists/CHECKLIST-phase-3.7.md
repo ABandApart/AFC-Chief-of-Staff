@@ -118,10 +118,11 @@ pin takes effect on its next restart — health-check then. Next: **W3** (DataPo
   `aiadaptive_cognee`; exact re-post skipped pre-cognify; ledger shows spend
   under `fact-extraction`. cognee behavior itself already proven in W2.
 
-## W5 — Recall rewrite + M2 · ~1–1.5 days   ← IN PROGRESS
+## W5 — Recall rewrite + M2 · ~1–1.5 days   ← BUILDER-SIDE DONE
 
-**Core DONE (ingest extraction + graph recall).** Remaining: /outcome rewire,
-publish_playbooks, M2 runtime check, orphaned facts.
+**All builder-side W5 done.** Only **M2** remains, and it's a *runtime* recall-
+quality check (folds into W7). `/outcome` fact-link and the legacy `facts` table
+were **removed** (operator decision, below), not rewired.
 
 Build against these confirmed facts (cognee 1.4.0, verified 2026-07-28):
 `from cognee import SearchType` → `SearchType.GRAPH_COMPLETION`; `cognee.search(...)`
@@ -142,17 +143,34 @@ and `cognee.add/cognify` are async; `configure_cognee()` (from
   un-normalized 768-dim Gemini vectors (spike found norm ≈ 0.58). If weak,
   configure cognee's embedding normalization or distance metric (env/config), or
   re-embed. This is a runtime quality check, not an on-write code fix.
-- [ ] **`/outcome` rewire:** `brain.search_facts` (facts-table autocomplete) →
-  a cognee search returning fact node-ids; `OutcomeModal` writes
-  `attributed_fact_node` (TEXT, migration 0004 done) not `attributed_fact_id`.
-  ⚠️ verify how to search for fact nodes + read their ids in the API.
-- [ ] `cli/publish_playbooks.py` — git→cognee publish of `publish_to_memory: true`
-  playbooks into a dedicated **trusted `playbooks` dataset** (`cognee.add(..., 
-  dataset_name="playbooks")` + `cognify`); agent retrieval scoped to that dataset
-  only (B1). Carried from Phase 3.6.
-- [ ] **Old facts:** the 2 pre-pivot rows (`facts` #3/#4) are orphaned once recall
-  is graph-native — cognify them into the graph or drop the `facts` table (trivial
-  at 2 rows). Decide + do at W5 or W7.
+- [x] **`/outcome` fact-link REMOVED** (operator decision 2026-07-28: "drop the
+  link", not rewire). In the graph model facts are auto-extracted nodes (UUIDs),
+  not numbered rows — no stable id to autocomplete/link. So: dropped the `fact`
+  param + autocomplete + modal `fact_id` from `cogs/outcomes.py`; removed
+  `search_facts` and the `attributed_fact_id` arg from `brain.insert_outcome`.
+  Outcomes stand on their own description. Both fact-link columns retired in 0006.
+- [x] `cli/publish_playbooks.py` — git→cognee publish of `publish_to_memory: true`
+  playbooks into a dedicated **trusted `playbooks` dataset** (`cognee.add(...,
+  dataset_name="playbooks")` + `cognify`) under `labeled("playbook-publish", …)`;
+  agent retrieval scoped to that dataset only (B1). **Hash-idempotent** —
+  migration **0005** `playbook_publications(name, content_hash)` in
+  `aiadaptive_cos` tracks the last-published hash so re-runs only re-cognify
+  changed/new playbooks (`--force` overrides; `--dry-run` previews). Two seeds
+  flagged (`discovery-call-to-proposal`, `prospect-qualification`). Pure logic
+  tested (8). ⚠️ known gap: a *changed* playbook re-cognifies but old-version
+  nodes aren't deleted (cognee dataset node-delete API — verify at W7). ⚠️
+  **runtime:** barry-agent applies migration 0005 + runs the CLI once at W7.
+  Carried from Phase 3.6.
+- [x] **Old facts DROPPED** (operator decision 2026-07-28: "just drop them", not
+  cognify — the 2 pre-pivot rows were stale/test data). Migration **0006** drops
+  the whole `facts` table + both `outcomes` fact-link columns
+  (`attributed_fact_id`, `attributed_fact_node`). No dangling link — the one real
+  outcome (#5) referenced no fact. **Dependent cleanups done same-change:** the
+  briefing's status line moved off `facts` → `capture_messages` ("Notes
+  captured"); `scripts/smoke_test.py` write-test moved off `facts` →
+  `capture_messages` + table list synced; `verify_schema.sql` refreshed to 19
+  tables (−facts, +capture_messages, +playbook_publications). ⚠️ **runtime:**
+  barry-agent applies migration 0006 at W7.
 - [x] Pure tests: `test_ingest.py` (message_hash) + `test_graph_recall.py`
   (answer normalizer). Removed `_lib/search.py` + test_recall/test_capture.
   Suite 85/85. Runtime capture→recall loop = W7.
@@ -174,9 +192,12 @@ and `cognee.add/cognify` are async; `configure_cognee()` (from
 ## W7 — Validate + redeploy · ~1–1.5 days (barry-agent runtime)
 
 Prereqs already done: `anthropic-api-key` provisioned; migration 0004 applied to
-`aiadaptive_cos` (socket); `aiadaptive_cognee` pruned empty. Consider bundling
-with the **3.6 scheduler cutover** and the **3.5 3c** log check (all pending
-runtime).
+`aiadaptive_cos` (socket); `aiadaptive_cognee` pruned empty. **New runtime steps:**
+apply migrations **0005** (`playbook_publications`) and **0006** (drop `facts` +
+the two `outcomes` fact-link columns) to `aiadaptive_cos`, then run
+`uv run python -m cli.publish_playbooks` once (seeds the trusted `playbooks`
+dataset). Consider bundling with the **3.6 scheduler cutover** and the **3.5 3c**
+log check (all pending runtime).
 
 - [ ] barry-agent: `git pull`; `uv sync --group cognee` (OpenSSL/libpq build
   flags — see PHASE-3.7-W2.md); expect `websockets==15.0.1`.

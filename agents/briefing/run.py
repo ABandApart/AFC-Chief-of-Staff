@@ -45,14 +45,18 @@ def gather_status() -> dict[str, Any]:
     """Pull the status numbers from the brain (three cheap queries)."""
     with db.connection() as conn:
         with conn.cursor() as cur:
+            # Post-pivot the knowledge lives in the cognee graph, not a `facts`
+            # table. `capture_messages` (one row per captured note) is the cheap,
+            # same-DB proxy for "notes captured" — no cross-DB / cognee call in
+            # the briefing.
             cur.execute(
                 """
                 SELECT count(*),
-                       count(*) FILTER (WHERE created_at > now() - interval '24 hours')
-                FROM facts
+                       count(*) FILTER (WHERE captured_at > now() - interval '24 hours')
+                FROM capture_messages
                 """
             )
-            facts_total, facts_24h = cur.fetchone()
+            notes_total, notes_24h = cur.fetchone()
             cur.execute(
                 """
                 SELECT coalesce(sum(usd_cost), 0),
@@ -66,8 +70,8 @@ def gather_status() -> dict[str, Any]:
             cur.execute("SELECT count(*) FROM outcomes")
             outcomes_total = cur.fetchone()[0]
     return {
-        "facts_total": facts_total,
-        "facts_24h": facts_24h,
+        "notes_total": notes_total,
+        "notes_24h": notes_24h,
         "spend_24h": float(spend_24h),
         "calls_24h": calls_24h,
         "failures_24h": failures_24h,
@@ -82,7 +86,7 @@ def format_briefing(now: datetime, status: dict[str, Any]) -> str:
     return (
         f"☀️ Good morning — {now.strftime('%A %d %B %Y')}\n\n"
         f"**System status**\n"
-        f"• Facts: {status['facts_total']} total, {status['facts_24h']} captured in the last 24h\n"
+        f"• Notes captured: {status['notes_total']} total, {status['notes_24h']} in the last 24h\n"
         f"• LLM calls (24h): {status['calls_24h']} for ${status['spend_24h']:.6f} — {failure_str}\n"
         f"• Outcomes recorded: {status['outcomes_total']}\n"
         f"• Brain: Postgres reachable ✓\n\n"

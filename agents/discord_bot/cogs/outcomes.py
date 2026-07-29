@@ -7,17 +7,15 @@ automation backfills this table; Higgins (Phase 11) reports against it.
 No LLM call — a pure structured write, so this does NOT go through the cost
 helper.
 
-Command shape (2026-07 refactor):
+Command shape:
   - **type** is a slash-command choice (a real dropdown in the command UI).
-  - **fact** is an optional slash-command parameter with *autocomplete*
-    against recent/matching facts — no more typing raw fact ids looked up
-    via SQL. (Discord modals can't hold dropdowns or autocomplete, which is
-    why both live on the command, not in the modal.)
   - Selecting the command opens a **modal** for the free-form fields:
     Description (required, multi-line) and Value $ (optional).
 
-Fact-link validation is the FK constraint itself: a stale id raises
-ForeignKeyViolation on insert (no read-check race).
+The old optional fact-link (autocomplete against the `facts` table) was dropped
+in the cognee pivot (W5): knowledge now lives in the graph as auto-extracted
+nodes, not numbered rows, so there is no stable id to link an outcome to.
+Outcomes stand on their own description.
 """
 
 from __future__ import annotations
@@ -28,7 +26,6 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
-from psycopg import errors as pg_errors
 
 from agents.discord_bot import brain
 
@@ -80,10 +77,9 @@ class OutcomeModal(discord.ui.Modal, title="Record an outcome"):
         placeholder="e.g. 12000",
     )
 
-    def __init__(self, outcome_type: str, fact_id: int | None):
+    def __init__(self, outcome_type: str):
         super().__init__()
         self.outcome_type = outcome_type
-        self.fact_id = fact_id
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         # Parse optional value; bad input → friendly ephemeral error, no write.
@@ -99,19 +95,7 @@ class OutcomeModal(discord.ui.Modal, title="Record an outcome"):
                 outcome_type=self.outcome_type,
                 description=str(self.desc),
                 value=value,
-                attributed_fact_id=self.fact_id,
             )
-        except pg_errors.ForeignKeyViolation:
-            logger.warning(
-                "outcome rejected — no fact with id %s (type=%s, value=%s)",
-                self.fact_id, self.outcome_type, value,
-            )
-            await interaction.response.send_message(
-                f"⚠️ No fact with id {self.fact_id}. Outcome not saved — "
-                f"re-run and pick a fact from the suggestions (or leave it blank).",
-                ephemeral=True,
-            )
-            return
         except Exception:
             logger.exception("failed to write outcome (%s)", self.outcome_type)
             await interaction.response.send_message(
@@ -121,14 +105,12 @@ class OutcomeModal(discord.ui.Modal, title="Record an outcome"):
             return
 
         val_str = f" (${value:,.0f})" if value is not None else ""
-        link_str = f", linked to fact #{self.fact_id}" if self.fact_id is not None else ""
         await interaction.response.send_message(
-            f"✅ Recorded outcome #{oid}: **{self.outcome_type}**{val_str}{link_str}",
+            f"✅ Recorded outcome #{oid}: **{self.outcome_type}**{val_str}",
             ephemeral=True,
         )
         logger.info(
-            "outcome #%s recorded: %s value=%s fact=%s",
-            oid, self.outcome_type, value, self.fact_id,
+            "outcome #%s recorded: %s value=%s", oid, self.outcome_type, value
         )
 
 
@@ -139,10 +121,7 @@ class OutcomesCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="outcome", description="Record a business outcome")
-    @app_commands.describe(
-        type="The kind of outcome",
-        fact="Fact this outcome traces back to (optional — type to search)",
-    )
+    @app_commands.describe(type="The kind of outcome")
     @app_commands.choices(
         type=[
             app_commands.Choice(name=t.replace("_", " "), value=t)
@@ -153,26 +132,8 @@ class OutcomesCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         type: app_commands.Choice[str],
-        fact: int | None = None,
     ) -> None:
-        await interaction.response.send_modal(
-            OutcomeModal(outcome_type=type.value, fact_id=fact)
-        )
-
-    @outcome.autocomplete("fact")
-    async def fact_autocomplete(
-        self, interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[int]]:
-        try:
-            rows = await asyncio.to_thread(brain.search_facts, current, 20)
-        except Exception:
-            logger.exception("fact autocomplete failed")
-            return []
-        # Choice names are capped at 100 chars by Discord.
-        return [
-            app_commands.Choice(name=f"#{fid} · {content}"[:100], value=fid)
-            for fid, content in rows
-        ]
+        await interaction.response.send_modal(OutcomeModal(outcome_type=type.value))
 
 
 async def setup(bot: commands.Bot) -> None:

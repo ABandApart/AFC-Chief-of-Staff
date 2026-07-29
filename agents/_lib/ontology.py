@@ -14,12 +14,14 @@ Entity ↔ operational boundary (target-state `25-target-state.md`, drawn here):
   prospects, task_candidates, tasks, follow_ups, content_pipeline,
   approval_queue, buffer_posts, outcomes, agent_runs, dashboard, sources.
 
-  CROSS-LINKS: an operational row references a graph node by its cognee node-id
-  stored as a **TEXT column** (e.g. `outcomes.attributed_fact_node`), joined in
-  app code — never a cross-store FK (the graph lives in `aiadaptive_cognee`, the
-  operational tables in `aiadaptive_cos`; Postgres can't FK across databases).
-  Those node-id columns are added in W4/W5 as capture and recall start
-  writing/reading the graph — not in W3.
+  CROSS-LINKS: when an operational row needs to reference a graph node, it holds
+  the cognee node-id as a **TEXT column** (not a cross-store FK — the graph lives
+  in `aiadaptive_cognee`, the operational tables in `aiadaptive_cos`, and Postgres
+  can't FK across databases), joined in app code. The first such column
+  (`outcomes.attributed_fact_node`) was dropped in 0006 — the operator chose not
+  to link outcomes to fact nodes — so the pattern currently has no live use; the
+  first will be a future channel/agent that pins an operational row to a graph
+  entity.
 
 cognee is optional (`uv sync --group cognee`). When it's absent a pydantic
 `BaseModel` stand-in lets these classes import and their structure be

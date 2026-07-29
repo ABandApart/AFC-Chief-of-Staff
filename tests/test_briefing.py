@@ -11,8 +11,8 @@ from datetime import datetime
 from agents.briefing.run import format_briefing
 
 STATUS = {
-    "facts_total": 12,
-    "facts_24h": 3,
+    "notes_total": 12,
+    "notes_24h": 3,
     "spend_24h": 0.00001234,
     "calls_24h": 7,
     "failures_24h": 0,
@@ -24,7 +24,7 @@ def test_briefing_includes_date_and_counts():
     now = datetime(2026, 7, 6, 6, 0)
     s = format_briefing(now, STATUS)
     assert "Monday 06 July 2026" in s
-    assert "12 total, 3 captured in the last 24h" in s
+    assert "Notes captured: 12 total, 3 in the last 24h" in s
     assert "7 for $0.000012" in s
     assert "Outcomes recorded: 2" in s
 

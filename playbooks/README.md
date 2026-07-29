@@ -29,11 +29,17 @@ tags: [<tag>, ...]
 
 ## Publish path (Track B / W5)
 
-`cli/publish_playbooks.py` (built during the cognee migration) cognifies every
-playbook with `publish_to_memory: true` into a dedicated **`playbooks` dataset**
-tagged `trusted`. Agents retrieve with a search scoped to that dataset only —
-never mixed with untrusted ingest. Until that CLI exists, `publish_to_memory` is
-a declaration of intent; playbooks are still loaded by name.
+`cli/publish_playbooks.py` cognifies every playbook with
+`publish_to_memory: true` into a dedicated **`playbooks` dataset** (the trusted
+memory region, B1). Agents retrieve with a search scoped to that dataset only —
+never mixed with untrusted ingest. Re-runs are hash-idempotent (only
+changed/new playbooks re-cognify; `--force` overrides). Run it after changing a
+published playbook:
+
+```
+uv run python -m cli.publish_playbooks            # publish changed/new
+uv run python -m cli.publish_playbooks --dry-run  # preview, touch nothing
+```
 
 ## Authoring
 

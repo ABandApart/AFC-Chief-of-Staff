@@ -4,37 +4,38 @@ smoke_test.py — Phase 1 connectivity verification.
 Confirms:
   1. Keychain has the necessary credentials.
   2. The local Postgres instance is reachable from this account.
-  3. All 18 tables exist.
+  3. All expected tables exist.
   4. A test row can be written and deleted (read/write privileges work).
 
 No LLM calls. No agent_runs writes. This script exists only to prove
-the substrate works.
+the substrate works. (Post-cognee-pivot: the write-test uses `capture_messages`
+— the old `facts` table was retired in migration 0006.)
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import psycopg
-
 
 EXPECTED_TABLES = {
     "agent_runs",
     "approval_queue",
     "buffer_posts",
+    "capture_messages",
     "content_items",
     "content_pipeline",
     "dashboard",
     "decisions",
-    "facts",
     "follow_ups",
     "icp_signals",
     "interest_signals",
     "meeting_transcripts",
     "outcomes",
     "people",
+    "playbook_publications",
     "prospects",
     "sources",
     "task_candidates",
@@ -101,27 +102,23 @@ def main() -> int:
                     f"{len(EXPECTED_TABLES)} expected tables visible"
                 )
 
-                # Step 3: Write & delete test row.
+                # Step 3: Write & delete test row (a throwaway capture_messages
+                # row — content_hash is UNIQUE, so stamp it to stay collision-free).
+                marker = f"smoke-test-{datetime.now(UTC).isoformat()}"
                 cur.execute(
                     """
-                    INSERT INTO facts (content, source_type, source_ref, domain, confidence)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO capture_messages (content_hash, message_id)
+                    VALUES (%s, %s)
                     RETURNING id
                     """,
-                    (
-                        "Phase 1 smoke test marker — safe to delete",
-                        "manual",
-                        f"smoke-test-{datetime.now(timezone.utc).isoformat()}",
-                        "system",
-                        1.0,
-                    ),
+                    (marker, "smoke-test"),
                 )
                 test_id = cur.fetchone()[0]
-                print(f"OK    test row inserted to facts (id={test_id})")
+                print(f"OK    test row inserted to capture_messages (id={test_id})")
 
-                cur.execute("DELETE FROM facts WHERE id = %s", (test_id,))
+                cur.execute("DELETE FROM capture_messages WHERE id = %s", (test_id,))
                 conn.commit()
-                print("OK    test row deleted; brain is clean")
+                print("OK    test row deleted; substrate is clean")
 
     except psycopg.OperationalError as e:
         print(f"FAIL: cannot connect to Postgres: {e}")
