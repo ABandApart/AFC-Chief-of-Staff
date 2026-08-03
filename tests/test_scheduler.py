@@ -78,10 +78,11 @@ def test_scheduler_plans_only_enabled_real_loops():
     now = datetime(2026, 1, 1, 0, 0)
     sched = Scheduler(cp, repo_root(), now)
     names = {name for name, _, _ in sched.plan()}
-    assert names == {"morning-briefing", "nightly-backup"}
-    # plan is sorted by next fire: 02:00 backup before 06:00 briefing
+    assert names == {"morning-briefing", "nightly-backup", "granola-poll"}
+    # plan is sorted by next fire: granola-poll (*/15 → 00:15) before the 02:00
+    # backup before the 06:00 briefing.
     ordered = [name for name, _, _ in sched.plan()]
-    assert ordered == ["nightly-backup", "morning-briefing"]
+    assert ordered == ["granola-poll", "nightly-backup", "morning-briefing"]
 
 
 def test_scheduler_briefing_job_invokes_agent_with_playbook():

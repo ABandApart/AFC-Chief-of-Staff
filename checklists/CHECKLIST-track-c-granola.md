@@ -82,10 +82,14 @@ The first runtime poll (barry-agent) surfaced two blockers; both fixed builder-s
 
 ## Next increments (not in this build)
 
-- [ ] **Structured `Meeting` hybrid** — attach a typed `Meeting` node
-  (title/date/participants from the API fields) via `add_data_points` alongside
-  the mode-1 text. Gate on a runtime probe of `add_data_points` retrieval
-  (`agents/test/ontology_shape.py`, still unrun).
+- [~] **Structured `Meeting` hybrid — Step 1 built (probe-gated).** Typed
+  `Meeting` + `Person` nodes from the API's structured fields via
+  `add_data_points` (`agents/_lib/meeting_graph.py`), alongside the mode-1 text.
+  Deterministic `uuid5` ids (person→email, meeting→note-id) are the
+  entity-resolution key. `agents/test/ontology_shape.py` enhanced into the **gate**
+  (traversal + resolution + dataset); pure tests in `tests/test_meeting_graph.py`.
+  **Step 2 (wire into the poller) deferred until barry-agent runs the probe** —
+  handoff `PHASE-TRACK-C-MEETING-HYBRID.md`.
 - [ ] **Google Drive ingest** — OAuth installed-app + refresh token in Keychain
   (net-new OAuth infra), scope decision (`drive.file` vs `drive.readonly`),
   one-time operator OAuth bootstrap; reuses `ingest_note` + `channel_state`.

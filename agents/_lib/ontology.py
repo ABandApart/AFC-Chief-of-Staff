@@ -36,10 +36,14 @@ try:
 
     HAVE_COGNEE = True
 except ImportError:  # structural stand-in — lets the classes import + be tested
-    from pydantic import BaseModel
+    from uuid import UUID, uuid4
+
+    from pydantic import BaseModel, Field
 
     class DataPoint(BaseModel):  # type: ignore[no-redef]
-        pass
+        # Mirror cognee.low_level.DataPoint's identity field so a caller-set,
+        # deterministic `id` (our entity-resolution key) survives without cognee.
+        id: UUID = Field(default_factory=uuid4)
 
     HAVE_COGNEE = False
 
