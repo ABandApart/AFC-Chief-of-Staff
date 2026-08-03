@@ -35,17 +35,19 @@ Gemini embeddings (local bge only); Tartt *proposes* tasks, it doesn't act.
 
 | Step | Provider | Why |
 |------|----------|-----|
-| Article **summarization** | **Gemini `gemini-2.5-flash`** | News is Gemini's reserved lane; Flash is cheap at volume. ⚠️ this is Tartt's one Gemini touchpoint → see the free-tier note. |
+| Article **summarization** | **Gemini `gemini-2.5-flash`** | **Chosen deliberately** — Gemini weights search + recency in its outputs, which is what news discovery wants. Tartt's one Gemini touchpoint. |
 | Graph **entity extraction** (cognify) | **Anthropic** (`claude-haiku-4-5`, via litellm/M1) | Same as the Granola hybrid. |
 | **Embedding** | **local FastEmbed bge-base-en-v1.5 @768** | Operator instruction: "local embedding, like the Granola content." No Gemini embeddings, no rate-limit exposure. |
 
-> ⚠️ **Gemini free-tier watch:** summarizing many articles/day is the load that
-> tripped the free-tier 429 on Granola's embeddings. Summaries are cheaper than
-> embeddings and Flash's limits are higher, but at real source volume the operator
-> should **upgrade the Gemini key to paid** for Tartt. (Embeddings are local, so
-> only summarization is exposed.) Alternative if staying free: summarize with
-> Anthropic Haiku instead — makes Tartt fully Gemini-free like Granola; flagged as
-> a swap.
+> **Free-tier quality trial (operator, 2026-08-03).** Gemini stays on the **free
+> tier on purpose** — the goal is to **evaluate the depth + quality** of Flash's
+> search/recency-aware summaries before deciding whether to **expand (paid tier)
+> or pivot to another model**. So: **do not upgrade to paid yet.** Keep trial
+> volume within the free cap by starting with a **small source set + modest poll
+> cadence** and **interest-gating** the expensive downstream work. Only
+> *summarization* touches Gemini (embeddings are local); if the free cap bites
+> before the quality read is done, throttle cadence rather than upgrade — the
+> point is to judge quality, not throughput, first.
 
 ## Data model — the content hybrid
 
@@ -106,9 +108,11 @@ briefing's "new since yesterday / reading" section (extends `agents/briefing`).
    summarize + zero Gemini embeddings.
 
 ## Open decisions (recommend, confirm at build)
-- **Summarization provider:** Gemini Flash (recommended, news lane) vs Anthropic
-  Haiku (fully-local-provider like Granola). Ties to the Gemini paid-tier question.
-- **mode-1 cognify: all articles vs interest-gated** (recommended: gated).
+- **Summarization provider — DECIDED: Gemini Flash, free tier** (operator: trial
+  quality before scaling/pivoting — see the Free-tier quality trial box).
+- **mode-1 cognify: all articles vs interest-gated** (recommended: gated — also
+  keeps the trial cheap).
 - **Legacy `content_items` SQL table:** retire vs repurpose as the operational
   tracker.
-- **Source seed list + poll cadence.**
+- **Source seed list + poll cadence** — start **small** (a handful of sources,
+  slow cadence) for the free-tier quality trial.

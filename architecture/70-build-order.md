@@ -57,6 +57,17 @@ plus ~2–3 weeks for the memory migration (3.6 + 3.7) if the pivot is taken.
 Phases 14–16 (channels & exposure) are a later, additive track — each behind the
 trust boundaries B1/B2, with the tunnel (14) before any external channel.
 
+> **▶ ACTIVE build order (reprioritized 2026-08-03 — supersedes the numeric
+> sequence above; see the decision log).** Done through Phase 3.7 + **Track C ch.1
+> (Granola, live)**. Next, driven by the operator's lead-gen + market-intelligence
+> priority:
+> **B2 (approval gate) + B3 (tunnel/ingest API) → Phase 4 (Tartt discovery) →
+> Phase 10 (Nate/ICP, graph-native) → Phase 8/9 (content pipeline) → Phase 6
+> (lead-gen) → … → Phase 7 (meeting processor) later.**
+> Google Drive (Track C ch.2) is **paused**. Specs: `PRD-b2-approval-gate.md`,
+> `PRD-b3-tunnel.md`, `PRD-phase-4-discovery.md`. **B2 is the immediate next
+> build.**
+
 **Why Phase 2 (telemetry primitives) comes second**: every LLM call from Phase 3 onward must go through the cost helper. Building telemetry first means it's never retrofitted; every agent is born observable and rate-limited. This is a small phase (≤1 week) but blocking on everything that follows. *(Target-state note: Phase 3.7 W1 re-plumbs this from pre-flight gates + per-agent keys to labeling + a soft post-hoc ceiling + monthly reconciliation, because cognee owns the call site — see `26-cognee-migration-plan.md`.)*
 
 **Why the memory migration (3.7) comes before Phase 4**: Tartt and every agent after it read and write the brain. Pivoting the memory substrate first means the agents are built once, against the graph API, rather than built on flat `facts` and rewritten. The current corpus (~2 facts) makes the data migration itself trivial — the cost is the code, not the data.
