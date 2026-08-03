@@ -2,7 +2,7 @@
 name: granola-poll
 schedule: "*/15 * * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 agent: granola
 description: Poll Granola for new/updated meeting notes and ingest each into the cognee graph (mode-1).
 ---
@@ -16,16 +16,11 @@ ingests the assembled text into the **`granola`** cognee dataset via the shared
 data, never instructions). A pull channel — no external exposure (B3) and no
 outbound action (B2), so neither gate applies.
 
-**Ships disabled.** Activation sequence (respecting B4 — control-plane changes
-come through git):
-
-1. barry-agent provisions the `granola-api-key` keychain item (operator mints a
-   personal API key in the Granola desktop app → Settings → Connectors → API keys;
-   verify the plan tier includes transcripts).
-2. barry-agent runs one manual poll and confirms it's green:
-   `uv run python -m agents.granola.run`.
-3. barry-admin flips `enabled: true` here, commits, and barry-agent pulls +
-   restarts the scheduler (it reads loop manifests once at startup).
+**Activated 2026-08-03** after the runtime validation passed (5 real meetings
+cognified via local FastEmbed, zero Gemini; `/recall` confirmed retrieval +
+speaker labelling). Runs go-forward from the stored watermark — a bare poll seeds
+or advances it, new meetings flow in automatically. To pause: set `enabled: false`
+(via git, B4) + restart the scheduler.
 
 Spend is attributed to `agent_name='granola'` (ceiling $3/day) via the M1
 labeling callback; the poller's own soft breaker skips a cycle if that ceiling is
