@@ -93,12 +93,41 @@ def build_cognee_env(db_url: str, *, anthropic_key: str) -> dict[str, str]:
     return env
 
 
+def _clear_cognee_config_caches() -> None:
+    """Clear cognee's `@lru_cache`d `get_*_config()` getters.
+
+    cognee caches each config the first time it's read. `configure_cognee` sets
+    the env with `setdefault`, which **cannot** override a config that was already
+    read (and cached with cognee's defaults, e.g. `provider=openai`, no key)
+    before configure ran — e.g. an entrypoint that imports `cognee.low_level` (via
+    `ontology`) at module load. Symptom: `LLMAPIKeyNotSetError (422)` on the first
+    LLM call even though the env is correct (diagnosed at the W3 meeting-hybrid
+    probe, 2026-08-03). Clearing the caches after we set the env makes config
+    order-independent. Best-effort per getter so a cognee version that renames or
+    moves one doesn't break configure.
+    """
+    import contextlib
+    import importlib
+
+    getters = [
+        ("cognee.infrastructure.llm.config", "get_llm_config"),
+        ("cognee.infrastructure.databases.relational", "get_relational_config"),
+        ("cognee.infrastructure.databases.vector", "get_vectordb_config"),
+        ("cognee.infrastructure.databases.graph.config", "get_graph_config"),
+    ]
+    for module_path, name in getters:
+        with contextlib.suppress(Exception):
+            getattr(importlib.import_module(module_path), name).cache_clear()
+
+
 def configure_cognee() -> None:
     """Apply cognee config to the environment and install the M1 callback.
 
     Reads creds from keychain (`db-url`, `anthropic-api-key`). No Gemini key —
     embeddings are local (FastEmbed). Uses `setdefault`, so anything already
-    exported wins (lets an operator override a single value without editing code).
+    exported wins (lets an operator override a single value without editing code),
+    then clears cognee's cached config getters so our env wins regardless of
+    whether a config was read before this ran (see `_clear_cognee_config_caches`).
     """
     env = build_cognee_env(
         creds.keychain_get("db-url"),
@@ -106,4 +135,5 @@ def configure_cognee() -> None:
     )
     for key, val in env.items():
         os.environ.setdefault(key, val)
+    _clear_cognee_config_caches()
     install_litellm_callback()

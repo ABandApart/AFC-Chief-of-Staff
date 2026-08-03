@@ -30,7 +30,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 
-from agents._lib import cognee_setup, creds, db, granola_client, runs
+from agents._lib import cognee_setup, creds, db, granola_client, meeting_graph, runs
 from agents._lib.ingest import ingest_note
 
 logging.basicConfig(
@@ -138,6 +138,17 @@ async def _run(*, backfill: bool = False, since: str | None = None) -> int:
                 )
                 if result == "captured":
                     captured += 1
+                    # Hybrid: also attach the typed Meeting + Person nodes (an
+                    # idempotent upsert on deterministic ids). Guarded — a
+                    # structured-insert failure must NOT fail the note; the mode-1
+                    # content is already durable.
+                    try:
+                        await meeting_graph.add_meeting_graph(note)
+                    except Exception:
+                        logger.exception(
+                            "typed Meeting insert failed for %s (mode-1 content is "
+                            "durable; will retry on the note's next update)", note_id
+                        )
                 else:
                     reposted += 1
         except Exception:
