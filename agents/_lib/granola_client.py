@@ -145,15 +145,41 @@ def _meeting_date(note: dict[str, Any]) -> str:
     return (cal.get("scheduled_start_time") or note.get("created_at") or "").strip()
 
 
+def _speaker_label(speaker: dict[str, Any], owner_name: str) -> str:
+    """Resolve a transcript segment's speaker label (pure).
+
+    The live API returns `speaker = {source, attribution}` with `attribution` in
+    {"me","them"} and NO per-segment name (the docs' `name`/`diarization_label`
+    are absent on this tier — confirmed at runtime 2026-08-03). So:
+      1. use `name` if a tier ever provides it (future-proof),
+      2. else map `attribution`: "me" → the note owner's name (we know it
+         unambiguously) or "Me"; "them" → "Them" (multiple externals can't be
+         disambiguated per segment — the header attendee list carries who was there),
+      3. else fall back to `source` (e.g. "microphone"/"speaker").
+    Preserving the me/them turn-taking helps cognee attribute "the client said X"
+    vs "I said Y".
+    """
+    name = (speaker.get("name") or "").strip()
+    if name:
+        return name
+    attribution = (speaker.get("attribution") or "").strip().lower()
+    if attribution == "me":
+        return owner_name or "Me"
+    if attribution == "them":
+        return "Them"
+    return (speaker.get("source") or "").strip()
+
+
 def _transcript_text(note: dict[str, Any]) -> str:
     """Flatten the transcript array to `Speaker: text` lines (empty if none)."""
+    owner_name = ((note.get("owner") or {}).get("name") or "").strip()
     lines: list[str] = []
     for seg in note.get("transcript") or []:
         text = (seg.get("text") or "").strip()
         if not text:
             continue
-        speaker = ((seg.get("speaker") or {}).get("name") or "").strip()
-        lines.append(f"{speaker}: {text}" if speaker else text)
+        label = _speaker_label(seg.get("speaker") or {}, owner_name)
+        lines.append(f"{label}: {text}" if label else text)
     return "\n".join(lines)
 
 

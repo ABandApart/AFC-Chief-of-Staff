@@ -4,21 +4,31 @@ Configures cognee to run its graph + vector + relational stores on the local
 Postgres — a **dedicated `aiadaptive_cognee` database**, isolated from the
 operational tables (`agent_runs`, `prospects`, …) which stay in `aiadaptive_cos`.
 
-Bakes in what the spike learned:
-  - **M1 telemetry routing (mandatory):** the LLM goes through litellm
-    (`LLM_PROVIDER=custom` + an `anthropic/…` model prefix → GenericAPIAdapter →
-    `litellm.acompletion`), so our labeling callback fires. Cognee's *native*
-    AnthropicAdapter calls the raw SDK and bypasses the callback — that routing
-    would silently lose ~all LLM spend from the ledger.
-  - **our embedder kept:** `gemini-embedding-001` @ 768 (M2 — cognee does not
-    L2-normalize the truncated output; handled on the recall/write path in W5).
+Provider plan (2026-08-03): **Gemini is reserved for news ingestion only** (Tartt,
+Phase 4). The knowledge pipeline runs entirely off Gemini —
+  - **LLM = Anthropic** (`claude-haiku-4-5`) for extraction/graph-building, routed
+    through litellm (**M1**, mandatory): `LLM_PROVIDER=custom` + an `anthropic/…`
+    model prefix → GenericAPIAdapter → `litellm.acompletion`, so our labeling
+    callback fires. Cognee's *native* AnthropicAdapter calls the raw SDK and
+    bypasses the callback — that routing would silently lose ~all LLM spend.
+  - **Embeddings = local FastEmbed** (`BAAI/bge-base-en-v1.5` @ 768), in-process
+    via ONNX Runtime — **no API key, no rate limits, no data leaves the box**.
+    Replaced `gemini-embedding-001` (2026-08-03): the first Granola poll hit the
+    Gemini free-tier embed cap (429), and embeddings are the only thing that had
+    kept Gemini in this pipeline. bge-base-en-v1.5 is 768-dim, so the dimension
+    commitment is unchanged. Local embeddings don't go through litellm, so they
+    make **no ledger row** (they're free) — the ledger shows only Anthropic
+    extraction spend per cognify. **Fallback:** if the local path proves flaky,
+    switch to **Voyage** (Anthropic's recommended embeddings partner) — see the
+    commented block in `build_cognee_env`.
   - **access control OFF** (single-user) so the pgvector + postgres-graph
     adapters take one set of per-store creds instead of tenant scoping.
 
-cognee is an optional dependency (`uv sync --group cognee`); this module imports
-without it (`configure_cognee` only touches cognee transitively via the litellm
-callback). Call `configure_cognee()` once at process start, before any cognee
-call.
+cognee is an optional dependency (`uv sync --group cognee`, which now includes the
+`fastembed` extra); this module imports without it (`configure_cognee` only
+touches cognee transitively via the litellm callback). Call `configure_cognee()`
+once at process start, before any cognee call. The first run downloads + caches
+the bge model from HuggingFace (~a few hundred MB) — needs network once.
 """
 
 from __future__ import annotations
@@ -31,7 +41,8 @@ from agents._lib.telemetry_context import install_litellm_callback
 
 COGNEE_DB_NAME = "aiadaptive_cognee"
 LLM_MODEL = "anthropic/claude-haiku-4-5"   # litellm prefix → GenericAPIAdapter (M1)
-EMBEDDING_MODEL = "gemini/gemini-embedding-001"
+EMBEDDING_PROVIDER = "fastembed"           # local ONNX — no key, no rate limits
+EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"  # 768-dim; keeps the dimension commitment
 EMBEDDING_DIMENSIONS = "768"
 
 
@@ -40,13 +51,13 @@ def cognee_dsn(db_url: str) -> str:
     return urlparse(db_url)._replace(path=f"/{COGNEE_DB_NAME}").geturl()
 
 
-def build_cognee_env(db_url: str, *, anthropic_key: str, gemini_key: str) -> dict[str, str]:
+def build_cognee_env(db_url: str, *, anthropic_key: str) -> dict[str, str]:
     """Build the cognee env-var config (pure — unit-tested).
 
     All three stores (relational `DB_*`, vector `VECTOR_DB_*`, graph
     `GRAPH_DATABASE_*`) point at the same dedicated Postgres database; with
     access control off they need their own copies of the creds (they don't
-    inherit `DB_*`).
+    inherit `DB_*`). Embeddings are local (FastEmbed) → no embedding API key.
     """
     p = urlparse(db_url)
     store = {
@@ -60,15 +71,22 @@ def build_cognee_env(db_url: str, *, anthropic_key: str, gemini_key: str) -> dic
         "LLM_PROVIDER": "custom",
         "LLM_MODEL": LLM_MODEL,
         "LLM_API_KEY": anthropic_key,
-        "EMBEDDING_PROVIDER": "gemini",
+        "EMBEDDING_PROVIDER": EMBEDDING_PROVIDER,   # local ONNX — no EMBEDDING_API_KEY
         "EMBEDDING_MODEL": EMBEDDING_MODEL,
         "EMBEDDING_DIMENSIONS": EMBEDDING_DIMENSIONS,
-        "EMBEDDING_API_KEY": gemini_key,
         "VECTOR_DB_PROVIDER": "pgvector",
         "GRAPH_DATABASE_PROVIDER": "postgres",
         "DB_PROVIDER": "postgres",
         "ENABLE_BACKEND_ACCESS_CONTROL": "false",
     }
+    # Fallback embedder (Voyage — Anthropic's recommended partner) if the local
+    # FastEmbed path proves flaky at runtime. To switch: `uv sync` with a
+    # `cognee[postgres]` that includes voyage support, provision `voyage-api-key`,
+    # and replace the three EMBEDDING_* lines above with:
+    #     "EMBEDDING_PROVIDER": "litellm",
+    #     "EMBEDDING_MODEL": "voyage/voyage-3.5",   # 1024-dim → re-embed the graph
+    #     "EMBEDDING_DIMENSIONS": "1024",
+    #     "EMBEDDING_API_KEY": voyage_key,
     for prefix in ("DB", "VECTOR_DB", "GRAPH_DATABASE"):
         for key, val in store.items():
             env[f"{prefix}_{key}"] = val
@@ -78,14 +96,13 @@ def build_cognee_env(db_url: str, *, anthropic_key: str, gemini_key: str) -> dic
 def configure_cognee() -> None:
     """Apply cognee config to the environment and install the M1 callback.
 
-    Reads creds from keychain (`db-url`, `anthropic-api-key`, `gemini-api-key`).
-    Uses `setdefault`, so anything already exported wins (lets an operator
-    override a single value without editing code).
+    Reads creds from keychain (`db-url`, `anthropic-api-key`). No Gemini key —
+    embeddings are local (FastEmbed). Uses `setdefault`, so anything already
+    exported wins (lets an operator override a single value without editing code).
     """
     env = build_cognee_env(
         creds.keychain_get("db-url"),
         anthropic_key=creds.keychain_get("anthropic-api-key"),
-        gemini_key=creds.keychain_get("gemini-api-key"),
     )
     for key, val in env.items():
         os.environ.setdefault(key, val)

@@ -238,13 +238,20 @@ the two in sync when prices change.
 
 <labeling_path>
 
-cognee makes LLM + embedding calls we don't own the call site of, so `agent_run`
-can't wrap them. Instead (`_lib/telemetry_context.py`):
+cognee makes LLM calls we don't own the call site of, so `agent_run` can't wrap
+them. Instead (`_lib/telemetry_context.py`):
+
+> **Embeddings are local now (2026-08-03).** cognee embeds via FastEmbed
+> (`bge-base-en-v1.5`, in-process ONNX) — no API call, so **no litellm, no ledger
+> row, no cost**. The labeling path therefore captures only cognee's **Anthropic
+> extraction** spend; a cognify shows Anthropic rows and zero embedding rows.
+> (Gemini is reserved for news ingestion — see Provider allocation below.)
 
 - `labeled(agent_name, function_label, *, trigger_kind, correlation_id)` sets a
   **contextvar** around a cognee operation (e.g. `labeled("fact-extraction",
-  "customer_discovery", correlation_id=source_ref)` in `ingest.py`). It propagates
-  into asyncio child tasks, so it survives cognee's per-chunk fan-out.
+  "customer_discovery", correlation_id=source_ref)` in `ingest.py`, or
+  `labeled("granola", …)` in the Granola poller). It propagates into asyncio child
+  tasks, so it survives cognee's per-chunk fan-out.
 - `install_litellm_callback()` registers a litellm `CustomLogger` that fires on
   every provider call, reads the current label, and writes a conformant
   `agent_runs` row (`correlation_kind='cognify_run'`). Installed by
@@ -263,6 +270,35 @@ This is why the ledger is authoritative for spend attribution: both write paths
 land in one table, keyed by `agent_name` / `function_label` / `correlation_id`.
 
 </labeling_path>
+
+---
+
+## Provider Allocation (API-use plan, 2026-08-03)
+
+<provider_allocation>
+
+Which external provider does what — deliberately narrow, so spend and data
+exposure are predictable:
+
+| Work | Provider | Where |
+|------|----------|-------|
+| **Generative LLM** — all of it: cognee extraction/graph-building, and every agent (Roy Kent, Keeley, Sam, meeting-processor, briefing synthesis, …) | **Anthropic** (`claude-*`, via litellm for cognee; direct SDK for own-agents) | `runs.py` + the M1 labeling path |
+| **News ingestion only** — Tartt's content summarization + the `content_items` similarity vectors | **Gemini** (`gemini-2.5-flash`, `gemini-embedding-001` @768) | `runs.py` (Phase 4) |
+| **Knowledge-graph embeddings** — capture, meetings | **Local FastEmbed** (`bge-base-en-v1.5` @768, ONNX; no key, no rate limit, no cost) | cognee (`cognee_setup.py`) |
+
+Rationale: Gemini is boxed into the news domain (its free-tier embed cap is what
+broke the first Granola poll); Anthropic does the reasoning; the knowledge graph
+(client meeting content) embeds **on-box** for privacy + zero rate limits.
+Two 768-dim embedding spaces coexist but are never compared cross-space: Gemini
+for `content_items` (news, in `aiadaptive_cos`), bge for the cognee graph (in
+`aiadaptive_cognee`). **Embedding fallback:** Voyage (`voyage-3.5`, cloud,
+Anthropic's recommended partner) if the local path proves flaky — commented block
+in `cognee_setup.build_cognee_env`.
+
+`PRICE_TABLE`'s `gemini-embedding-001` row therefore prices **news** embeddings
+only; cognee's local embeddings never hit the price map (they're free).
+
+</provider_allocation>
 
 ---
 

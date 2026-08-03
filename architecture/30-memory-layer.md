@@ -47,16 +47,22 @@ never a cross-database foreign key (Postgres can't FK across databases).
   (single-user), and installs the M1 telemetry callback. cognee is an **optional
   dependency** (`uv sync --group cognee`) — the heavy tree stays out of the
   dev/CI env; modules that touch it import lazily.
-- **LLM + embedding routing (M1, mandatory)**: cognee's LLM goes through litellm
-  as a *custom* provider (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/claude-haiku-4-5`)
+- **LLM routing (M1, mandatory)**: cognee's LLM goes through litellm as a
+  *custom* provider (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/claude-haiku-4-5`)
   so our labeling callback fires on every call; the native Anthropic adapter would
-  bypass telemetry. Embeddings: `gemini/gemini-embedding-001` @ 768. Details in
-  `80-telemetry-layer.md`.
-- **Dimension lock**: 768 is a hard commitment — switching models means
-  re-embedding the whole graph. (M2 note: cognee does **not** L2-normalize the
-  truncated 768-dim Gemini output — spike measured norm ≈ 0.58 — so recall
-  quality is a runtime check; if weak, configure cognee's normalization /
-  distance metric. See Recall, below.)
+  bypass telemetry. Details in `80-telemetry-layer.md`.
+- **Embeddings — local (2026-08-03)**: `EMBEDDING_PROVIDER=fastembed`,
+  `BAAI/bge-base-en-v1.5` @ 768, run in-process via ONNX Runtime — **no API key,
+  no rate limits, and client transcript text never leaves the box**. This replaced
+  `gemini-embedding-001` under the provider plan that reserves **Gemini for news
+  ingestion only** (Tartt); it also retired **M2** — bge vectors are normalized,
+  so the old un-normalized-Gemini concern is moot. Local embeddings don't traverse
+  litellm, so they make no ledger row (they're free). **Fallback:** Voyage
+  (`voyage/voyage-3.5`, cloud, Anthropic's recommended partner) — a commented
+  config block in `cognee_setup.build_cognee_env`.
+- **Dimension lock**: 768 is a hard commitment — switching embedders means
+  re-embedding the whole graph. bge-base-en-v1.5 is 768-dim, so the switch off
+  Gemini kept the commitment (and the graph was empty at the time — go-forward).
 - **Access**: all operational SQL uses the shared connection pool in
   `agents/_lib/db.py` — no per-operation `psycopg.connect()`.
 
@@ -130,9 +136,11 @@ the query/completion spend lands in the ledger.
 > table), removed in W5. The old hybrid-search tuning (RRF k=60, a 0.55 cosine
 > floor) is gone — those knobs now live inside cognee.
 
-**M2 (retrieval quality)** is a **runtime** check, not an on-write code fix:
-verify cognee's recall quality with the un-normalized 768-dim Gemini vectors; if
-weak, configure cognee's embedding normalization or distance metric.
+**M2 (retrieval quality)** — originally a concern about Gemini's un-normalized
+768-dim vectors (norm ≈ 0.58). **Retired 2026-08-03** with the switch to local
+FastEmbed (`bge-base-en-v1.5`), whose vectors are normalized. Recall quality was
+already judged good at the W7 deploy; the go-forward graph re-embeds under bge as
+notes arrive.
 
 ### Telemetry of cognee spend (M1)
 

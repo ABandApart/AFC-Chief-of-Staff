@@ -9,10 +9,13 @@ from __future__ import annotations
 
 from agents._lib import granola_client as gc
 
+# Shapes match the LIVE API (confirmed 2026-08-03): speaker = {source, attribution}
+# — no per-segment `name` on this tier.
 FULL_NOTE = {
     "id": "not_abc123def45678",
     "title": "Northwind discovery call",
     "created_at": "2026-07-20T15:00:00Z",
+    "owner": {"name": "Barry Baldwin", "email": "barry@aiadaptive.co"},
     "calendar_event": {
         "event_title": "Northwind <> AI Adaptive",
         "scheduled_start_time": "2026-07-20T16:00:00Z",
@@ -24,9 +27,12 @@ FULL_NOTE = {
     "summary_markdown": "- Wants Tuesday check-ins\n- Budget approved",
     "summary_text": "Wants Tuesday check-ins. Budget approved.",
     "transcript": [
-        {"speaker": {"name": "Priya"}, "text": "Tuesdays work best for us."},
-        {"speaker": {"name": "Barry"}, "text": "Great, I'll set that up."},
-        {"speaker": {"name": "Priya"}, "text": "   "},  # blank → dropped
+        {"speaker": {"source": "speaker", "attribution": "them"},
+         "text": "Tuesdays work best for us."},
+        {"speaker": {"source": "microphone", "attribution": "me"},
+         "text": "Great, I'll set that up."},
+        {"speaker": {"source": "speaker", "attribution": "them"},
+         "text": "   "},  # blank → dropped
     ],
 }
 
@@ -41,14 +47,35 @@ def test_assemble_has_header_summary_and_transcript():
     assert "Attendees: Priya Shah, barry@aiadaptive.co" in text  # email fallback for null name
     assert "## Summary" in text and "Tuesday check-ins" in text
     assert "## Transcript" in text
-    assert "Priya: Tuesdays work best for us." in text
-    assert "Barry: Great, I'll set that up." in text
+    assert "Them: Tuesdays work best for us." in text     # attribution "them" → "Them"
+    assert "Barry Baldwin: Great, I'll set that up." in text  # "me" → owner name
 
 
 def test_assemble_drops_blank_transcript_segments():
     text = gc.assemble_note_text(FULL_NOTE)
-    # the whitespace-only 3rd segment must not add a dangling "Priya: " line
-    assert text.count("Priya:") == 1
+    # the whitespace-only 3rd ("them") segment must not add a dangling "Them: " line
+    assert text.count("Them:") == 1
+
+
+# --- speaker label mapping (real {source, attribution} shape) ---------------
+
+
+def test_speaker_prefers_name_if_present():
+    assert gc._speaker_label({"name": "Priya", "attribution": "them"}, "Barry") == "Priya"
+
+
+def test_speaker_me_maps_to_owner_then_fallback():
+    assert gc._speaker_label({"attribution": "me", "source": "microphone"}, "Barry") == "Barry"
+    assert gc._speaker_label({"attribution": "me"}, "") == "Me"  # no owner known
+
+
+def test_speaker_them_is_generic():
+    assert gc._speaker_label({"attribution": "them", "source": "speaker"}, "Barry") == "Them"
+
+
+def test_speaker_falls_back_to_source():
+    assert gc._speaker_label({"source": "microphone"}, "Barry") == "microphone"
+    assert gc._speaker_label({}, "Barry") == ""
 
 
 def test_assemble_prefers_markdown_summary():

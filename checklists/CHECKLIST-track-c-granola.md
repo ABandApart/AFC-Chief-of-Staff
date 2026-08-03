@@ -60,6 +60,26 @@ separate later increments.
   loop manifests once at startup. Confirm `granola-poll` in the schedule
   (`scheduler.log`).
 
+## Revisions (2026-08-03) — first-poll blockers fixed
+
+The first runtime poll (barry-agent) surfaced two blockers; both fixed builder-side:
+
+- [x] **Embeddings → local FastEmbed** (`bge-base-en-v1.5` @768, ONNX; no key/limits).
+  The pipeline's only Gemini use was embeddings, which hit the free-tier 429 cap.
+  Operator plan: **Gemini for news only**. `cognee_setup.py` reworked (no gemini
+  key), `pyproject` cognee group → `cognee[postgres,fastembed]`, lock updated. M2
+  retired (bge is normalized). **Voyage** documented as fallback. Provider table in
+  `80-telemetry-layer.md`.
+- [x] **Speaker mapping** — live API returns `speaker.{source,attribution}` (no
+  `.name` on this tier); `granola_client` now maps `attribution` (me→owner,
+  them→"Them"), `name` preferred if present.
+- [x] **Per-run cap** (`MAX_NOTES_PER_RUN=10`) + **go-forward watermark seed**
+  (first run seeds to now; `--backfill`/`--since` escape hatches). Suite 109.
+- [ ] **Runtime (barry-agent):** re-sync (`--group cognee`, downloads the bge
+  model); **reset `aiadaptive_cognee`** (embedder switch orphans old vectors — see
+  handoff R2) + re-publish playbooks; smoke via `--since`, confirm **zero Gemini
+  rows** in the ledger; then activate. Full sequence in the handoff `## RESUME`.
+
 ## Next increments (not in this build)
 
 - [ ] **Structured `Meeting` hybrid** — attach a typed `Meeting` node
