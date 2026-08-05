@@ -2,353 +2,248 @@
 
 <doc:layer>bridge — strategy to implementation</doc:layer>
 <doc:stability>medium — edit on major topology changes</doc:stability>
-<doc:depends_on>10-strategy.md</doc:depends_on>
+<doc:depends_on>10-strategy.md, 25-target-state.md, 26-cognee-migration-plan.md</doc:depends_on>
 <doc:referenced_by>30-memory-layer.md, 40-action-layer.md, 50-channel-layer.md, 60-content-pipeline.md, 80-telemetry-layer.md, 90-workflows.md</doc:referenced_by>
 
 ## Purpose
 
-This file is the structural overview that bridges strategy and implementation. It shows the four layers, the agents that live in the action layer, and how data flows through the system. Schema specifics, code patterns, and integration details live in the implementation files (30-, 40-, 50-, 60-, 80-).
+The structural overview that bridges strategy and implementation: the layers, the
+agents in the action layer, how data flows, and — since the **Phase 3.7 cognee
+pivot** — **which functions are leveraged from cognee versus built natively in
+this system**. Schema and integration detail live in the implementation files
+(30-, 40-, 50-, 60-, 80-) and `25-target-state.md`.
+
+> **Post-cognee.** The memory layer is no longer a hand-rolled `facts` table with
+> hybrid search on hosted Supabase. It is **two local Postgres databases**: a
+> cognee-managed knowledge graph and a plain-SQL operational store. Ingestion is
+> channel-agnostic; recall is GraphRAG. See §"Cognee vs native" for the split.
 
 ---
 
-## Four-Layer Topology
+## Cognee vs native — what we leverage, what we build
+
+<cognee_boundary>
+
+The pivot's central design fact: **cognee owns the knowledge substrate; we own
+everything around it.** Nothing that matters operationally (telemetry, auth,
+channels, control plane, agent reasoning) lives inside cognee.
+
+**Leveraged from cognee** (the `aiadaptive_cognee` DB + the `cognee` library):
+- **Entity & relationship extraction** — cognee's `cognify` LLM step turns
+  free-text notes into graph entities/edges.
+- **Entity resolution** — merging "Elena Ruiz" across notes into one node.
+- **Embedding + vector indexing** — via the embedder we configure (local
+  FastEmbed, below).
+- **Graph storage** — nodes + edges + the three backing stores (relational,
+  vector `pgvector`, graph `postgres`), all inside `aiadaptive_cognee`.
+- **Retrieval / GraphRAG** — `GRAPH_COMPLETION`: vector hint → graph traversal →
+  synthesized answer.
+
+**Built natively in this system:**
+- **Ingestion orchestration** — `agents/_lib/ingest.ingest_note`: message-hash
+  dedup (`capture_messages`), telemetry labeling, dataset/spend routing — a thin
+  channel-agnostic wrapper *around* `cognee.add` + `cognify`.
+- **Channel adapters** — the Discord bot + cogs, the **Gateway API** (FastAPI +
+  HMAC + tunnel), the **Granola** meeting poller. Each is a thin `ingest_note`
+  caller.
+- **Telemetry** — the labeling callback (M1), the `agent_runs` ledger, the soft
+  daily breaker, `cli/spend` + `cli/reconcile`. **cognee's own LLM spend is
+  captured by *our* litellm callback**, not by cognee.
+- **cognee configuration & isolation** — `agents/_lib/cognee_setup`: dedicated
+  DB, M1 routing, config-cache clearing.
+- **Typed ontology** — `agents/_lib/ontology` (8 DataPoints) for *structured*
+  ingestion (meetings/content), distinct from free-text capture.
+- **Operational store** — every SQL table (`prospects`, `outcomes`, `tasks`,
+  `agent_runs`, `capture_messages`, `channel_state`, …) + the connection pool.
+- **Agent reasoning** — Roy Kent qualification, Keeley drafting, Sam evaluation,
+  Higgins reporting, Ted anomaly detection. These call Anthropic **directly
+  through our cost helper (`agent_run`), not through cognee.**
+- **Auth & gates** — HMAC request signing, the `#approvals` human gate, trust
+  boundaries.
+
+</cognee_boundary>
+
+---
+
+## Topology
 
 <topology>
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                      CHANNEL LAYER                               │
-│  Discord (mobile + desktop)                                      │
-│   ├─ #briefing         morning summary, top reading              │
-│   ├─ #task-tinder      button-reactable candidate tasks          │
-│   ├─ #approvals        content drafts awaiting your ✅           │
-│   ├─ #capture          you → bot → facts.embeddings              │
-│   ├─ #dashboard        weekly performance digest (Higgins)       │
-│   └─ #system           health, errors, rate-limit alerts (Ted)   │
-│                                                                  │
-│  Claude Code CLI (laptop + Mac mini)                             │
-│   └─ Ad-hoc sessions reading/writing the brain                   │
-└─────────────────────┬────────────────────────────────────────────┘
-                      │
-┌─────────────────────▼────────────────────────────────────────────┐
-│                      ACTION LAYER                                │
-│  MAC MINI (executor, agent account, launchd-supervised)          │
-│                                                                  │
-│   Operational agents (run AI Adaptive day-to-day):               │
-│   ├─ Roy Kent        inbound ICP qualifier — Claude Haiku        │
-│   ├─ Tartt           content discovery — Gemini Flash, 5am       │
-│   ├─ Nate Shelley    ICP signal clusterer — Claude Sonnet, wkly  │
-│   ├─ Keeley Strategy ICP/positioning triage — Claude Sonnet      │
-│   ├─ Keeley Content  drafting — Claude Sonnet                    │
-│   ├─ Sam             output evaluation gate — Claude Haiku       │
-│   ├─ Keeley Distrib. Buffer publishing — no LLM                  │
-│   ├─ Briefing        morning assembly — Claude Sonnet, 6am       │
-│   ├─ Meeting proc.   transcript extraction — Claude Haiku        │
-│   ├─ Fact extraction Discord/email facts — Claude Haiku          │
-│   └─ Discord bot     always-on Python service (router)           │
-│                                                                  │
-│   Telemetry agents (observe the system):                         │
-│   ├─ Ted             health + cost anomaly detection (6h)        │
-│   └─ Higgins         weekly dashboard — Claude Sonnet, Mon 7am   │
-│                                                                  │
-│   Build agents (for new work; out of scope for v1):              │
-│   └─ Beard, Roy Kent PM, Roy Kent Sr Dev, McAdoo, Dani, Jamie    │
-│                                                                  │
-│  All LLM calls go through the cost-emission helper (see 80-)     │
-│                                                                  │
-│  LAPTOP (reader/builder; no scheduled jobs)                      │
-│   └─ Claude Code sessions, planning, drafting, building          │
-└─────────────────────┬────────────────────────────────────────────┘
-                      │
-┌─────────────────────▼────────────────────────────────────────────┐
-│                      MEMORY LAYER                                │
-│  HOSTED SUPABASE (Postgres + pgvector + RLS)                     │
-│                                                                  │
-│   Vectorized tables (semantic recall matters):                   │
-│   ├─ facts                  atomic claims with provenance        │
-│   ├─ content_items          discovered articles, videos, papers  │
-│   ├─ interest_signals       topic vectors with weight + decay    │
-│   ├─ icp_signals            ICP pain points from all sources     │
-│   └─ meeting_transcripts    compiled meeting outputs             │
-│                                                                  │
-│   Structured tables (status, dates, owners):                     │
-│   ├─ follow_ups             open commitments with escalation     │
-│   ├─ task_candidates        Task Tinder queue                    │
-│   ├─ tasks                  accepted tasks                       │
-│   ├─ decisions              key choices with rationale           │
-│   ├─ people                 relationship context                 │
-│   ├─ prospects              inbound qualified leads (W1)         │
-│   ├─ sources                trust scores for Tartt inputs        │
-│   └─ dashboard              metrics, cadence flags               │
-│                                                                  │
-│   Pipeline tables (state machines):                              │
-│   ├─ content_pipeline       discovered → published state         │
-│   ├─ approval_queue         pending Discord approval gates       │
-│   └─ buffer_posts           Buffer API status tracking           │
-│                                                                  │
-│   Telemetry tables:                                              │
-│   ├─ agent_runs             every LLM call, cost, status         │
-│   └─ outcomes               attributed business outcomes (KR1)   │
-└──────────────────────────────────────────────────────────────────┘
-            ▲
-            │  read by
-            │
-┌───────────┴──────────────────────────────────────────────────────┐
-│                      TELEMETRY LAYER                             │
-│  Lives across action and memory; observability for the swarm.    │
-│                                                                  │
-│   ├─ agent_runs ledger    (memory layer table; see above)        │
-│   ├─ Cost-emission helper (every LLM call goes through this)     │
-│   ├─ Guard G1: per-run token cap                                 │
-│   ├─ Guard G2: per-day spend ceiling per agent                   │
-│   ├─ Guard G3: anomaly detection (Ted, Python, no LLM)           │
-│   ├─ Ted: reactive monitoring (6-hourly)                         │
-│   └─ Higgins: reflective reporting (weekly)                      │
-└──────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│  CHANNEL / INGRESS                                                     │
+│  Discord (mobile+desktop): #briefing #approvals #capture #system …    │
+│     — status checks, queries, kickoffs, digest; #capture = one caller │
+│  Gateway API (FastAPI 127.0.0.1:8788, HMAC, Cloudflare Tunnel):       │
+│     POST /ingest  ← PRIMARY ingestion (tools, shortcuts)              │
+│     POST /webhook/leads   GET /health                                 │
+│  Granola poller (scheduled): meeting notes → ingest                   │
+│  Claude Code CLI: ad-hoc sessions over the brain                      │
+└───────────────────────────┬───────────────────────────────────────────┘
+                            │  ingest_note()  /  graph_recall()
+┌───────────────────────────▼───────────────────────────────────────────┐
+│  ACTION (Mac mini, barry-agent, launchd + scheduler daemon)           │
+│  Ingest core: agents/_lib/ingest → cognee.add + cognify (labeled)     │
+│  Recall core: agents/_lib/graph_recall → cognee GRAPH_COMPLETION      │
+│  Agents (reason via OUR cost helper, not cognee):                     │
+│    Roy Kent · Tartt · Nate · Keeley×2 · Sam · Briefing · Higgins · Ted│
+│  Control plane (git): skills / loops / playbooks + scheduler          │
+│  Telemetry: labeling callback (M1) + soft breaker + reconcile         │
+└──────────────┬────────────────────────────────────┬───────────────────┘
+               │ knowledge                           │ operational state
+┌──────────────▼─────────────────────┐  ┌────────────▼───────────────────┐
+│  aiadaptive_cognee  (COGNEE)        │  │  aiadaptive_cos  (native SQL)   │
+│  graph + vector(pgvector) +         │  │  agent_runs (ledger) · outcomes │
+│  relational — facts, people, orgs,  │  │  prospects · tasks · follow_ups │
+│  decisions, meetings, ICP, content. │  │  content_pipeline · approval_q  │
+│  cognee owns extract/resolve/embed/ │  │  capture_messages · channel_st. │
+│  retrieve. LLM=Anthropic(litellm/M1)│  │  dashboard · sources            │
+│  Embeddings=local FastEmbed bge@768 │  │  (status machines, queues,      │
+│  Gemini reserved for news (Tartt).  │  │   ledgers — plain SQL via pool) │
+└─────────────────────────────────────┘  └─────────────────────────────────┘
+   cross-link: cognee node-id as a TEXT column on the SQL side (app-code join,
+   never a cross-DB FK). Both DBs on ONE local Postgres 17.
 ```
 
 </topology>
 
 ---
 
-## Layer Responsibilities
+## Layer responsibilities
 
 <layer id="channel">
-
-**Channel layer responsibility**: Surface the system to humans and capture human input.
-
-**What it does**:
-- Posts proactively (briefing, approval requests, task candidates)
-- Accepts input (capture messages, button reactions)
-- Provides ad-hoc query interface (Claude Code sessions)
-
-**What it does NOT do**:
-- Hold any state (Discord history is reference, not source of truth)
-- Make decisions about content (no logic in the bot beyond routing)
-- Talk to LLMs directly (LLMs are invoked by action-layer agents)
-
+**Channel / ingress** — surface the system and take input. Discord is *not* the
+primary ingestion channel (status/queries/kickoffs/digest); the **Gateway API**
+is. All ingress channels funnel through one `ingest_note` core. Channels hold no
+state and run no LLM logic themselves.
 </layer>
 
 <layer id="action">
-
-**Action layer responsibility**: Execute work — read from the brain, call out to services and LLMs, write back to the brain.
-
-**What it does**:
-- Runs scheduled jobs (launchd) and event-triggered jobs (Discord events)
-- Calls LLM APIs (Gemini, Claude, OpenAI for embeddings)
-- Calls external APIs (Buffer, YouTube, ArXiv, RSS feeds)
-- Maintains the Discord bot as a long-running process
-
-**What it does NOT do**:
-- Persist anything outside the brain (no local caches that diverge from Postgres)
-- Make decisions classified as Tier 2 or 3 without human gate
-- Self-modify code without commit-and-deploy through the git-gate
-
+**Action** — execute work: ingest into the graph, recall from it, run the
+agents, drive external APIs (Buffer, Granola, WordPress leads). Scheduled work is
+owned by one **scheduler daemon** reading `loops/` manifests (replacing per-job
+plists). All own-agent LLM calls go through the cost helper; cognee's go through
+the litellm callback. Nothing persists outside the two DBs.
 </layer>
 
 <layer id="memory">
+**Memory** — two stores on one Postgres 17 (`30-memory-layer.md`):
+`aiadaptive_cognee` (cognee GraphRAG — what the brain *knows*) and
+`aiadaptive_cos` (operational SQL — what the brain is *doing*). The
+entity↔operational boundary keeps knowledge in the graph and status/queues/
+ledgers in SQL, cross-linked by node-id TEXT in app code.
+</layer>
 
-**Memory layer responsibility**: Be the single source of truth for everything the system knows.
-
-**What it does**:
-- Stores structured data (people, follow-ups, decisions)
-- Stores vectorized data (facts, content, interests, transcripts)
-- Provides hybrid search (full-text + vector similarity)
-- Enforces row-level security for multi-context scoping
-
-**What it does NOT do**:
-- Make decisions (no Postgres functions that take action)
-- Talk to external services (writes are inbound from action-layer agents only)
-- Cache derived data unless explicitly needed for query performance
-
+<layer id="telemetry">
+**Telemetry** — labeling (contextvar + litellm callback, M1) writes one
+`agent_runs` row per provider call (cognee's included); a **soft daily breaker**
+(`assert_under_ceiling`) blocks the next invocation once over ceiling; monthly
+`cli/reconcile` checks the ledger against provider bills. The old pre-flight
+gates (G1/G2) and per-agent keys were removed with the pivot; a single
+`anthropic-api-key`. G3 anomaly detection (Ted) remains planned. See `80-`.
 </layer>
 
 ---
 
-## The Ted Lasso Agent Roster (Operational + Telemetry Subset)
+## Agent roster (status)
 
 <agent_roster>
 
-The full roster includes build agents (Beard, the Roys, McAdoo, Dani, Jamie). For v1 of this architecture, only the operational and telemetry agents are in scope. Build agents share the memory layer but run on different schedules with different tool scopes.
+Ted Lasso-named. Reasoning agents call Anthropic/Gemini **through the cost helper
+(`agent_run`)** — not cognee. Ingestion agents call `ingest_note` (cognee).
 
-<agent name="Roy Kent" tier="1" llm="Claude Haiku" trigger="webhook from WordPress">
-**Role**: Inbound ICP qualifier. When a prospect submits a form on aiAdaptive.co, Roy reads the profile, scores ICP fit, emits icp_signals from scorecard pain-point answers, and creates task_candidates for high-fit prospects.
-**Reads**: prospects (existing matches), decisions (ICP criteria), interest_signals.
-**Writes**: prospects (new row with fit score), icp_signals, task_candidates (for high-fit only).
-**Why Haiku**: Qualification against stored criteria is rubric-based reasoning, not deep synthesis. Haiku is right-sized.
-**Workflow served**: W1.
-</agent>
+**Built:** Discord bot + cogs (capture, recall, outcome, approvals, system) ·
+Briefing (morning digest) · **Gateway API** (B3 ingress) · **Granola poller**
+(meeting channel) · scheduler daemon.
 
-<agent name="Tartt" tier="1" llm="Gemini 2.5 Flash" trigger="launchd 5am daily">
-**Role**: Content discovery from RSS, HN, ArXiv, YouTube, newsletters.
-**Reads**: sources (with trust scores), interest_signals.
-**Writes**: content_items (with embeddings), icp_signals (pain points extracted from summaries), sources.last_polled_at.
-**Why Gemini Flash**: High-volume narrow-scope summarization where Flash's price and speed dominate. Article text is supplied; no model "knowledge currency" needed.
-**Workflows served**: W3 (primary), W2 (contributes icp_signals).
-</agent>
-
-<agent name="Nate Shelley" tier="1" llm="Claude Sonnet" trigger="launchd weekly (Sunday 8pm)">
-**Role**: Synthesize the past 7 days of icp_signals into clustered themes. Identifies top ICP pain points with frequency and source diversity.
-**Reads**: icp_signals (last 7 days).
-**Writes**: A weekly synthesis posted to #briefing channel and stored as a fact for retrieval.
-**Why Sonnet**: Clustering and synthesis from many signals is a reasoning-depth task. Runs weekly, so cost is bounded.
-**Workflow served**: W2.
-</agent>
-
-<agent name="Keeley Strategy" tier="1" llm="Claude Sonnet" trigger="event-driven on content_item">
-**Role**: ICP and positioning fit triage. Decides whether a discovered content item is relevant enough to draft against. Also marks which pain points the article addresses (icp_signals enrichment).
-**Reads**: content_items, interest_signals, decisions (ICP/positioning).
-**Writes**: content_pipeline (promotes item from discovered → triaged, or marks declined), icp_signals (pain points addressed).
-**Workflows served**: W3 (primary), W2 (contributes icp_signals).
-</agent>
-
-<agent name="Keeley Content" tier="1" llm="Claude Sonnet" trigger="event-driven on triaged item">
-**Role**: Generative content drafting — outline, draft, refine.
-**Reads**: content_items (triaged), facts (for grounding), interest_signals, icp_signals (current themes from Nate Shelley).
-**Writes**: content_pipeline (draft text, stage = drafted).
-**Workflow served**: W3.
-</agent>
-
-<agent name="Sam Obisanya" tier="1" llm="Claude Haiku" trigger="event-driven on draft completion">
-**Role**: Output evaluation gate. Reviews Keeley Content drafts against style, positioning, and ICP fit before they reach the human approval queue.
-**Reads**: content_pipeline (drafts), interest_signals, decisions (style/positioning).
-**Writes**: content_pipeline status transitions (passes to approval_queue or returns to draft).
-**Why this agent**: Compresses human decision time. The human only sees drafts that already passed automated review.
-**Workflow served**: W3.
-</agent>
-
-<agent name="Keeley Distribution" tier="1" llm="none" trigger="event-driven on approved item">
-**Role**: Buffer API client with rate limiting. Takes approved drafts and schedules them.
-**Reads**: content_pipeline (approved items), buffer_posts (for rate-limit state).
-**Writes**: buffer_posts (with Buffer post ID), content_pipeline (stage = scheduled/published).
-**Why no LLM**: This is deterministic API plumbing. Tokens spent here are wasted.
-**Workflow served**: W3.
-</agent>
-
-<agent name="Briefing" tier="1" llm="Claude Sonnet" trigger="launchd 6am daily">
-**Role**: Synthesize overnight changes into a morning briefing posted to #briefing.
-**Reads**: prospects (new from W1), follow_ups (with escalation), content_items (top-ranked), facts (new this period), task_candidates (top 5), dashboard, icp_signals (top theme this week).
-**Writes**: dashboard (briefing_posted_at), #briefing channel.
-**Workflow served**: W5 (consolidates W1, W2, W3, W4).
-</agent>
-
-<agent name="Meeting processor" tier="1" llm="Claude Haiku" trigger="filesystem watch on Granola export">
-**Role**: Extract facts, follow-ups, decisions, task_candidates, and icp_signals from meeting transcripts.
-**Reads**: people, prospects, decisions.
-**Writes**: meeting_transcripts, facts, follow_ups, decisions, task_candidates, icp_signals, optionally prospects (if call participant was inbound).
-**Workflows served**: W4 (primary), W2 (icp_signals), W6 (facts).
-</agent>
-
-<agent name="Fact extraction" tier="1" llm="Claude Haiku" trigger="event-driven on Discord capture + email">
-**Role**: Extract atomic claims from #capture messages and (later) emails. Tag ICP-relevant pain mentions as icp_signals.
-**Reads**: people, decisions (for context).
-**Writes**: facts, icp_signals (when ICP-pain present).
-**Workflows served**: W6 (primary), W2 (icp_signals).
-</agent>
-
-<agent name="Discord bot" tier="varies" llm="none" trigger="always-on event listener">
-**Role**: Route messages between Discord and the brain. Handle button reactions for Task Tinder and approvals. Trigger fact extraction on #capture messages.
-**Reads**: brain on query/reaction, posts on schedule from other agents.
-**Writes**: facts (via fact extraction agent), task_candidates updates (from #task-tinder reactions), approval_queue updates (from #approvals reactions), outcomes (from /outcome slash command).
-**Why no LLM in the bot itself**: The bot is a router. LLM calls are made by the agents the bot routes to.
-</agent>
-
-<agent name="Ted" tier="1" llm="Claude Haiku (alerting only)" trigger="launchd every 6 hours">
-**Role**: Health monitoring plus real-time cost guarding. Computes anomaly detection on agent_runs (pure Python, no LLM). Calls Haiku only when summarizing complex alerts.
-**Reads**: dashboard, agent_runs (for G3 anomaly detection), follow_ups (escalation), system error logs.
-**Writes**: dashboard cadence flags, alerts to #system.
-**Workflow served**: W7 (telemetry; feeds Higgins).
-</agent>
-
-<agent name="Higgins" tier="1" llm="Claude Sonnet" trigger="launchd Mon 7am weekly">
-**Role**: Weekly performance dashboard. Reports KR movement, spend by function, workflow throughput, recorded outcomes.
-**Reads**: agent_runs, content_pipeline, tasks, follow_ups, prospects, icp_signals, outcomes, dashboard.
-**Writes**: #dashboard channel.
-**Why Sonnet**: Synthesizing operational data into a readable, prioritized narrative. Runs weekly; cost is bounded.
-**Workflow served**: W7.
-</agent>
+**Planned (inherit the graph model + native telemetry when built):**
+- **Roy Kent** — inbound ICP qualifier (Claude Haiku); WordPress leads via the
+  gateway `/webhook/leads`. Writes `prospects`, ICP signals, `task_candidates`.
+- **Tartt** — content discovery (Gemini Flash, 5am); the one pipeline that keeps
+  **Gemini** (news ingestion).
+- **Nate Shelley** — weekly ICP-signal synthesis (Sonnet).
+- **Keeley Strategy / Keeley Content** — triage + drafting (Sonnet); **grounded
+  in the graph** via `graph_recall`.
+- **Sam** — output evaluation gate (Haiku) before `#approvals`.
+- **Keeley Distribution** — Buffer publishing (no LLM).
+- **Higgins** — weekly KR dashboard (Sonnet).
+- **Ted** — 6-hourly health + G3 anomaly detection (pure Python over `agent_runs`).
 
 </agent_roster>
 
 ---
 
-## Primary Data Flows
+## Primary data flows
 
 <data_flows>
 
-<flow id="DF1" name="Content discovery → publication">
-Triggered: launchd 5am.
-
-1. Tartt polls sources → fetches new items via feedparser/HN API/ArXiv API/YouTube transcript API
-2. Tartt extracts article text (trafilatura), summarizes (Gemini Flash), embeds (Gemini embedding-004)
-3. Insert into `content_items` with embedding; score against `interest_signals` via cosine similarity
-4. Top-N items pass to Keeley Strategy (event-driven): triage for ICP/positioning fit
-5. Triaged items pass to Keeley Content: draft generation
-6. Drafts pass to Sam: evaluation gate
-7. Sam-approved drafts → `approval_queue`, posted to Discord #approvals with ✅/❌ buttons
-8. Human ✅ → Keeley Distribution: Buffer API call with rate-limit handling
-9. Buffer webhook → `buffer_posts` status updated to published
-
-Detail: `60-content-pipeline.md`
+<flow id="DF1" name="Ingestion → knowledge graph (any channel)">
+Discord `#capture`, Gateway `POST /ingest`, or the Granola poller →
+`ingest_note(text, source_ref, source_type, dataset, label_*)` → message-hash
+dedup (skip exact re-posts pre-LLM) → under `labeled(...)`, `cognee.add` +
+`cognify` build the note into the graph (cognee extracts + resolves entities).
+Spend lands in `agent_runs` via the M1 callback. `50-channel-layer.md`.
 </flow>
 
-<flow id="DF2" name="Task identification → completion">
-Triggered: meeting transcript arrival, email sync, or Discord capture.
-
-1. Source-specific extractor (meeting_processor.py / email_triage.py / discord_capture.py) parses input
-2. Candidate tasks written to `task_candidates` with source, evidence, confidence score
-3. Briefing agent (or Task Tinder dedicated job) posts top candidates to #task-tinder with ✅/❌/⏰ buttons
-4. Reaction event → Discord bot updates `task_candidates.status`
-5. ✅ promotes candidate to `tasks` (also writes to `follow_ups` for escalation tracking)
-6. Tasks visible in next briefing; escalation runs nightly to flag overdue items
-
-Detail: `50-channel-layer.md`
+<flow id="DF2" name="Recall → synthesized answer">
+`/recall` (Discord) or `cli/recall` → `graph_recall.recall(query)` → cognee
+`GRAPH_COMPLETION` (vector hint → graph traversal → answer). Returns an answer,
+not a ranked list. `30-memory-layer.md`.
 </flow>
 
-<flow id="DF3" name="Knowledge capture → retrieval">
-Triggered: Discord #capture message, meeting transcript, email.
-
-1. Capture source writes raw input to `00-inbox` equivalent staging table or directly to source-specific table
-2. Fact extraction job (Claude Haiku for cost) pulls discrete claims
-3. Each fact embedded (Gemini `gemini-embedding-001` @768, L2-normalized via the cost helper) and written to `facts` with source provenance
-4. Retrieval on demand via hybrid search: Reciprocal Rank Fusion of FTS rank and vector-cosine rank, with a 0.55 similarity floor on the semantic side (see `30-memory-layer.md`)
-
-Detail: `30-memory-layer.md`
+<flow id="DF3" name="Inbound lead → qualification (planned)">
+WordPress form → Gateway `POST /webhook/leads` (HMAC, ack-then-process) → Roy
+Kent (Haiku) scores ICP fit → writes `prospects` + ICP signals + `task_candidates`
+(SQL); pains also cognified. Never runs inside the request. `40-action-layer.md`.
 </flow>
 
-<flow id="DF4" name="Morning briefing assembly">
-Triggered: launchd 6am daily.
+<flow id="DF4" name="Content discovery → publication (planned)">
+Tartt (5am, Gemini) → `content_items` → Keeley Strategy triage → Keeley Content
+draft (graph-grounded) → Sam eval → `#approvals` → human ✅ → Keeley Distribution
+→ Buffer. `60-content-pipeline.md`.
+</flow>
 
-1. Briefing agent queries: follow_ups where escalation_level >= 1, top 5 content_items from last 24h, new facts from last 24h, top 5 task_candidates, dashboard cadence flags
-2. Synthesizes with Claude Sonnet into a structured briefing
-3. Posts to Discord #briefing
-4. Updates dashboard.briefing_posted_at
-
-Detail: `40-action-layer.md`
+<flow id="DF5" name="Morning briefing">
+Scheduler fires the `morning-briefing` loop (6am) → Briefing assembles graph +
+operational state (bounded queries) → posts `#briefing`. `40-action-layer.md`.
 </flow>
 
 </data_flows>
 
 ---
 
-## Trust Boundaries
+## Trust boundaries
 
 <trust_boundaries>
 
-<boundary id="TB1" name="Admin → agent account (git-gate)">
-Code is written in the admin macOS account, committed to a git repo, then pulled into the agent account for execution. This boundary is enforced by macOS account separation; the agent account cannot write back to the admin repo.
+<boundary id="B1" name="Ingest → memory (data, not instructions)">
+Ingested content is **data, never instructions** — extraction/retrieval treat it
+as inert. No ingested text may act as a command, an approval, or a playbook.
 </boundary>
 
-<boundary id="TB2" name="Agent account → Postgres (credentials)">
-The agent account holds the Postgres connection string (`db-url`) and API keys in macOS Keychain. No credential appears in committed code or environment files in the repo. The brain is local (no network exposure); Postgres listens on the local socket only.
+<boundary id="B2" name="Agent → outbound (approval gate)">
+`#approvals` human gate: sending email, publishing, creating a document, or any
+world-affecting act requires an explicit human ✅.
 </boundary>
 
-<boundary id="TB3" name="Build account → Postgres (admin access)">
-The barry-admin account (which owns the Postgres LaunchAgent) connects via local socket as superuser for migrations and ad-hoc admin queries. Runtime writes happen only from barry-agent via `db-url`.
+<boundary id="B3" name="Network exposure (authenticated tunnel)">
+"From anywhere" is the **Gateway API** (`127.0.0.1:8788`, HMAC-signed requests)
+fronted by a Cloudflare Tunnel. No inbound ports open; Postgres stays on the
+local socket and is never internet-reachable.
 </boundary>
 
-<boundary id="TB4" name="Postgres → external APIs (none)">
-The database does not call out to external services. All external API calls (Buffer, Gemini, Claude, RSS sources) originate on the Mac mini processes. This prevents lateral expansion of the trust boundary.
+<boundary id="B4" name="Control-plane provenance (git)">
+Skills, loops, and playbooks reach the running system **only through git**
+(authored in barry-admin → committed → pulled to barry-agent). Nothing is
+authored at runtime; the graph never mints one.
+</boundary>
+
+<boundary id="TB-accounts" name="Admin → agent account (git-gate) + credentials">
+Code is written in barry-admin, committed, pulled into barry-agent for execution
+(macOS account separation; the agent account can't write back to the admin repo).
+Runtime creds (`db-url`, `anthropic-api-key`, `gemini-api-key`,
+`gateway-hmac-secret`, …) live only in barry-agent's Keychain. barry-admin uses a
+local socket as superuser for migrations/admin queries.
 </boundary>
 
 </trust_boundaries>
