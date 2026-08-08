@@ -14,7 +14,7 @@
 #
 # Rotation: keep 14 nightly dumps per DB. Restore drill:
 #   gunzip -c <file> | psql <target-db-url>
-set -euo pipefail
+set -Eeuo pipefail
 
 PG_DUMP=/opt/homebrew/opt/postgresql@17/bin/pg_dump
 BACKUP_DIR="$HOME/agents/backups/nightly"
@@ -39,5 +39,19 @@ dump_db() {
     echo "$(date '+%F %T') backup ok: $out ($(du -h "$out" | cut -f1))"
 }
 
+# Dead-man's switch (PERF-4 / 80-telemetry §dead_mans_switch). Absence of the
+# success ping is the alert that the nightly backup didn't run — a failure no
+# on-box monitor can report. Best-effort and off-box (healthchecks.io); no key
+# provisioned → skip (the switch is just un-armed). The ERR trap pings /fail so a
+# broken run alerts immediately instead of waiting out the grace window.
+HC_KEY=$(security find-generic-password -a "$USER" -s healthchecks-ping-key -w 2>/dev/null || true)
+hc_ping() {  # $1: "" for success, "/fail" for failure
+    [[ -n "$HC_KEY" ]] || return 0
+    curl -fsS -m 10 "https://hc-ping.com/${HC_KEY}/cos-backup${1:-}" >/dev/null 2>&1 || true
+}
+trap 'hc_ping /fail' ERR
+
 dump_db "$DB_URL" aiadaptive_cos
 dump_db "$COGNEE_URL" "$COGNEE_DB"
+
+hc_ping  # success — both dumps completed (set -e aborts before here on failure)

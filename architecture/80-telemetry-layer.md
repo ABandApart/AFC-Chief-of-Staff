@@ -550,6 +550,24 @@ infrastructure. Belt and braces: if the dead-man's switch is silently broken, th
 briefing still shows a stale timestamp; if the briefing stops entirely, the
 dead-man's switch fires.
 
+### As-built (PERF-4, 2026-08-08)
+
+The reusable helper is `agents/_lib/heartbeat.py` — `ping(slug)` on success,
+`ping_fail(slug)` on a caught exception, driven by one keychain secret
+`healthchecks-ping-key` (the project ping key), addressing each check by slug
+(`https://hc-ping.com/<key>/<slug>`). It **no-ops until the key is provisioned**,
+so it is safe to ship un-armed. A ping never raises.
+
+Wired so far: **`cos-briefing`** (`agents/briefing/run.py`, success + `/fail`) and
+**`cos-backup`** (`scripts/pg_backup.sh`, success + an `ERR` trap `/fail`). Still
+to wire as their loops land: `cos-scheduler` (daemon heartbeat), `cos-ted`,
+`cos-outreach-evidence`, `cos-outreach-bcc`. **Operator/runtime setup** (once):
+create the healthchecks.io project, add `healthchecks-ping-key` to barry-agent's
+keychain, create the `cos-briefing` (24h/1h) and `cos-backup` (24h/2h) checks per
+the table above, and point the project's alert at an **off-Discord** channel
+(email/push). The second layer (Ted's timestamp in the briefing System line) is
+not yet built — it lands with the real briefing in Phase 4.
+
 ### What this deliberately does not do
 
 No second local watchdog process. A watcher watching the watcher on the same box

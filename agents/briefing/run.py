@@ -28,9 +28,14 @@ import urllib.request
 from datetime import datetime
 from typing import Any
 
-from agents._lib import db
+from agents._lib import db, heartbeat
 from agents._lib.creds import keychain_get
 from agents.discord_bot.config import BRIEFING_CHANNEL_ID
+
+# Dead-man's-switch check slug (PERF-4 / 80-telemetry). Absence of this ping is
+# the alert that the morning briefing didn't run — the one failure the box can't
+# report on itself.
+HEARTBEAT_SLUG = "cos-briefing"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -114,11 +119,19 @@ def main() -> int:
     status = gather_status()
     text = format_briefing(datetime.now(), status)
     post_to_discord(text)
+    # Success path only — the ping means "the briefing actually posted". Never
+    # move this into a finally: a ping on a crashed run manufactures confidence.
+    heartbeat.ping(HEARTBEAT_SLUG)
     return 0
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except Exception:
+        # A broken run signals /fail so it alerts now, not after the grace window.
+        logger.exception("briefing failed")
+        heartbeat.ping_fail(HEARTBEAT_SLUG)
+        sys.exit(1)
     finally:
         db.close_pool()
