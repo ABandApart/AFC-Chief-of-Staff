@@ -27,4 +27,4 @@ ARCHIVE_CHANNEL_ID = 1506399755914186835
 # gate is dead until it's configured, which is the safe default. Set it to your
 # own Discord user ID (Developer Mode → right-click your name → Copy User ID)
 # and re-deploy before using #approvals.
-OPERATOR_DISCORD_ID = 0
+OPERATOR_DISCORD_ID = 734930526586142831
