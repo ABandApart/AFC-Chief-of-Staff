@@ -31,6 +31,21 @@ dev = [
     # Phase 2: unit tests for the cost helper (mocked, no real API calls).
     "pytest>=8.0",
     "pytest-mock>=3.12",
+    # B3 gateway: FastAPI + an ASGI test transport so the gateway's endpoint
+    # tests (signed→202, unsigned→401, body validation, ack-then-process) run
+    # in the default builder env, where the `gateway`/`cognee` groups are NOT
+    # synced. uvicorn (the server) is not needed to test the app object.
+    "fastapi>=0.115,<1.0",
+    "httpx>=0.27",
+]
+# B3 gateway (exposure / ingest API). Runs where cognee runs (barry-agent):
+# `uv sync --group cognee --group gateway`. fastapi/uvicorn arrive transitively
+# via cognee too, but declaring them here makes the gateway's deps explicit
+# rather than resting on cognee's transitive pins. `uvicorn[standard]` adds the
+# uvloop/httptools/watchfiles extras for the production server.
+gateway = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.30,<1.0",
 ]
 # Phase 3.7 / W2 — cognee memory. NOT synced by default (heavy tree; also pulls
 # a psycopg2 source build that needs openssl@3/libpq build flags — see the W2
