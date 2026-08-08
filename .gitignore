@@ -20,6 +20,9 @@ env/
 logs/
 *.log
 
+# Rendered doc output (PDF/HTML built from the markdown specs) — generated, not source
+architecture/renditions/
+
 # Backups — live in ~/agents/backups/ on the agent account, not in git
 backups/
 *.sql.gz
