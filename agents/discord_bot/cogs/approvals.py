@@ -28,9 +28,13 @@ import discord
 from discord.ext import commands, tasks
 
 from agents._lib import approvals
-from agents.discord_bot.config import APPROVALS_CHANNEL_ID
+from agents.discord_bot.config import APPROVALS_CHANNEL_ID, OPERATOR_DISCORD_ID
 
 logger = logging.getLogger(__name__)
+
+# The only Discord account allowed to decide approvals (PRD-b2 Amendment 1).
+# 0 = unset → fail closed (every click denied). Read once at import.
+OPERATOR_ID = OPERATOR_DISCORD_ID
 
 # custom_id prefixes — stable across restarts so persistent Views re-bind.
 _APPROVE = "approval:approve:"
@@ -51,13 +55,26 @@ def build_card(row_id: int, item_type: str, envelope: dict) -> discord.Embed:
 
 
 class EditModal(discord.ui.Modal, title="Edit before approving"):
-    """Amends the single editable draft field, then approves-with-changes."""
+    """Amends the single editable draft field, then approves-with-changes.
 
-    def __init__(self, cog: ApprovalsCog, row_id: int, edit_field: str, current: str):
+    For a high-consequence item_type the modal also carries a confirmation field
+    — approve-with-changes dispatches, so it needs the same typed confirmation as
+    a bare approve (and a modal can't chain into another modal, so it's inline).
+    """
+
+    def __init__(
+        self,
+        cog: ApprovalsCog,
+        row_id: int,
+        edit_field: str,
+        current: str,
+        require_confirm: bool = False,
+    ):
         super().__init__()
         self.cog = cog
         self.row_id = row_id
         self.edit_field = edit_field
+        self.require_confirm = require_confirm
         self.draft = discord.ui.TextInput(
             label=edit_field[:45],
             style=discord.TextStyle.paragraph,
@@ -66,8 +83,24 @@ class EditModal(discord.ui.Modal, title="Edit before approving"):
             default=current,
         )
         self.add_item(self.draft)
+        self.confirm: discord.ui.TextInput | None = None
+        if require_confirm:
+            self.confirm = discord.ui.TextInput(
+                label=f"Type {approvals.CONFIRM_TOKEN} to confirm sending"[:45],
+                placeholder=approvals.CONFIRM_TOKEN,
+                required=True,
+                max_length=16,
+            )
+            self.add_item(self.confirm)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        if self.require_confirm and not approvals.confirmation_ok(str(self.confirm)):
+            await interaction.response.send_message(
+                f"Confirmation didn't match — type {approvals.CONFIRM_TOKEN} "
+                "exactly. Nothing sent.",
+                ephemeral=True,
+            )
+            return
         new_value = str(self.draft)
         await self.cog.finish_decision(
             interaction,
@@ -78,13 +111,44 @@ class EditModal(discord.ui.Modal, title="Edit before approving"):
         )
 
 
+class ConfirmModal(discord.ui.Modal, title="Confirm sending"):
+    """Typed confirmation for a high-consequence approve (no edit).
+
+    Turns a one-tap approve — a real mis-tap risk on mobile, and the point where
+    email/publish/Drive actions leave the box — into a deliberate act.
+    """
+
+    def __init__(self, cog: ApprovalsCog, row_id: int):
+        super().__init__()
+        self.cog = cog
+        self.row_id = row_id
+        self.token = discord.ui.TextInput(
+            label=f"Type {approvals.CONFIRM_TOKEN} to confirm"[:45],
+            placeholder=approvals.CONFIRM_TOKEN,
+            required=True,
+            max_length=16,
+        )
+        self.add_item(self.token)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not approvals.confirmation_ok(str(self.token)):
+            await interaction.response.send_message(
+                f"Confirmation didn't match — type {approvals.CONFIRM_TOKEN} "
+                "exactly. Nothing sent.",
+                ephemeral=True,
+            )
+            return
+        await self.cog.finish_decision(interaction, self.row_id, "approve")
+
+
 class ApprovalView(discord.ui.View):
     """Persistent (timeout=None) 3-button view for one approval row."""
 
-    def __init__(self, cog: ApprovalsCog, row_id: int):
+    def __init__(self, cog: ApprovalsCog, row_id: int, item_type: str):
         super().__init__(timeout=None)
         self.cog = cog
         self.row_id = row_id
+        self.item_type = item_type
 
         approve = discord.ui.Button(
             label="Approve",
@@ -109,12 +173,22 @@ class ApprovalView(discord.ui.View):
         self.add_item(edit)
 
     async def _approve(self, interaction: discord.Interaction) -> None:
+        if not await self.cog._authorized(interaction, self.row_id):
+            return
+        # High-consequence types require a typed confirmation before dispatch.
+        if approvals.requires_typed_confirm(self.item_type):
+            await interaction.response.send_modal(ConfirmModal(self.cog, self.row_id))
+            return
         await self.cog.finish_decision(interaction, self.row_id, "approve")
 
     async def _reject(self, interaction: discord.Interaction) -> None:
+        if not await self.cog._authorized(interaction, self.row_id):
+            return
         await self.cog.finish_decision(interaction, self.row_id, "reject")
 
     async def _edit(self, interaction: discord.Interaction) -> None:
+        if not await self.cog._authorized(interaction, self.row_id):
+            return
         # Seed the modal from the current envelope; if the row is already
         # decided or gone, say so instead of opening an editor.
         row = await asyncio.to_thread(approvals.get_row, self.row_id)
@@ -127,7 +201,13 @@ class ApprovalView(discord.ui.View):
         edit_field = approvals.envelope_edit_field(envelope)
         current = str(approvals.envelope_payload(envelope).get(edit_field, ""))
         await interaction.response.send_modal(
-            EditModal(self.cog, self.row_id, edit_field, current)
+            EditModal(
+                self.cog,
+                self.row_id,
+                edit_field,
+                current,
+                require_confirm=approvals.requires_typed_confirm(row["item_type"]),
+            )
         )
 
 
@@ -180,7 +260,8 @@ class ApprovalsCog(commands.Cog):
             if not msg_id:
                 continue
             self.bot.add_view(
-                ApprovalView(self, row["id"]), message_id=int(msg_id)
+                ApprovalView(self, row["id"], row["item_type"]),
+                message_id=int(msg_id),
             )
         logger.info("approvals: re-attached %d persistent view(s)", len(rows))
 
@@ -188,13 +269,34 @@ class ApprovalsCog(commands.Cog):
         row_id = row["id"]
         try:
             embed = build_card(row_id, row["item_type"], row["payload"])
-            message = await channel.send(embed=embed, view=ApprovalView(self, row_id))
+            message = await channel.send(
+                embed=embed, view=ApprovalView(self, row_id, row["item_type"])
+            )
             await asyncio.to_thread(approvals.mark_posted, row_id, message.id)
             logger.info("approvals: posted card for #%s (%s)", row_id, row["item_type"])
         except Exception:
             logger.exception("approvals: failed to post card for #%s", row_id)
 
     # --- decision handling -----------------------------------------------
+
+    async def _authorized(
+        self, interaction: discord.Interaction, row_id: int
+    ) -> bool:
+        """True iff the clicking user is the configured operator.
+
+        Denies *loudly* — an unauthorized click is a security event, logged
+        (→ #system) and answered ephemerally, not silently ignored (which would
+        be indistinguishable from a UI glitch). The check lives here, in the
+        handler, not in View construction: Discord buttons are not access control
+        — anyone who can see the card can invoke the interaction (PRD-b2 A1).
+        """
+        if approvals.is_authorized(interaction.user.id, OPERATOR_ID):
+            return True
+        logger.warning(
+            "approval_denied user=%s row=%s", interaction.user.id, row_id
+        )
+        await self._reply(interaction, "⛔ Not authorized to decide approvals.")
+        return False
 
     async def finish_decision(
         self,

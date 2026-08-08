@@ -20,3 +20,11 @@ APPROVALS_CHANNEL_ID = 1506399626037694464
 CAPTURE_CHANNEL_ID = 1506399687660273695
 SYSTEM_CHANNEL_ID = 1506399724578537473
 ARCHIVE_CHANNEL_ID = 1506399755914186835
+
+# The operator's Discord user ID — the ONLY account allowed to decide approvals
+# (B2 / PRD-b2 Amendment 1). A non-secret Snowflake, like the channel IDs above.
+# FAIL-CLOSED: while this is 0 (unset), *every* approval click is denied — the
+# gate is dead until it's configured, which is the safe default. Set it to your
+# own Discord user ID (Developer Mode → right-click your name → Copy User ID)
+# and re-deploy before using #approvals.
+OPERATOR_DISCORD_ID = 0

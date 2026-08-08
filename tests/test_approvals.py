@@ -95,3 +95,33 @@ def test_noop_echo_registered_and_echoes():
     # The demo handler ships registered so the smoke test can drive the loop.
     handler = approvals.get_handler("noop_echo")
     assert handler({"text": "ping"}) == "echoed: ping"
+
+
+# --- operator identity + typed confirmation (PRD-b2 Amendment 1) -----------
+
+
+def test_is_authorized_matches_only_the_operator():
+    assert approvals.is_authorized(999, 999) is True
+    assert approvals.is_authorized(123, 999) is False
+
+
+def test_is_authorized_fails_closed_when_operator_unset():
+    # operator_id == 0 means the allowlist was never configured → nobody passes,
+    # not "anybody" (a dead gate beats one anyone can drive).
+    assert approvals.is_authorized(0, 0) is False
+    assert approvals.is_authorized(999, 0) is False
+
+
+def test_high_consequence_types_require_typed_confirm():
+    for it in ("email_send", "content_publish", "drive_doc_create"):
+        assert approvals.requires_typed_confirm(it) is True
+    # A state-writing / demo type does not.
+    assert approvals.requires_typed_confirm("noop_echo") is False
+
+
+def test_confirmation_ok_is_exact_but_trims():
+    assert approvals.confirmation_ok(approvals.CONFIRM_TOKEN) is True
+    assert approvals.confirmation_ok(f"  {approvals.CONFIRM_TOKEN}  ") is True
+    assert approvals.confirmation_ok("send") is False  # case-sensitive
+    assert approvals.confirmation_ok("") is False
+    assert approvals.confirmation_ok(None) is False

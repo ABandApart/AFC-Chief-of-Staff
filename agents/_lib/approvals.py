@@ -52,6 +52,37 @@ _ACTION_STATUS = {
 # Decisions whose handler runs (the action actually ships). Reject does not.
 DISPATCH_STATUSES = frozenset({"approved", "edited"})
 
+# item_types whose handler contacts a third party (email, publish, Drive). A
+# bare button click is too cheap for these — especially a mobile mis-tap — so
+# approving one requires a typed confirmation token (PRD-b2 Amendment 1). This
+# narrows *how deliberately* a yes is given; it does not widen *what* may ship.
+HIGH_CONSEQUENCE_ITEM_TYPES = frozenset(
+    {"email_send", "content_publish", "drive_doc_create"}
+)
+
+# The literal an operator types to confirm a high-consequence dispatch.
+CONFIRM_TOKEN = "SEND"
+
+
+def requires_typed_confirm(item_type: str) -> bool:
+    """True if approving this item_type must be gated by a typed confirmation."""
+    return item_type in HIGH_CONSEQUENCE_ITEM_TYPES
+
+
+def confirmation_ok(token: str | None) -> bool:
+    """True iff the operator typed the confirmation token exactly (trimmed)."""
+    return (token or "").strip() == CONFIRM_TOKEN
+
+
+def is_authorized(user_id: int, operator_id: int) -> bool:
+    """True iff the clicking user is the configured operator.
+
+    Fail-closed on an unset operator id: `operator_id == 0` means the allowlist
+    was never configured, so *nobody* is authorized (better a dead gate than one
+    anyone can drive). PRD-b2 Amendment 1: identity is code, not guild hygiene.
+    """
+    return operator_id != 0 and user_id == operator_id
+
 
 class HandlerNotRegisteredError(KeyError):
     """No handler is registered for an item_type at dispatch time."""
@@ -183,11 +214,15 @@ def list_undelivered() -> list[dict[str, Any]]:
 
 
 def list_pending_posted() -> list[dict[str, Any]]:
-    """Pending rows already posted (views to re-attach on bot restart)."""
+    """Pending rows already posted (views to re-attach on bot restart).
+
+    item_type is included so the re-attached View knows whether the item is
+    high-consequence (typed-confirm) without a per-click DB read.
+    """
     with db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            SELECT id, discord_message_id
+            SELECT id, item_type, discord_message_id
             FROM approval_queue
             WHERE status = 'pending' AND discord_message_id IS NOT NULL
             ORDER BY posted_at
