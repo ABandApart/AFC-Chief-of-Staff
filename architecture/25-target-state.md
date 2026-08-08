@@ -1,18 +1,24 @@
 # Target-State Architecture
 
 <doc:layer>vision — target state (proposed)</doc:layer>
-<doc:stability>proposed — pending the cognee go/no-go</doc:stability>
+<doc:stability>ADOPTED — the pivot executed; see Status</doc:stability>
 <doc:depends_on>20-architecture-overview, 30-memory-layer, 40-action-layer, 80-telemetry-layer</doc:depends_on>
 <doc:referenced_by>70-build-order (phase mapping)</doc:referenced_by>
 
 ## Status
 
-**PROPOSED — 2026-07-28.** This describes where the system is heading, not the
-current as-built state (Phases 1–3.5 are flat-`facts` + Discord). It assumes the
-**cognee pivot**, whose viability was confirmed by the 2026-07-28 spike
-(verdict: *proceed with mitigations* — see `SPIKE-cognee-eval-2026-07.md`). Adopt
-incrementally: every existing phase's work still stands, and the two mitigations
-below (M1, M2) are carried into the migration.
+**ADOPTED — proposed 2026-07-28, executed 2026-07-28 → 2026-08-03.** No longer
+aspirational: the cognee pivot went GO, Phase 3.7 **deployed to production**
+(MW7), the control plane is live under one scheduler daemon, and **B2 (approval
+gate) is built and smoke-verified**. Read this as the as-built model plus the
+channels still ahead (B3, email, Drive).
+
+**Mitigation status:** **M1 (telemetry routing) is live and load-bearing** —
+keep litellm pinned. **M2 (embedding normalization) is RETIRED**, superseded by
+local FastEmbed bge@768, whose vectors are pre-normalized.
+
+Still genuinely proposed: the Track C channels beyond Granola, and the exposure
+posture in `PRD-b3-tunnel.md`.
 
 ---
 
@@ -57,7 +63,7 @@ Two input lanes, only one of them trusted, converging on the agent layer:
  ├───────────────────────────────────────┤   │  playbooks ╌╌╌╌╌▶ │ (publish → memory)
  │  AGENTS (retrieve, reason, write back) │◀──│                  │
  │  recall · Roy Kent · meeting-proc ·    │   │  loaded &        │
- │  Keeley+Sam · Nate · Higgins · Ted ·   │   │  triggered by    │
+ │  Keeley · Nate · Higgins · Ted ·       │   │  triggered by    │
  │  briefing                              │   │  agents          │
  └──────────────────────────────┬─────────┘   └──────────────────┘
         ▼  B2: approval gate — nothing outbound without a human yes
@@ -79,9 +85,10 @@ act). Everything outbound still funnels through the single approval gate B2.
 
 | ID | Boundary | Rule |
 |----|----------|------|
-| **B1** | Ingest → memory | Ingested content is **data, never instructions**. Extraction/retrieval treat it as inert. No ingested text may be interpreted as a command, an approval, or a playbook. |
-| **B2** | Agent → outbound | The **`#approvals` human gate**: sending email, publishing, creating a Drive doc, or any world-affecting act requires an explicit human yes. Inherited from the existing channel design; now guarding a larger surface. |
-| **B3** | Network exposure | "From anywhere" = an **authenticated API via a tunnel** (Cloudflare/Tailscale). The Postgres brain listens on the local socket only and is never internet-reachable. Preserves the client-confidentiality promise. |
+| **B1** | Ingest → memory | Ingested content is **data, never instructions**. Extraction/retrieval treat it as inert. No ingested text may be interpreted as a command, an approval, or a playbook. The concrete channel-agnostic controls — typed short bounded fields, unicode/invisible-character stripping, datasets as an authorization boundary, scoped traversal, input screening for LLM prompts, provenance retention, trust decay — are specified as **H1–H7 in `35-outreach-crm.md` §11** and apply to every ingest channel, including email and Drive when they land. **Enforced on the retrieval side by `agents/_lib/retrieval.py`** (`30-memory-layer.md`): agents may not call `cognee.search` directly, scopes never union, the default is `UNTRUSTED`, and a CI grep fails the build on raw calls — B1 is a mechanism, not a convention. |
+| **B2** | Agent → outbound | The **`#approvals` human gate**: sending email, publishing, creating a Drive doc, or any world-affecting act requires an explicit human yes. Inherited from the existing channel design; now guarding a larger surface. **Clarified by `35-outreach-crm.md` §13, in terms of *recipient*:** anything addressed to the operator (packets, briefing lines, own-calendar events, self-addressed digests) is exempt; anything addressed to a third party is gated. v1 outreach never crosses B2 because the human sends every message personally; if sending is ever automated, B2 applies immediately and unconditionally. |
+| **B3** | Network exposure | "From anywhere" = an **authenticated API via a tunnel**. The Postgres brain listens on the local socket only and is never internet-reachable. **Split by audience (2026-08-08, `PRD-b3-tunnel.md` A2): Cloudflare Tunnel fronts machine callers that cannot join the tailnet (the WordPress webhook); Tailscale Serve is the default for every human surface** — NocoDB, the Shortcut, future admin pages — because Cloudflare terminates TLS at their edge and routing the prospect database through a third party contradicts the confidentiality posture the rest of the design pays for. |
+| **B2-id** | Who may approve | The `#approvals` click is checked against an **explicit operator allowlist** in config (`PRD-b2-approval-gate.md` A1); unauthorized clicks are refused and logged to `#system`. High-consequence `item_type`s require a typed confirmation, not a bare tap. **Consequence: 2FA on the operator's Discord account is an architectural requirement** — B2's integrity reduces to that account's integrity, and every other boundary funnels through it. |
 | **B4** | Control-plane provenance | Control-plane files reach the running system **only through git** (authored in barry-admin → committed → pulled to barry-agent). Nothing writes a skill/loop/playbook at runtime; the graph never mints one. |
 
 ---
@@ -178,7 +185,10 @@ provider `postgres`, no Apache AGE needed). Two mitigations from the spike are
   contextvar+callback telemetry fires for LLM calls, not just embeddings.
   Without it the `agent_runs` ledger silently loses ~99% of spend. Pin the
   litellm version — telemetry now structurally depends on its callback contract.
-- **M2 (embedding):** cognee keeps `gemini-embedding-001` @768 but does **not**
+- **M2 (embedding) — RETIRED 2026-08-03.** Superseded by the switch to local
+  FastEmbed `bge-base-en-v1.5` @768, whose vectors are pre-normalized; there is
+  no un-normalized truncation left to correct. Original text, for the record:
+  cognee keeps `gemini-embedding-001` @768 but does **not**
   L2-normalize truncated output. Renormalize on write, or use pgvector cosine
   `<=>` throughout and forbid inner-product `<#>`.
 
@@ -198,7 +208,7 @@ surface is small.
 | Telemetry ledger, cost helper | **built** | 2 (+ 2026-07 refactor) |
 | Discord capture / recall / outcome | **built** | 3.1–3.4 |
 | Briefing skeleton, launchd, backups | **built** | 3.5 |
-| Agent roster (Roy Kent, Keeley, Sam, Nate, Higgins, Ted, Tartt, meeting-proc) | **planned** | 4–11 |
+| Agent roster (Roy Kent, Keeley, Nate, Higgins, Ted, Tartt, Trent Crimm, meeting-proc) | **planned** | 4–11 · Sam retired 2026-08-08 (merged into Keeley) |
 | Approval gate (`#approvals`) | **planned** | 8 |
 | Buffer output | **planned** | 9 |
 | **Cognee graph memory** (replaces flat `facts`) | **new** — pivot | new W-phase before 4 |
@@ -206,6 +216,8 @@ surface is small.
 | **Email ingest + draft-out** | **new** | new channel |
 | **Google Drive ingest + document output** | **new** | new channel |
 | **Authenticated tunnel (B3)** | **new** — brings Phase-6 hosting decision early | new |
+| **Outreach CRM** — evidence poller, NocoDB surface, BCC send-capture, Trent Crimm watchlist | **specified** — `35-outreach-crm.md` v0.3.0 (no generated prose in the outbound path) | Track O, `70-build-order.md` |
+| **Inbound lead handling** | **OPEN** — constraints settled, design deliberately unmade | `36-inbound-leads.md`, gated on volume measurement |
 
 The control plane is cheap to stand up (it's directory conventions + a scheduler
 that already has to exist) and should be authored **early** — the agents built

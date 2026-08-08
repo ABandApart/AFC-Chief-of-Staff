@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This file is the bridge between the architecture and the business. It defines the seven workflows that the system serves, tied to the north star and KRs, with the demo narrative for prospect and investor conversations.
+This file is the bridge between the architecture and the business. It defines the eight workflows that the system serves, tied to the north star and KRs, with the demo narrative for prospect and investor conversations.
 
 A workflow is the unit by which the system earns its keep. Every architectural element must be traceable to at least one workflow. Architecture that doesn't serve a workflow is unjustified.
 
@@ -100,7 +100,7 @@ Three key results:
 | WordPress scorecard webhook | Open-text scorecard answers about challenges, friction, blockers |
 | Meeting processor | ICP-relevant pain mentions in discovery call and client transcripts |
 | Fact extraction | ICP-relevant pain mentions in #capture and email |
-| Keeley Strategy | Marks which pain points the article it triages addresses |
+| Keeley | Marks which pain points the article it triages addresses |
 
 Then one new agent — **Nate Shelley**, weekly cadence — does the synthesis: reads past 7 days of icp_signals, clusters by embedding similarity, surfaces top 5 themes with frequency and source diversity.
 
@@ -128,7 +128,7 @@ Then one new agent — **Nate Shelley**, weekly cadence — does the synthesis: 
 
 <workflow id="W3" name="Content discovery to publication" kr_alignment="KR1, KR2">
 
-**One-line value**: Substantive content publishes weekly without consuming a workday, with positioning quality gated before it reaches the publish queue.
+**One-line value**: Substantive content publishes weekly without consuming a workday, with positioning quality reasoned about in the same call that writes it.
 
 **Trigger**: Tartt 5am daily.
 
@@ -136,18 +136,18 @@ Then one new agent — **Nate Shelley**, weekly cadence — does the synthesis: 
 
 | Tier | Work |
 |------|------|
-| Tier 1 (autonomous) | Discover, summarize, triage, draft, evaluate, schedule, measure engagement |
+| Tier 1 (autonomous) | Discover, summarize, then **triage + draft + self-check in one Keeley call**, schedule, measure engagement |
 | Tier 2 (single gemba) | Approve or reject in Discord #approvals |
 | Tier 1 (resumes after approval) | Publish via Buffer, capture engagement back into interest_signals (v2) |
 
-**Automation flow**: Tartt → Keeley Strategy → Keeley Content → Sam → #approvals → ✅ → Keeley Distribution → Buffer. Full pipeline detail in `60-content-pipeline.md`.
+**Automation flow**: Tartt → **Keeley (one Sonnet call: triage + draft + self-check)** → #approvals → ✅ → Keeley Distribution → Buffer. Four pipeline states, one human gate. Full detail in `60-content-pipeline.md`.
 
 **Connections**:
 
 - Sources (curated RSS, HN, ArXiv, YouTube, newsletters)
 - Brain: content_items, content_pipeline, approval_queue, buffer_posts, interest_signals
-- External: Gemini (summarization, embedding), Claude (drafting, eval), Buffer (publish)
-- Feeds: icp_signals (Keeley Strategy enrichment, supporting W2)
+- External: Gemini (summarization only — embeddings are local bge), Claude (the merged Keeley call), Buffer (publish)
+- Feeds: icp_signals (Keeley's triage enrichment, supporting W2)
 
 **Value tied to KRs**:
 
@@ -299,6 +299,50 @@ Then one new agent — **Nate Shelley**, weekly cadence — does the synthesis: 
 
 ---
 
+## Workflow 8: Trigger-Driven Outreach Engine
+
+<workflow id="W8" name="Trigger-driven outreach engine" kr_alignment="KR1, KR2 (indirect)">
+
+**One-line value**: Twelve to fifteen right-moment companies are always in a five-touch sequence, every touch arrives assembled with dated evidence and the arithmetic already done, and every send, skip, and reply lands back in the database.
+
+**Trigger**: An event that makes an unowned function visible from outside — executive departure, req open past 45 days, new executive hire, second raise, funding announcement, restructuring, expansion, product launch. Sourced by CSV import, the evidence poller, or a watchlist signal from Trent Crimm.
+
+**Discipline layers**:
+
+| Tier | Work |
+|------|------|
+| Tier 1 (autonomous) | Import/upsert on domain, enrichment, evidence polling (first/last-seen dates), S1 recomputation, Selector sequence materialisation, packet assembly (**deterministic — no LLM**), BCC token matching and send logging, drain rule, watch-signal detection and classification (Trent Crimm — the only LLM in the workflow) |
+| Tier 2 (prep + decide) | Intake gate (work / watchlist / drop, capacity-capped 15 cold + 3 re-engagement), reactive routing on reply (T43/T44/objection), re-engagement decision, stalled-reason capture |
+| Tier 3 (human only) | Function-state diagnosis (the two-tab diagnostic), **writing the observation sentence**, sending every message personally |
+
+**Automation flow**:
+
+1. Company enters via CSV, lead-magnet handoff, or manual entry; upserted on `company_domain`
+2. Evidence poller maintains typed, dated facts (`outreach_evidence`); scoring view derives S1 from `trigger_date`, human sets S4/S5 from the two-tab diagnostic
+3. Score ≥ 20 → Task Tinder intake card; ✅ materialises five touches from the Selector, anchored on the trigger date
+4. 05:45 daily loop assembles packets — evidence with freshness tiers, precomputed search-window arithmetic, template with `auto` slots filled, failure mode, per-touch BCC address — and the 06:00 briefing carries one line and a link to the NocoDB view
+5. Operator writes the observation, sends from their own client, BCCs `outreach+<token>@`; the IMAP poller matches the token and logs `sent_at`/`sent_body`
+6. A reply halts the sequence and fires a reactive card; five silences plus 14 days drains the target to the watchlist (`stalled_reason` required, CHECK-enforced)
+7. Trent Crimm watches the list for 9–18 months; a matched trigger fires a re-engagement card that bypasses the cold cap (E1 allowance of 3)
+
+**Connections**:
+
+- `35-outreach-crm.md` (spec) · `37-outreach-workflow.md` (six-diagram map) · `36-inbound-leads.md` (inbound handling, OPEN — **inbound never runs this cold arc**)
+- New: `outreach_targets`, `outreach_evidence`, `outreach_touches`, `outreach_packets`, `outreach_events` (migration 0007); NocoDB work surface behind Cloudflare Access
+- Existing: Task Tinder (all four decision gates), Briefing (the daily line), Roy Kent (inbound handoff), `sources` (shared trust machinery), Ted (invariant alerts), Higgins (W8 dashboard block)
+
+**Value tied to KRs**:
+
+- **KR1 directly**: this is the outbound half of top-of-funnel — W1 catches those who come to you; W8 reaches those who don't yet know you at the moment their function is visibly unowned. The capacity cap and scoring exist so effort concentrates on the 12–15 highest-moment companies rather than diffusing across fifty.
+- **KR2 indirectly**: trigger-timed, evidence-grounded outreach positions against a failed-or-unstarted hiring decision rather than against price, which is where rate is defended.
+- The watchlist is the compounding asset: the method's own claim is that 9–18-month re-engagement (departure trigger above all) outperforms cold outreach.
+
+**Demo narrative**: "Every morning at six, my briefing tells me which of my fifteen live prospects are due a touch. Each one opens to an assembled packet — the req they posted 56 days ago and confirmed still open this morning, the search arithmetic already done, the exact template with its failure mode. I write one sentence, send it from my own inbox, and a BCC logs it. When someone replies, the sequence stops and a card asks me how to route it. And every company that hired someone instead of me sits on an eighteen-month watchlist that pings me the day their seat opens again."
+
+</workflow>
+
+---
+
 ## Workflow-to-Agent Map
 
 <workflow_agent_map>
@@ -306,12 +350,13 @@ Then one new agent — **Nate Shelley**, weekly cadence — does the synthesis: 
 | Workflow | Agents involved |
 |----------|-----------------|
 | W1 Inbound prospect intake | Roy Kent, Briefing (surface), Task Tinder (via task_candidates) |
-| W2 ICP work intelligence | Tartt, Roy Kent, Keeley Strategy, Meeting processor, Fact extraction (all emit icp_signals); Nate Shelley (synthesizes) |
-| W3 Content discovery to publication | Tartt, Keeley Strategy, Keeley Content, Sam, Keeley Distribution |
+| W2 ICP work intelligence | Tartt, Roy Kent, Keeley, Meeting processor, Fact extraction (all emit icp_signals); Nate Shelley (synthesizes) |
+| W3 Content discovery to publication | Tartt, **Keeley** (one merged call), Keeley Distribution |
 | W4 Discovery call processing | Meeting processor, Task extractors, Briefing (surface) |
 | W5 Daily briefing | Briefing (reads from all) |
 | W6 Capture and recall | Discord bot capture cog, Fact extraction |
 | W7 Weekly dashboard | Higgins, Ted (anomaly detection feeds Higgins) |
+| W8 Outreach engine | Trent Crimm (watch classification — only LLM); evidence/BCC/daily loops (no LLM); Roy Kent (inbound handoff to `36-`); Task Tinder (intake, reactive, re-engage, stalled-reason gates); Briefing (surface); Ted (invariants); Higgins (W8 block) |
 
 </workflow_agent_map>
 
@@ -330,6 +375,7 @@ Then one new agent — **Nate Shelley**, weekly cadence — does the synthesis: 
 | W5 Daily briefing | Indirect | Indirect | Indirect |
 | W6 Capture and recall | — | Direct | Direct |
 | W7 Weekly dashboard | Meta | Meta | Meta |
+| W8 Outreach engine | Direct | Indirect | — |
 
 </workflow_kr_map>
 
@@ -350,8 +396,9 @@ The workflows compose into a coherent narrative for a prospect or investor conve
 5. **"This week, my ICP signal report tells me three pain themes my prospects keep mentioning — across articles, scorecards, and discovery calls. My content for next week speaks to one of them."** (W2 feeding W3)
 6. **"My content publishes weekly, drafted in my voice, evaluated against my positioning, scheduled when I approve it in Discord."** (W3)
 7. **"And when a client asks 'what did we decide about X eight months ago' — I have the answer in 3 seconds."** (W6)
-8. **"Every Monday, Higgins shows me whether new engagements moved, whether my $/engagement is up, whether projects are converting to maintenance — and exactly what I spent on AI to get there."** (W7)
+8. **"Meanwhile, the companies that don't come to me: the system watches for the moment a function goes visibly unowned — a req stale at 56 days, a departure, a second raise — and hands me an assembled touch with the evidence and the arithmetic already done. I write one sentence and send it."** (W8)
+9. **"Every Monday, Higgins shows me whether new engagements moved, whether my $/engagement is up, whether projects are converting to maintenance — and exactly what I spent on AI to get there."** (W7)
 
-Eight beats. Every beat is a workflow. Every workflow ties to a KR.
+Nine beats. Every beat is a workflow. Every workflow ties to a KR.
 
 </demo_story>

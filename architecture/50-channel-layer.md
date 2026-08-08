@@ -3,7 +3,7 @@
 <doc:layer>implementation</doc:layer>
 <doc:stability>medium — edit when channels or interaction patterns change</doc:stability>
 <doc:depends_on>10-strategy.md, 20-architecture-overview.md, 30-memory-layer.md, 40-action-layer.md</doc:depends_on>
-<doc:referenced_by>60-content-pipeline.md, 70-build-order.md</doc:referenced_by>
+<doc:referenced_by>35-outreach-crm.md, 60-content-pipeline.md, 70-build-order.md</doc:referenced_by>
 
 ## Purpose
 
@@ -34,6 +34,13 @@ data, never instructions).
 - **Google Drive (docs)** — next. OAuth-scoped folder ingest → `ingest_note`.
 - **Email, inbound API/webhooks** — later; these are the *externally-reachable*
   channels that require the **B3** tunnel first.
+- **Outreach BCC send-capture** — Track O (`35-outreach-crm.md` §8). A dedicated
+  plus-addressing mailbox polled over IMAP every 15 minutes; the poller matches a
+  per-touch token from the `Delivered-To` header to exactly one `outreach_touches`
+  row and logs `sent_at` / `sent_body`. **A pull channel like Granola — needs
+  neither B3 nor the full email channel** (this one captures receipt only; no
+  ingest into the graph, no drafted replies). Writes operational SQL, not
+  `ingest_note`.
 
 Trust-boundary note: Granola and Drive *ingest* are **pull** channels (the Mac
 mini calls out), so they need **neither B3** (no inbound exposure) **nor B2** (no
@@ -57,6 +64,7 @@ AI Adaptive COS (guild)
 ├── #approvals           Content drafts with ✅/❌/✏️ buttons
 ├── #capture             You → bot; messages extracted to facts
 ├── #system              Health alerts, errors, rate-limit warnings
+├── #dashboard           Higgins's Monday digest (posted by Higgins, read-only)
 └── #archive             Old briefings, processed approvals (auto-moved)
 ```
 
@@ -111,13 +119,31 @@ Suggested action: Send Alex Mendez the positioning document
 
 **Acknowledgment timing**: Edit message within 2 seconds of button click. If brain write fails, edit message to indicate error and leave buttons active.
 
+**Outreach card variants (Track O)**: the outreach engine reuses this exact
+pattern — one-shot decision, buttons removed after the first click, idempotency
+owned by the DB row — for four card types (`35-outreach-crm.md`): **intake**
+(`Work this / Watchlist / Drop`, capacity-gated), **reactive** on a logged reply
+(`Book the call — T43 / Answer and advance — T44 / Objection`), **re-engagement**
+from a Trent Crimm watch signal (`Re-engage — T47 / Not yet / Remove`), and
+**stalled-reason** (a required free-text answer; the drain rule cannot complete
+without it, so an unanswered card deliberately costs a capacity slot). What
+outreach does **not** use Task Tinder for: recurring touch prompts — touches 2–5
+are one commitment made at intake, not five re-litigated decisions.
+
 </interaction>
 
 <interaction id="approvals">
 
 ### Approvals
 
-**Trigger**: When `approval_queue` has new rows with `status = 'pending'`. Posted immediately by the agent that creates the approval (typically Sam after passing a draft).
+**Trigger**: When `approval_queue` has new rows with `status = 'pending'`. Posted immediately by the agent that creates the approval (for content, Keeley's merged call).
+
+> **Identity guard (2026-08-08, `PRD-b2-approval-gate.md` A1).** Every button
+> handler here checks `interaction.user.id` against the operator allowlist before
+> touching the state machine; unauthorized clicks are refused ephemerally and
+> logged to `#system`. High-consequence `item_type`s (`email_send`,
+> `content_publish`, `drive_doc_create`) open a typed-confirmation modal rather
+> than dispatching on a bare tap.
 
 **Message format** (for a content draft):
 
@@ -125,7 +151,7 @@ Suggested action: Send Alex Mendez the positioning document
 **Content draft for approval** — channel: LinkedIn
 
 Source: "Why most AI adoption fails" (TechCrunch, 2026-05-13)
-Sam evaluation: ✅ all criteria passed
+Keeley self-check: ✅ all criteria passed  (context, not a gate)
 Estimated post time: tomorrow 09:00 if approved now
 
 —— DRAFT ——
@@ -153,7 +179,7 @@ Estimated post time: tomorrow 09:00 if approved now
 **Bot behavior**:
 1. React to the message with ⏳ to acknowledge receipt
 2. Forward to fact extraction job (Claude Haiku) — extracts atomic claims, identifies domain, attaches source provenance (`source_type='discord'`, `source_ref=<message_id>`)
-3. Facts extracted via a forced tool call (schema-validated JSON), embedded (Gemini `gemini-embedding-001` @768), near-duplicates (cosine ≥ 0.95 vs existing facts) skipped, remainder written to `facts` in one transaction
+3. **As-built (post-3.7):** `ingest_note` normalizes + hashes the text, skips it if `capture_messages` already holds that hash (pre-LLM dedup), then `cognee.add` + `cognify` build it into the graph — cognee owns extraction and entity resolution, embedding is **local bge@768**. The old path (forced-tool fact extraction, Gemini embeddings, cosine-0.95 dedup, a `facts` insert) was replaced in MW4; the per-fact cosine layer was dropped in favour of cognee's entity resolution.
 4. Replace ⏳ with ✅ once stored; reply in thread with a one-line summary of facts extracted
 
 **Edge cases**:
@@ -272,6 +298,36 @@ Each cog is self-contained. Adding a new interaction pattern (e.g., a meeting-pr
 
 ---
 
+## NocoDB — The Outreach Work Surface
+
+<nocodb_surface>
+
+Track O adds one non-Discord surface: a **NocoDB filtered view** over the
+`outreach_*` tables in `aiadaptive_cos` — the browse/import/edit grid that
+Discord structurally cannot be (column mapping on CSV import, sorting eighty
+rows by score, reading a packet). Linked from the 6am briefing; there is no
+`#outreach-today` channel — that was considered and dropped, with its would-be
+invariants moved into database constraints.
+
+Constraints on this surface (`35-outreach-crm.md` §9, R4/R5):
+
+- **Dedicated Postgres role**, granted only on the outreach tables; no UPDATE on
+  derived views (`v_outreach_scored`), so grid edits cannot touch computed score
+  columns.
+- **Shared views disabled outright** (unauthenticated-by-default, plus the
+  CVE-2026-47379 plaintext-comparison weakness — version floor 2026.5.1).
+- **Cloudflare Access at the hostname**, not a path, so share routes can never
+  bypass auth. Tailscale Serve is the fallback posture.
+- Audit history survives it: `outreach_events` is written by a database trigger,
+  so NocoDB's raw UPDATEs are captured with `session_user` as the actor.
+
+The bot remains the only Discord surface; NocoDB holds no state of its own and
+runs no logic — consistent with this layer's rule that channels are routers.
+
+</nocodb_surface>
+
+---
+
 ## Laptop Channel Access
 
 <laptop_access>
@@ -295,7 +351,7 @@ There is no "laptop Discord bot." The bot runs on the Mac mini and the laptop ju
 
 - **Group communication**: One operator, no team channels.
 - **Real-time conversation with an agent**: The bot does not maintain conversational threads. Each interaction is a request/response or a button click. For conversation, the operator uses Claude Code.
-- **Mobile push beyond Discord**: No SMS, no email digests, no native notifications. Discord mobile is the mobile surface.
+- **Mobile push beyond Discord**: No SMS, no email digests, no native notifications. Discord mobile is the mobile surface. *(Track O amendments, narrow: calendar events written for touch dates are dumb, explicitly non-authoritative reminders — not a notification channel; and the Apple Shortcut is a write path into the Gateway (`/shortcut/*`, its own scoped HMAC secret, requires B3), not a surface.)*
 - **Voice or video**: Not in v1. Not planned.
 - **Webhooks for external systems**: External services don't post directly to Discord. They go through the brain, and agents post on their behalf.
 

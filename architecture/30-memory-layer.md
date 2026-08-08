@@ -3,7 +3,7 @@
 <doc:layer>implementation</doc:layer>
 <doc:stability>medium — schema migrations require versioned migration files; the knowledge model is the cognee graph (Phase 3.7 pivot)</doc:stability>
 <doc:depends_on>10-strategy.md, 20-architecture-overview.md, 25-target-state.md, 26-cognee-migration-plan.md</doc:depends_on>
-<doc:referenced_by>40-action-layer.md, 50-channel-layer.md, 60-content-pipeline.md, 80-telemetry-layer.md</doc:referenced_by>
+<doc:referenced_by>35-outreach-crm.md, 36-inbound-leads.md, 40-action-layer.md, 50-channel-layer.md, 60-content-pipeline.md, 80-telemetry-layer.md</doc:referenced_by>
 
 ## Purpose
 
@@ -116,6 +116,9 @@ cognee content is partitioned into **datasets**:
 - **`playbooks`** — authored, git-tracked playbooks with `publish_to_memory: true`,
   published by `cli/publish_playbooks.py` (hash-idempotent; tracked in
   `playbook_publications`). This is the **trusted** memory region.
+- **`outreach_public`** *(planned, Track O)* — scraped company/job content for
+  outreach targets. Untrusted, and partitioned so outreach retrieval can be scoped
+  to it plus the target subgraph, never touching client-work datasets (H3).
 
 Trust boundary **B1**: agent retrieval that must not be swayed by untrusted
 ingest is scoped to the trusted dataset only — an injected "fact" in `#capture`
@@ -133,13 +136,101 @@ Both run `configure_cognee()` first and execute under `labeled("recall", …)` s
 the query/completion spend lands in the ledger.
 
 > This replaced `agents/_lib/search.py` (Reciprocal Rank Fusion over the `facts`
-> table), removed in W5. The old hybrid-search tuning (RRF k=60, a 0.55 cosine
+> table), removed in MW5. The old hybrid-search tuning (RRF k=60, a 0.55 cosine
 > floor) is gone — those knobs now live inside cognee.
+
+### The retrieval wrapper — B1 as a mechanism, not a convention (2026-08-08)
+
+<retrieval_wrapper>
+
+**The problem it solves.** B1's teeth depend on agents *remembering* to scope
+their searches — playbook retrieval "scoped to the trusted dataset only,"
+outreach traversal "scoped to permitted datasets." Nothing enforces either. One
+forgotten parameter in one agent silently mixes untrusted `capture` content into
+a trusted-playbook retrieval, and the failure looks exactly like a good answer.
+
+**The precedent.** This system already solved this shape of problem once:
+*agents do not import provider SDKs; every LLM call goes through the cost helper.*
+That rule made spend tracking structural instead of aspirational. Retrieval gets
+the same treatment.
+
+> **Rule: agents do not call `cognee.search` or `cognee.SearchType` directly.
+> All retrieval goes through `agents/_lib/retrieval.py`.**
+
+```python
+# agents/_lib/retrieval.py
+class Scope(StrEnum):
+    UNTRUSTED   = "untrusted"    # capture, granola, outreach_public  ← DEFAULT
+    TRUSTED     = "trusted"      # playbooks only
+    TARGET      = "target"       # bounded traversal from one node id
+
+DATASETS: dict[Scope, tuple[str, ...]] = {
+    Scope.UNTRUSTED: ("capture", "granola", "outreach_public"),
+    Scope.TRUSTED:   ("playbooks",),
+    Scope.TARGET:    (),          # resolved from the root node's dataset
+}
+
+async def recall(query: str, *, scope: Scope = Scope.UNTRUSTED,
+                 agent: str, hops: int | None = None,
+                 root_node_id: str | None = None) -> RecallResult: ...
+```
+
+**Design decisions, and why each one:**
+
+- **Defaults closed to `UNTRUSTED`.** The safe default is the *less* privileged
+  scope, so a forgotten argument yields a weaker answer rather than a boundary
+  crossing. A caller wanting playbooks must say so explicitly, and that word
+  `TRUSTED` is greppable in review.
+- **Scopes never union.** There is no `TRUSTED | UNTRUSTED` — mixing is the
+  failure being prevented, so it is unrepresentable rather than discouraged. An
+  agent needing both makes two calls and keeps the results distinguishable, which
+  is also what it needs in order to render provenance (UX-2).
+- **`agent` is required, not inferred.** It sets the `labeled()` telemetry
+  context, so retrieval spend attributes correctly — closing the same gap M1
+  closed for cognify.
+- **`Scope.TARGET` is the Track O bounded traversal**: `root_node_id` + `hops`,
+  no embedding query, no synthesis (see below).
+- **Returns `RecallResult`, not a bare string** — carrying `answer`, `sources`,
+  and `scope_used`. Callers get provenance by construction, which is what makes
+  the `/recall` citation requirement cheap to honour.
+
+**CI enforcement** — the rule is only real if it is checked:
+
+```bash
+# tests/test_no_raw_retrieval.py  (pure, no DB)
+# Fails if cognee.search / SearchType appears outside _lib/retrieval.py
+rg -n 'cognee\.(search|SearchType)' agents/ cli/ \
+  --glob '!agents/_lib/retrieval.py' && exit 1 || exit 0
+```
+
+Same pattern as the existing SDK-import rule. Half a day of work total, and B1
+stops being a promise about developer memory.
+
+**Migration:** `graph_recall.recall()` becomes a thin call into the wrapper with
+`scope=Scope.UNTRUSTED`; `cli/recall.py` and the `/recall` cog are unchanged
+apart from rendering `result.sources`. `cli/publish_playbooks.py`-adjacent
+retrieval uses `Scope.TRUSTED`.
+
+</retrieval_wrapper>
+
+**A second retrieval mode — bounded traversal (Track O, 2026-08-08).** The
+outreach packet (`35-outreach-crm.md` §7) does **not** use `GRAPH_COMPLETION`.
+It runs a bounded N-hop traversal from a known root
+(`outreach_targets.cognee_node_id`), scoped to permitted datasets, and displays
+the retrieved nodes read-only with their source refs. No embedding query, no
+synthesis, no LLM — the design decision is that **no generated text exists in the
+outbound outreach path**. Traversal is also the mechanism that makes cross-client
+leakage structurally impossible for that surface: the packet cannot semantically
+"find" material outside the target's subgraph. `GRAPH_COMPLETION` remains the
+right mode for `/recall`, where a synthesized answer for the operator is the
+point. Planned alongside: an **`outreach_public` dataset** for scraped company
+and job content, keeping client-work datasets unreachable from outreach
+retrieval entirely (H3, `35-outreach-crm.md` §11).
 
 **M2 (retrieval quality)** — originally a concern about Gemini's un-normalized
 768-dim vectors (norm ≈ 0.58). **Retired 2026-08-03** with the switch to local
 FastEmbed (`bge-base-en-v1.5`), whose vectors are normalized. Recall quality was
-already judged good at the W7 deploy; the go-forward graph re-embeds under bge as
+already judged good at the MW7 deploy; the go-forward graph re-embeds under bge as
 notes arrive.
 
 ### Telemetry of cognee spend (M1)
@@ -306,7 +397,7 @@ CREATE TABLE dashboard (
 
 > **Note on fact links.** Every column that linked an operational row to a `facts`
 > row was dropped in migration 0006 with the table itself: `outcomes` (fact link
-> dropped entirely — operator decision, W5), plus the empty-table columns
+> dropped entirely — operator decision, MW5), plus the empty-table columns
 > `follow_ups.source_fact_id` and `decisions.related_facts`. The boundary pattern
 > stands for the future: when an operational row needs to point at a graph fact,
 > it holds the cognee **node-id as a TEXT column**, joined in app code (never a
@@ -321,9 +412,10 @@ CREATE TABLE content_pipeline (
     id                  BIGSERIAL PRIMARY KEY,
     content_item_id     BIGINT NOT NULL REFERENCES content_items(id),
     stage               TEXT NOT NULL,        -- discovered|triaged|drafted|sam_passed|approved|scheduled|published|declined
-    triage_notes        TEXT,                 -- Keeley Strategy output
-    draft_text          TEXT,                 -- Keeley Content output
-    sam_evaluation      JSONB,                -- Sam's structured eval result
+    triage_notes        TEXT,                 -- Keeley's `rationale` (merged call)
+    draft_text          TEXT,                 -- Keeley's draft (merged call)
+    sam_evaluation      JSONB,                -- Keeley's self_check; renamed `self_check`
+                                              -- in the Phase-8 migration (2026-08-08)
     approval_id         BIGINT REFERENCES approval_queue(id),
     buffer_post_id      BIGINT REFERENCES buffer_posts(id),
     declined_reason     TEXT,
@@ -395,7 +487,7 @@ CREATE INDEX agent_runs_status_idx     ON agent_runs (status) WHERE status != 's
 CREATE INDEX agent_runs_function_idx   ON agent_runs (function_label, started_at DESC);
 
 -- outcomes: attributed business outcomes (KR1 measurement substrate). No fact
--- link (dropped W5 / migration 0006) — outcomes stand on their description.
+-- link (dropped MW5 / migration 0006) — outcomes stand on their description.
 CREATE TABLE outcomes (
     id                      BIGSERIAL PRIMARY KEY,
     outcome_type            TEXT NOT NULL,
@@ -414,6 +506,27 @@ CREATE TABLE outcomes (
 
 CREATE INDEX outcomes_type_time_idx ON outcomes (outcome_type, recorded_at DESC);
 ```
+
+### Outreach tables (migration 0007 — Track O)
+
+Five tables added by the outreach CRM; **`35-outreach-crm.md` §2 is the
+authoritative DDL** and is not restated here. In brief:
+
+| Table | Holds | Note |
+|-------|-------|------|
+| `outreach_targets` | One row per **company in a function state at a moment** | Deliberately distinct from person-level `prospects`; nullable `prospect_id` FK links the inbound case. Upsert key is `company_domain`. |
+| `outreach_evidence` | Typed, sourced, **dated** facts (`first_seen_at` / `last_seen_at` / `closed_at`) | The proprietary longitudinal data — posting age cannot be bought retroactively. SQL rather than graph because the packet needs exact, dated, ordered facts, not fuzzy recall. |
+| `outreach_touches` | Five per target, from the Selector; send/skip/reply state + per-touch `bcc_token` | Windows anchor on `trigger_date`. |
+| `outreach_packets` | The assembled per-touch work payload | Deterministic query, no LLM; regenerated daily. |
+| `outreach_events` | Full audit history | Written by an **AFTER trigger**, not app code — it must survive NocoDB raw UPDATEs. Actor via `current_setting('app.actor')`, falling back to `session_user`. |
+
+Design constraint worth repeating at the schema layer: with no bot mediating
+outreach writes, **every invariant is a CHECK constraint or trigger**
+(skip-requires-reason, watchlist-requires-`stalled_reason`, sent-XOR-skipped,
+reply-implies-send, snooze-window bounds, ready-gates-send). The scoring rubric's
+S1 bands live in `outreach_s1()` in the migrations and **the migration is
+authoritative** over any prose restatement. `verify_schema.sql` expects 24
+operational tables once 0007 lands (19 as of 0006 + these five).
 
 ### Knowledge tables pending migration to the graph
 

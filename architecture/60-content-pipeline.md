@@ -15,37 +15,26 @@ This file is a deep-dive on the content discovery-to-publication value stream (V
 
 <state_machine>
 
-The `content_pipeline` table holds one row per content item that enters the pipeline. The `stage` column is the state.
+> **Simplified 2026-08-08.** Triage, drafting, and evaluation collapsed into one
+> Sonnet call (agent `Keeley`, `40-action-layer.md`). Seven states became four;
+> Sam is retired. Rationale below.
+
+The `content_pipeline` table holds one row per content item that enters the
+pipeline. The `stage` column is the state.
 
 ```
        Tartt discovery
               │
               ▼
        ┌────────────┐
-       │ discovered │  (item below threshold or skipped → stays here forever)
+       │ discovered │  (below threshold → stays here)
        └─────┬──────┘
-             │ Keeley Strategy invoked
+             │ Keeley: triage + draft + self-check, ONE call
              ├─────────────────────────────► declined  (reason: not ICP fit)
-             ▼
-       ┌──────────┐
-       │ triaged  │
-       └─────┬────┘
-             │ Keeley Content drafts
-             ▼
-       ┌──────────┐
-       │ drafted  │
-       └─────┬────┘
-             │ Sam evaluates
-             ├─────────────────────────────► (back to triaged for re-draft, max 2 cycles)
-             ▼
-       ┌─────────────┐
-       │ sam_passed  │
-       └─────┬───────┘
-             │ approval_queue post created
              ▼
        ┌──────────────────┐
        │ pending_approval │   ◄── GEMBA: human decides via Discord
-       └─────┬────────────┘
+       └─────┬────────────┘        (self_check renders on the card as context)
              │
        ┌─────┴─────────────────────────────┐
        │                                   │
@@ -54,18 +43,27 @@ The `content_pipeline` table holds one row per content item that enters the pipe
        ▼                                   ▼
    ┌──────────┐                       ┌──────────┐
    │ approved │                       │ declined │ (terminal)
-   └─────┬────┘
+   └─────┬────┘                       └──────────┘
          │ Keeley Distribution invoked
          ▼
    ┌────────────┐
    │ scheduled  │   (Buffer accepted the post)
    └─────┬──────┘
-         │ Buffer webhook on actual publication
+         │ Buffer status poll
          ▼
    ┌────────────┐
-   │ published  │   (terminal, but engagement_measured later)
+   │ published  │   (terminal)
    └────────────┘
 ```
+
+**Retired states:** `triaged`, `drafted`, `sam_passed`. **Retired mechanic:** the
+max-2 re-draft loop — a self-check that fails now simply renders its objection on
+the approval card, where the human was going to look anyway.
+
+**Schema note.** Phase 8 has not been built, so this costs no migration:
+`content_pipeline.sam_evaluation` is renamed `self_check` in the Phase-8
+migration, and `triage_notes` is retained (Keeley returns a `rationale` that
+belongs there).
 
 </state_machine>
 
@@ -79,7 +77,11 @@ The pipeline has exactly one human gate: the `pending_approval` → `approved`/`
 
 This is the only Tier 2 → Tier 3 boundary in this value stream. Everything upstream is Tier 1; everything downstream of approval is Tier 1.
 
-**Why one gate, not multiple**: Multiple gates fragment attention and create approval fatigue. Sam's evaluation is automated specifically so that the human gate only sees drafts worth deciding on. If Sam pass-rates are too high (everything reaches the human), tighten Sam's rubric. If Sam pass-rates are too low (nothing reaches the human), loosen the rubric or upgrade Sam from Haiku to Sonnet.
+**Why one gate, not multiple**: multiple gates fragment attention and create approval fatigue.
+
+**Why no automated pre-gate either (2026-08-08)**: the previous design put Sam in front of this gate to ensure the human only saw drafts worth deciding on. At ~5 drafts/week that reasoning did not survive contact with the arithmetic — Sam's output was a pass/fail against a rubric that the operator re-derives seconds later, at a gate they must open regardless. The evaluation did not reduce the human's work; it duplicated it one step earlier. Keeley's `self_check` now renders *on* the approval card as reviewer context — the same information, at the moment it is actually used, for no extra call.
+
+**Calibration signal**: the rejection rate at this gate. Above **30% over the first 20 drafts**, a separate evaluator earns its place back (`40-action-layer.md`, Keeley). Below it, the merged call stands.
 
 </gemba>
 
@@ -164,10 +166,7 @@ These are targets, not guarantees. They inform agent priorities and alerting thr
 
 | Transition | Target latency | Why |
 |------------|---------------|-----|
-| discovered → triaged | < 1 hour | Keeley Strategy should run shortly after Tartt batch completes |
-| triaged → drafted | < 30 minutes | Keeley Content is event-driven |
-| drafted → sam_passed | < 5 minutes | Sam is quick |
-| sam_passed → pending_approval | < 1 minute | Just a Discord post |
+| discovered → pending_approval | < 1 hour | One Keeley call (triage + draft + self-check), fired after the Tartt batch completes, then straight to the approval queue |
 | pending_approval → approved/declined | Operator-paced | Gemba point — no SLA |
 | approved → scheduled | < 5 minutes | API call with rate-limit budget |
 | scheduled → published | Buffer-paced | Whatever Buffer schedule says |
@@ -180,10 +179,12 @@ These are targets, not guarantees. They inform agent priorities and alerting thr
 
 <failure_modes>
 
-<failure id="F1" name="Sam rejects every draft">
-**Symptom**: Pipeline rows pile up at `drafted` stage with no progress.
-**Diagnosis**: Sam's rubric is too strict.
-**Response**: Operator reviews recent sam_evaluation JSON. Adjusts rubric in code (committed to repo). Pushes to Mac mini. Re-runs failed evals.
+<failure id="F1" name="Keeley declines nearly everything">
+**Symptom**: Items move `discovered → declined` at a high rate; the approval queue stays empty.
+**Diagnosis**: the positioning/ICP `decisions` rows Keeley triages against are too narrow, or Tartt's threshold is admitting the wrong items.
+**Response**: operator reviews recent `declined_reason` + `rationale` values. Adjust the `decisions` rows (or Tartt's interest threshold) — **not** a rubric in code, since triage now reasons from the stored positions. Re-run declined items.
+
+> The old failure — rows piling up at `drafted` because Sam rejected everything — is structurally gone: there is no intermediate state to pile up in, and no automated gate to be miscalibrated. The pipeline's failure mode moved from *stalling* to *declining*, which is visible in the briefing rather than silent in a table.
 </failure>
 
 <failure id="F2" name="Buffer API outage">
@@ -199,15 +200,15 @@ These are targets, not guarantees. They inform agent priorities and alerting thr
 </failure>
 
 <failure id="F4" name="Tartt produces low-quality summaries">
-**Symptom**: Keeley Strategy declines most items; Keeley Content produces weak drafts.
+**Symptom**: Keeley declines most items, or the drafts it does return are weak.
 **Diagnosis**: Gemini Flash summarization is degrading, or source quality has shifted.
 **Response**: Operator reviews recent content_items. May adjust Tartt's summarization prompt, lower interest threshold, or downgrade trust_score for problematic sources.
 </failure>
 
 <failure id="F5" name="Embedding model deprecated">
-**Symptom**: Gemini API returns errors for gemini-embedding-001; new content_items have NULL embeddings.
-**Diagnosis**: Provider deprecated the model.
-**Response**: This is a substrate-level event. Pick new embedding model. Re-embed all existing `content_items`, `facts`, `interest_signals`, `meeting_transcripts`. This is a multi-hour migration; plan accordingly.
+**Symptom**: the local FastEmbed model fails to load, or a deliberate embedder change is proposed.
+**Diagnosis**: embeddings are **local bge-base-en-v1.5 @768 in-process** (2026-08-03) — there is no provider to deprecate them, so this is a code/model-load failure rather than an API event. The original provider-deprecation risk is retired.
+**Response**: a load failure alerts `#system` and retries next run. A deliberate embedder change is a substrate event: **768 is a hard dimension commitment**, and switching means re-embedding the whole graph. Fallback on file is Voyage (`voyage/voyage-3.5`), a commented block in `cognee_setup.build_cognee_env`.
 </failure>
 
 </failure_modes>
@@ -236,13 +237,36 @@ This closes the loop: the system learns what produces engagement and biases disc
 
 ---
 
+## Shared Ingest Hardening and the Sources Table
+
+<shared_hardening>
+
+Two integration points added with the outreach CRM (`35-outreach-crm.md`, 2026-08-08):
+
+1. **H1–H7 apply to this pipeline's ingest.** Tartt consumes scraped web content,
+   and Keeley puts that content into an LLM prompt. The channel-agnostic ingest controls in `35-outreach-crm.md` §11 —
+   typed short fields (H1), unicode/invisible-character stripping (H2), and
+   **input screening before scraped chunks enter any prompt (H5)** — apply here
+   exactly as they do to outreach. They land at shared ingest, not per-pipeline.
+
+2. **`sources.trust_score` is now written by two consumers.** Tartt already
+   multiplies interest scores by `trust_score`. H7 adds automatic decay: a source
+   whose content repeatedly trips the H2/H5 screens is low-quality or hostile and
+   loses trust without operator action. The outreach evidence poller and Trent
+   Crimm reuse the same `sources` machinery (careers pages and company RSS as
+   source rows), so trust semantics stay shared — one table, one meaning.
+
+</shared_hardening>
+
+---
+
 ## What This Pipeline Does NOT Do
 
 <non_goals>
 
 - **Cross-channel coordination**: No "post to LinkedIn then 3 hours later to X with adapted phrasing." V1 is one channel per approval.
 - **Editorial calendar**: No "post on Tuesdays and Fridays." Posts schedule when approved; Buffer's queue dictates timing.
-- **A/B testing**: No multiple drafts for the same source. Sam either passes one draft or sends back for revision.
+- **A/B testing**: no multiple drafts for the same source. Keeley returns one draft per item; the operator edits it at the gate or rejects it.
 - **Newsletter assembly**: The Adaptive (Substack newsletter) is not in this pipeline. Newsletter drafting is a separate workflow that may borrow this pipeline's primitives in a future phase.
 - **Direct social posting**: All posting goes through Buffer. No direct LinkedIn or X API integration.
 

@@ -66,7 +66,8 @@ CREATE TABLE agent_runs (
     agent_name      TEXT NOT NULL,        -- 'tartt', 'fact-extraction', 'cognee', …
     function_label  TEXT NOT NULL,        -- 'news_aggregation', 'topic_research',
                                           -- 'action_surfacing', 'customer_discovery',
-                                          -- 'infrastructure', 'telemetry'
+                                          -- 'infrastructure', 'telemetry',
+                                          -- 'outreach_watch'
     trigger_kind    TEXT NOT NULL,        -- 'scheduled', 'event', 'manual'
     started_at      TIMESTAMPTZ NOT NULL,
     ended_at        TIMESTAMPTZ,
@@ -91,18 +92,19 @@ CREATE INDEX agent_runs_function_idx   ON agent_runs (function_label, started_at
 > `correlation_kind='cognify_run'`, so `GROUP BY correlation_id` rolls a whole
 > cognify (its per-chunk fan-out) up to one logical operation.
 
-**Function labels** match the four core swarm functions plus two for system work.
+**Function labels** — four core swarm functions, two for system work, and one for outreach watch (seven total).
 `agent_name` is finer-grained than `function_label`; cognee's work maps in as
 below:
 
 | Label | Agents |
 |-------|--------|
 | `news_aggregation` | Tartt |
-| `topic_research` | Keeley Strategy, Nate Shelley |
+| `topic_research` | Keeley, Nate Shelley |
 | `action_surfacing` | Briefing, Task extractors, Meeting processor |
 | `customer_discovery` | Roy Kent, Nate Shelley, inbound webhooks, **cognee capture** (`agent_name='fact-extraction'`) |
-| `infrastructure` | Sam, **recall** (`graph_recall`), **playbook-publish**, **cognee** (unlabeled internal calls) |
+| `infrastructure` | **retrieval** (`_lib/retrieval.py`, all scopes), **playbook-publish**, **cognee** (unlabeled internal calls) |
 | `telemetry` | Higgins, Ted's anomaly detection |
+| `outreach_watch` | Trent Crimm (watch-signal classification, Haiku). **The only outreach LLM spend** — packet assembly is a deterministic query with no LLM call (`35-outreach-crm.md` v0.3.0), and the retired `outreach` observation label was never deployed. Ceiling $0.30/day. |
 
 Some agents (Nate Shelley) serve more than one function. Each run records the
 function label active for that specific run.
@@ -156,9 +158,9 @@ class RunContext:
     def call_gemini(self, prompt: str, *, model: str,
                     max_output_tokens: int) -> str: ...
 
-    def call_embedding(self, texts: list[str], *, model: str = "gemini-embedding-001",
-                       output_dimensionality: int = 768) -> list[list[float]]:
-        """L2-normalizes the 768-dim truncation (the API does not — M2)."""
+    def embed(self, texts: list[str]) -> list[list[float]]:   # local, free
+        """Retired 2026-08-03: embeddings are local FastEmbed bge@768,
+        pre-normalized, in-process. No provider call, no ledger row, no M2."""
 ```
 
 </helper_interface>
@@ -218,7 +220,8 @@ PRICE_TABLE = {  # (provider, model) -> USD/token
     ("anthropic", "claude-haiku-4-5"):     {"input": 1.0/1e6,   "output": 5.0/1e6},
     ("anthropic", "claude-sonnet-4-6"):    {"input": 3.0/1e6,   "output": 15.0/1e6},
     ("gemini",    "gemini-2.5-flash"):     {"input": 0.075/1e6, "output": 0.30/1e6},
-    ("gemini",    "gemini-embedding-001"): {"input": 0.15/1e6,  "output": 0.0},
+    # ("gemini", "gemini-embedding-001") removed 2026-08-03 — embeddings are
+    # local FastEmbed bge@768: no provider call, no cost, no ledger row.
     # … (opus tiers etc.)
 }
 ```
@@ -260,7 +263,7 @@ them. Instead (`_lib/telemetry_context.py`):
   (`LLM_PROVIDER=custom`, `LLM_MODEL=anthropic/…`). cognee's native Anthropic
   adapter calls the raw SDK and bypasses the callback — under that routing the
   ledger would silently lose ~all LLM spend. The spike proved the callback reaches
-  100% of cognee's calls under custom routing; W2 confirmed it in production
+  100% of cognee's calls under custom routing; MW2 confirmed it in production
   (18 `cognify_run` rows for a 2-doc smoke).
 - **Unlabeled fallback**: a cognee call outside any `labeled()` block is still
   recorded, under `agent_name='cognee'`, `function_label='unlabeled'` — so nothing
@@ -282,8 +285,9 @@ exposure are predictable:
 
 | Work | Provider | Where |
 |------|----------|-------|
-| **Generative LLM** — all of it: cognee extraction/graph-building, and every agent (Roy Kent, Keeley, Sam, meeting-processor, briefing synthesis, …) | **Anthropic** (`claude-*`, via litellm for cognee; direct SDK for own-agents) | `runs.py` + the M1 labeling path |
-| **News ingestion only** — Tartt's content summarization + the `content_items` similarity vectors | **Gemini** (`gemini-2.5-flash`, `gemini-embedding-001` @768) | `runs.py` (Phase 4) |
+| **Generative LLM** — all of it: cognee extraction/graph-building, and every agent (Roy Kent, Keeley, Trent Crimm, meeting-processor, briefing synthesis, …) | **Anthropic** (`claude-*`, via litellm for cognee; direct SDK for own-agents) | `runs.py` + the M1 labeling path |
+| **News ingestion only** — Tartt's content summarization (batched 10–15 extracts/call) | **Gemini** (`gemini-2.5-flash`) | `runs.py` (Phase 4) |
+| **All embeddings** — graph vectors, `content_items`, interest similarity | **local FastEmbed** `bge-base-en-v1.5` @768, in-process ONNX | none — no provider call, no ledger row, no cost |
 | **Knowledge-graph embeddings** — capture, meetings | **Local FastEmbed** (`bge-base-en-v1.5` @768, ONNX; no key, no rate limit, no cost) | cognee (`cognee_setup.py`) |
 
 Rationale: Gemini is boxed into the news domain (its free-tier embed cap is what
@@ -351,7 +355,7 @@ agents must have an entry (`agent_run` raises `ValueError` otherwise).
 
 **Failure mode**: `DailyCeilingExceeded` raised, no row written. The agent's
 behavior on it is its choice — Tartt skips the item and continues; Briefing falls
-back to template-mode (structured query results, no LLM synthesis); Sam leaves the
+back to template-mode (structured query results, no LLM synthesis); Keeley leaves the
 draft at `drafted` and surfaces a #system backlog warning. Ted alerts at 80% of a
 ceiling so you can intervene before service degrades.
 
@@ -431,9 +435,7 @@ Every agent gets at most three metrics. One is token-discipline (catches spirals
 | Tartt | Tokens per content_item | Acceptance rate (kept vs. dismissed) | Items contributing to icp_signals or content_pipeline |
 | Roy Kent | Tokens per prospect qualified | High-fit % of inbound | Prospects → discovery calls converted |
 | Nate Shelley | Tokens per cluster surfaced | Cluster reuse rate (referenced in content/outreach) | Signal density (distinct sources per cluster) |
-| Keeley Strategy | Tokens per triage | Triage → published conversion | Decline rate (calibration: too high or too low both bad) |
-| Keeley Content | Tokens per draft | Sam pass rate on first try | Approved → published conversion |
-| Sam | Tokens per evaluation | Median re-draft cycles | Human approval rate on Sam-passed drafts |
+| Keeley | Tokens per item (one merged call: triage + draft + self-check) | Human approval rate at `#approvals` — **>30% rejection over the first 20 drafts re-adds a separate evaluator** | Approved → published conversion; decline rate calibration |
 | Keeley Distribution | API calls per post | Posts scheduled successfully | Posts → outcomes attributed |
 | Briefing | Tokens per briefing | Tasks accepted from briefing | Decisions logged per briefing read |
 | Task extractors | Tokens per candidate | Acceptance rate (Task Tinder ✅) | Accepted → completed conversion |
@@ -441,6 +443,8 @@ Every agent gets at most three metrics. One is token-discipline (catches spirals
 | Capture (cognee) | Tokens per note cognified | Recall answer quality (spot-checked) | (infrastructure — no outcome metric) |
 | Ted | Tokens per check cycle | Mean time to alert on failure | Alert precision (true vs. false positives) |
 | Higgins | Tokens per weekly digest | Weeks with KR movement reported | Outcomes recorded per week |
+| Trent Crimm | Tokens per detected item classified | Card precision (Gate-4 re-engage vs. dismissed) | Re-engagements → engagements (E1 experiment) |
+| Outreach loops (no LLM) | — (deterministic; no `agent_runs` rows) | Touches sent on schedule; touch-five completion (tracked separately) | Conversations opened; calls held; touch-of-first-reply distribution (quarterly, gated at 40 completed sequences) |
 
 </metrics_per_agent>
 
@@ -458,13 +462,102 @@ Every 6 hours, Ted:
 2. **Computes anomaly detection** (new, G3): rolling-median check on tokens-per-output for each agent. Pure SQL plus Python; zero LLM cost.
 3. **Checks ceiling proximity** (new): for each agent, computes today's spend; alerts at 80% of daily ceiling.
 4. **Counts failures** (new): agents with >3 `failed` runs in last 6 hours get flagged.
-5. **Posts/updates pinned status in #system** (existing): single message showing all agent health states.
+5. **Pings its external check** (`cos-ted`) on the success path — see "Who Watches Ted" below — and writes `dashboard.last_ted_run_at`.
+6. **Checks outreach invariants** (Track O, pure SQL over `outreach_*` — no LLM):
+   `cold_live > 15` or `reengagement_live > 3` · any touch past `window_closes`
+   unsent and unskipped · packets `ready=false` for >48h · drain blocked on a
+   missing `stalled_reason` for >7 days (the card is costing a capacity slot) ·
+   evidence loop silent >48h · >25% of displayed evidence `ageing` or worse ·
+   BCC poller silent >2h · watch loop silent >8 days.
+7. **Posts/updates pinned status in #system** (existing): single message showing all agent health states.
 
 Ted does call Claude Haiku for its alert summarization (deciding how to phrase a complex alert) but only when there's something to alert about. Most 6-hour checks are pure Python with no LLM call and no `agent_runs` row.
 
 When Ted does call Haiku, it logs to agent_runs with `function_label='telemetry'` to keep its own spend visible.
 
 </ted_telemetry>
+
+---
+
+## Who Watches Ted — the external witness
+
+<dead_mans_switch>
+
+**The gap.** Ted watches the agents. launchd watches Ted's *process* — but
+`KeepAlive` only restarts a process that exited; it cannot detect a process that
+is running and doing nothing, and it cannot report anything if the machine is
+off. Every monitor in this system lives on the box it monitors. Power cut, full
+disk, a macOS update reboot-loop, a wedged scheduler daemon holding its lock —
+all fail **silently**, and the operator finds out by noticing no briefing
+arrived, which is both slow and easy to rationalise on a busy morning.
+
+This is the only failure class the architecture cannot currently see, and it is
+the cheapest one to close.
+
+### The mechanism: push-based, per-loop
+
+Each critical loop **pings an external check on success**. Absence of a ping is
+the alert — which is what makes it work when the box is dead, the network is
+down, or the process is wedged. A monitoring service that *polls* the box would
+miss the wedged-scheduler case entirely (the gateway answers `/health` fine
+while nothing is being scheduled), so **liveness must be reported by the work
+itself, not by the box.**
+
+Recommended: **healthchecks.io** (free tier ≈ 20 checks, ample). Any dead-man's
+switch works; the property required is *alert on absence*.
+
+| Check | Pinged by | Period | Grace |
+|-------|-----------|--------|-------|
+| `cos-briefing` | morning-briefing loop, after posting | 24h | 1h |
+| `cos-ted` | Ted, at the end of each cycle | 6h | 1h |
+| `cos-scheduler` | scheduler daemon heartbeat | 1h | 15m |
+| `cos-outreach-evidence` | evidence poller (Track O) | 12h | 2h |
+| `cos-outreach-bcc` | BCC poller (Track O) | 15m | 10m |
+| `cos-backup` | nightly `pg_backup.sh`, on exit 0 | 24h | 2h |
+
+Two lines at the end of each loop:
+
+```python
+# only on the success path — a ping in a finally: block reports "alive" while broken
+requests.get(f"https://hc-ping.com/{uuid}", timeout=5)
+```
+
+**Design rules that make this trustworthy:**
+
+- **Ping only on success**, never in `finally`. A switch that fires on a crashed
+  run is worse than none — it manufactures confidence.
+- **Ping the `/fail` endpoint on a caught exception** so a broken run alerts
+  immediately rather than waiting out the grace window.
+- **Alert to a channel that is not Discord.** Email or phone push. Discord is
+  where the failing system posts; if the bot is down, `#system` is exactly where
+  the alert will not appear. This is the whole point of an *external* witness.
+- **Distinct check per loop, not one aggregate.** "Something is wrong" costs a
+  debugging session; "the BCC poller stopped 40 minutes ago" does not.
+
+### Second layer: Ted's own timestamp, surfaced daily
+
+Off-box alerting can itself fail (an expired free account, a changed URL, an
+unread inbox). So also make staleness **visible in the surface the operator reads
+every day**:
+
+- Ted writes `dashboard.last_ted_run_at` at the end of each cycle (the `dashboard`
+  table already exists for exactly this pattern).
+- The briefing's System line renders it: `✅ Ted 2h ago · scheduler 12m ago` — and
+  renders it **in red past two missed cycles**.
+
+This costs one column read and closes the loop by human attention rather than by
+infrastructure. Belt and braces: if the dead-man's switch is silently broken, the
+briefing still shows a stale timestamp; if the briefing stops entirely, the
+dead-man's switch fires.
+
+### What this deliberately does not do
+
+No second local watchdog process. A watcher watching the watcher on the same box
+adds a failure mode and answers none of the ones that matter — the box being off
+is not observable from the box. Fifteen minutes of work, one external dependency,
+and the only alerting in the design that survives the machine itself.
+
+</dead_mans_switch>
 
 ---
 
@@ -489,11 +582,12 @@ Higgins runs Mondays 7am. One LLM call (Claude Sonnet) to synthesize the structu
 
   Spend by function (7 days):
     news_aggregation:      $XX.XX  (Tartt)
-    topic_research:        $XX.XX  (Keeley Strategy, Nate Shelley)
+    topic_research:        $XX.XX  (Keeley, Nate Shelley)
     action_surfacing:      $XX.XX  (Briefing, Task extractors, Meeting processor)
     customer_discovery:    $XX.XX  (Roy Kent, Nate Shelley, webhooks)
-    infrastructure:        $XX.XX  (Sam, Ted, fact extraction)
+    infrastructure:        $XX.XX  (retrieval, Ted, fact extraction)
     telemetry:             $XX.XX  (Higgins, Ted alerting)
+    outreach_watch:        $XX.XX  (Trent Crimm — only outreach LLM spend)
     total:                 $XX.XX
 
   Token discipline flags this week:
@@ -511,6 +605,13 @@ Higgins runs Mondays 7am. One LLM call (Claude Sonnet) to synthesize the structu
   W5 daily briefings:          7 of 7 posted
   W6 captures:                 N notes captured to the graph
   W7 (this dashboard):         posted
+  W8 outreach:                 N/M touches on schedule (window-based) ·
+                               touch-five completion X/Y · N conversations ·
+                               cold live K/15 · E1 allowance J/3 ·
+                               evidence freshness: F fresh / A ageing / S stale
+                               (rates — conversation, call, engagement, watchlist
+                               conversion, touch-of-first-reply — quarterly only,
+                               gated at 40 completed sequences)
 
 ### Outcomes recorded (via /outcome)
 

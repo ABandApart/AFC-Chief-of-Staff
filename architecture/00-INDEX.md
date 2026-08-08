@@ -9,7 +9,7 @@
 </doc:meta>
 
 <doc:abstract>
-A persistent operational layer for AI Adaptive built on four separable layers — channel, action, memory, and telemetry — that share one Postgres-backed brain. Channel is Discord. Action is Claude Code + launchd-scheduled scripts running on a Mac mini. Memory is local PostgreSQL 17 with pgvector for selective vectorization (pivoted from hosted Supabase — see `70-build-order.md` decision log). Telemetry tracks cost, prevents runaway spend, and reports against the north star: sustainable long-term contract engagements. The system implements the Chief of Staff three-tier handoff model (autonomous / prep-for-review / human-only), serves seven defined workflows that each tie to a key result, maps to a Ted Lasso–named agent roster, and is built incrementally over a phased plan.
+A persistent operational layer for AI Adaptive built on four separable layers — channel, action, memory, and telemetry — that share one Postgres-backed brain. Channel is Discord. Action is Claude Code + launchd-scheduled scripts running on a Mac mini. Memory is local PostgreSQL 17 with pgvector for selective vectorization (pivoted from hosted Supabase — see `70-build-order.md` decision log). Telemetry tracks cost, prevents runaway spend, and reports against the north star: sustainable long-term contract engagements. The system implements the Chief of Staff three-tier handoff model (autonomous / prep-for-review / human-only), serves eight defined workflows that each tie to a key result, maps to a Ted Lasso–named agent roster, and is built incrementally over a phased plan.
 </doc:abstract>
 
 <doc:north_star>
@@ -31,15 +31,24 @@ For questions about **what** the system looks like overall (four layers, agents,
 → [`20-architecture-overview.md`](./20-architecture-overview.md)
 
 For **where the system is heading** (proposed cognee pivot, control plane, ingest/output channels, trust boundaries):
-→ [`25-target-state.md`](./25-target-state.md) — PROPOSED, pending the cognee go/no-go
+→ [`25-target-state.md`](./25-target-state.md) — ADOPTED; the pivot executed
 
-For **how to get there** (three tracks, cognee pivot W1–W7, M1/M2 mitigations, effort, rollback):
-→ [`26-cognee-migration-plan.md`](./26-cognee-migration-plan.md) — PROPOSED migration plan
+For **how the pivot was done** (three tracks, workstreams MW1–MW7, mitigations M1/M2, rollback, and the **2026-11-01 keep/kill review gate**):
+→ [`26-cognee-migration-plan.md`](./26-cognee-migration-plan.md) — EXECUTED
 
 For questions about **where data lives and how it is queried** (Postgres schema, vectorization rules, hybrid search):
 → [`30-memory-layer.md`](./30-memory-layer.md)
 
-For questions about **how agents run** (Roy Kent, Tartt, Nate Shelley, Keeley cluster, Sam, Briefing, Higgins, Ted, launchd, Discord bot supervision):
+For the **outreach CRM** (evidence table, five-touch sequencing, capacity cap, BCC loop closure, Trent Crimm, staleness model, ingest hardening H1–H7):
+→ [`35-outreach-crm.md`](./35-outreach-crm.md)
+
+For **inbound lead handling** (why inbound never runs the cold arc; the design is deliberately OPEN, gated on measuring volume):
+→ [`36-inbound-leads.md`](./36-inbound-leads.md)
+
+For the **outreach workflow as a picture** (six diagrams — read this before 35-):
+→ [`37-outreach-workflow.md`](./37-outreach-workflow.md)
+
+For questions about **how agents run** (Roy Kent, Tartt, Nate Shelley, Keeley, Trent Crimm, Briefing, Higgins, Ted, the outreach loops, scheduler/launchd, Discord bot supervision):
 → [`40-action-layer.md`](./40-action-layer.md)
 
 For questions about **how humans interact with the system** (Discord channels, Task Tinder buttons, approval gates, outcome capture):
@@ -54,7 +63,7 @@ For questions about **build order and dependencies** (what to build first, what 
 For questions about **how the system measures itself** (agent_runs, cost helper, runaway-prevention guards, weekly dashboard):
 → [`80-telemetry-layer.md`](./80-telemetry-layer.md)
 
-For questions about **what the system does for the business** (the seven workflows, KR alignment, demo narrative):
+For questions about **what the system does for the business** (the eight workflows, KR alignment, demo narrative):
 → [`90-workflows.md`](./90-workflows.md)
 
 </doc:routes>
@@ -87,7 +96,11 @@ XML tags wrap structured meta-context inside the markdown. Markdown handles narr
 | **Laptop** | A reader/builder workspace; runs ad-hoc Claude Code sessions |
 | **agent_runs** | The telemetry ledger; one row per LLM call |
 | **Cost helper** | Single Python module that wraps all LLM calls and writes agent_runs |
-| **Guard G1/G2/G3** | Per-run token cap / per-day spend ceiling / anomaly detection |
+| **Guard G1/G2/G3** | ~~Per-run token cap~~ / ~~per-day spend ceiling~~ / anomaly detection. **G1 and G2 were removed in the 3.7 pivot** — replaced by a soft post-hoc breaker plus bounded queries. G3 (Ted) remains. |
+| **MW1–MW7** | The cognee migration workstreams (`26-`). Renamed from `W1–W7` on 2026-08-08; **`W` now means a business workflow only.** |
+| **Target** | A company in a function state at a moment — the outreach unit of work (`outreach_targets`); distinct from a `prospects` person-row |
+| **Evidence** | A typed, sourced, dated fact about a target (`outreach_evidence`); `first_seen_at` is created by our own polling and cannot be bought retroactively |
+| **Packet** | The assembled per-touch work payload — deterministic query, no LLM; the operator writes the observation sentence (Tier 3) |
 
 </doc:terminology>
 
