@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Gateway API under launchd supervision (B3).
-     User LaunchAgent for barry-agent: keychain (gateway-hmac-secret, db-url,
-     anthropic-api-key) is only unlocked in a logged-in user session, so this
-     cannot be a system LaunchDaemon — same constraint as the discord-bot job.
+     User LaunchAgent for barry-agent: keychain (per-caller gateway-hmac-*
+     secrets, db-url, anthropic-api-key) is only unlocked in a logged-in user
+     session, so this cannot be a system LaunchDaemon — same constraint as the
+     discord-bot job.
      Binds 127.0.0.1:8788 only; the public edge is the Cloudflare Tunnel
      (com.aiadaptive.cos.cloudflared), which routes the hostname -> this port.
      Needs the cognee + gateway groups synced:
