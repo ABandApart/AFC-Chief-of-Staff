@@ -57,6 +57,13 @@ gateway = [
 cognee = [
     "cognee[postgres,fastembed]==1.4.0",
 ]
+# Track I — MCP tool layer. NOT synced by default; the stdio server needs it:
+# `uv sync --group mcp`. The pure catalog/dispatch (`agents/mcp/tools.py`) and its
+# tests import no `mcp`, so the suite runs in the default env; only the thin
+# transport shim (`agents/mcp/server.py`) imports the SDK.
+mcp = [
+    "mcp>=1.2,<2.0",
+]
 
 [tool.ruff]
 line-length = 100
