@@ -142,8 +142,13 @@ def client(mocker):
     )
     ingest_mock = mocker.patch.object(gw.ingest, "ingest_note")
     mocker.patch.object(gw.cognee_setup, "configure_cognee")
+    roy_kent_mock = mocker.patch.object(
+        gw.roy_kent, "process_lead",
+        return_value={"status": "processed", "prospect_id": 1, "fit": None},
+    )
     with TestClient(gw.app) as c:
         c.ingest_mock = ingest_mock  # type: ignore[attr-defined]
+        c.roy_kent_mock = roy_kent_mock  # type: ignore[attr-defined]
         yield c
 
 
@@ -219,15 +224,44 @@ def test_ingest_bad_source_type_is_422(client):
     client.ingest_mock.assert_not_awaited()
 
 
-def test_leads_webhook_authed_but_not_implemented(client):
-    body = b'{"email":"a@b.com"}'
-    r = client.post("/webhook/leads", content=body, headers=_sign_headers(body, caller="wordpress"))
-    assert r.status_code == 501  # route + auth exist; handler is Phase 6
+LEADS_BODY = (
+    b'{"wordpress_profile_id":"wp-1","name":"Jane Prospect","source_form":"scorecard",'
+    b'"raw_profile":{"answers":{"q1":"we cannot keep up with our own pipeline"}}}'
+)
+
+
+def test_leads_webhook_signed_returns_202_and_dispatches(client):
+    r = client.post(
+        "/webhook/leads", content=LEADS_BODY,
+        headers=_sign_headers(LEADS_BODY, caller="wordpress"),
+    )
+    assert r.status_code == 202
+    assert r.json()["wordpress_profile_id"] == "wp-1"
+    # Ack-then-process: the background task ran Roy Kent's pipeline once.
+    client.roy_kent_mock.assert_called_once()
+    (payload,), _ = client.roy_kent_mock.call_args
+    assert payload["wordpress_profile_id"] == "wp-1"
+    assert payload["source_form"] == "scorecard"
 
 
 def test_leads_webhook_unsigned_is_401(client):
     r = client.post("/webhook/leads", content=b"{}")
     assert r.status_code == 401
+    client.roy_kent_mock.assert_not_called()
+
+
+def test_leads_webhook_bad_source_form_is_422(client):
+    body = b'{"wordpress_profile_id":"wp-1","name":"Jane","source_form":"evil"}'
+    r = client.post("/webhook/leads", content=body, headers=_sign_headers(body, caller="wordpress"))
+    assert r.status_code == 422
+    client.roy_kent_mock.assert_not_called()
+
+
+def test_leads_webhook_missing_name_is_422(client):
+    body = b'{"wordpress_profile_id":"wp-1","source_form":"scorecard"}'
+    r = client.post("/webhook/leads", content=body, headers=_sign_headers(body, caller="wordpress"))
+    assert r.status_code == 422
+    client.roy_kent_mock.assert_not_called()
 
 
 def test_oversized_body_is_413(client):

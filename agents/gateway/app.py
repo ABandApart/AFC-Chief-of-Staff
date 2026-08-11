@@ -12,8 +12,9 @@ Routes (v1):
   - `POST /ingest`         — HMAC-authed; the primary API ingestion channel.
                              Ack-then-process: validate + enqueue, return 202
                              fast, run `ingest_note` in the background.
-  - `POST /webhook/leads`  — HMAC-authed route + validation land here; the
-                             Phase-6 WordPress handler is not built yet (501).
+  - `POST /webhook/leads`  — HMAC-authed; ack-then-process into Roy Kent
+                             (Phase 6): dedup, ICP qualification, icp_signals,
+                             task_candidates on a high-fit lead.
 
 Auth (PRD-b3 Amendment 1): per-caller HMAC. Each caller carries an
 `X-AIA-Caller` id resolved to its own keychain secret, and signs the
@@ -40,6 +41,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -49,6 +51,7 @@ from agents._lib import cognee_setup, creds, ingest
 from agents._lib.brain_tools import InvocationContext, ToolError
 from agents.gateway import auth
 from agents.mcp import tools as mcp_tools
+from agents.roy_kent import qualify as roy_kent
 
 logger = logging.getLogger(__name__)
 
@@ -248,22 +251,71 @@ async def _process_ingest(*, text: str, source_ref: str, source_type: str) -> No
         logger.exception("background ingest failed: ref=%s", source_ref)
 
 
+# source_form values the WordPress Lead Engine may send (36-inbound-leads.md §3).
+ALLOWED_SOURCE_FORMS = frozenset({"scorecard", "contact", "newsletter"})
+
+
+class LeadsWebhookBody(BaseModel):
+    wordpress_profile_id: str
+    name: str
+    email: str | None = None
+    company: str | None = None
+    role: str | None = None
+    source_form: str
+    raw_profile: dict[str, Any] = {}
+
+    @field_validator("wordpress_profile_id", "name")
+    @classmethod
+    def _nonempty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v
+
+    @field_validator("source_form")
+    @classmethod
+    def _source_form_allowed(cls, v: str) -> str:
+        if v not in ALLOWED_SOURCE_FORMS:
+            raise ValueError(f"source_form must be one of {sorted(ALLOWED_SOURCE_FORMS)}")
+        return v
+
+
+def _process_lead(payload: dict[str, Any]) -> None:
+    """Background worker: Roy Kent's full qualification pipeline.
+
+    Errors are logged, never surfaced — the caller already got its 202
+    (ack-then-process, same contract as `/ingest`).
+    """
+    try:
+        result = roy_kent.process_lead(payload)
+        logger.info(
+            "leads webhook processed: wordpress_profile_id=%s -> %s",
+            payload["wordpress_profile_id"], result["status"],
+        )
+    except Exception:
+        logger.exception(
+            "leads webhook processing failed: wordpress_profile_id=%s",
+            payload.get("wordpress_profile_id"),
+        )
+
+
 @app.post(
     "/webhook/leads",
     status_code=202,
     dependencies=[Depends(require_hmac(LEADS_MAX_BYTES))],
 )
-async def leads_webhook(request: Request) -> dict[str, str]:
-    """Authenticated route for the Phase-6 WordPress lead webhook.
+async def leads_webhook(body: LeadsWebhookBody, background: BackgroundTasks) -> dict[str, str]:
+    """Ack-then-process the WordPress lead webhook (Phase 6, Roy Kent).
 
-    B3 lands the route + HMAC auth now; the handler (parse payload → `prospects`)
-    is Phase 6. Until then an authenticated call gets an explicit 501 so a
-    misconfigured caller fails loudly rather than appearing to succeed.
+    Validates synchronously (422 on a bad payload), hands qualification to a
+    background task, and acknowledges — qualification makes an LLM call and
+    must not hold the WordPress caller's connection open.
     """
-    raise HTTPException(
-        status_code=501,
-        detail="lead webhook handler not implemented yet (Phase 6)",
+    background.add_task(_process_lead, body.model_dump())
+    logger.info(
+        "leads webhook accepted: wordpress_profile_id=%s form=%s",
+        body.wordpress_profile_id, body.source_form,
     )
+    return {"status": "accepted", "wordpress_profile_id": body.wordpress_profile_id}
 
 
 # --- MCP tool layer: remote (REST) transport (Track I, Task 4) ---------------

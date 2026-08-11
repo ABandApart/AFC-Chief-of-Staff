@@ -38,6 +38,9 @@ from agents.discord_bot.config import BRIEFING_CHANNEL_ID
 # has a Discord message budget (eval UX-1), so it shows the few best, not a list.
 READING_RECS_LIMIT = 3
 
+# New inbound prospects (Phase 6, Roy Kent) to surface — same Discord budget logic.
+NEW_PROSPECTS_LIMIT = 5
+
 # Dead-man's-switch check slug (PERF-4 / 80-telemetry). Absence of this ping is
 # the alert that the morning briefing didn't run — the one failure the box can't
 # report on itself.
@@ -134,6 +137,37 @@ def format_reading_recs(recs: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def fetch_new_prospects(conn: object, limit: int = NEW_PROSPECTS_LIMIT) -> list[dict]:
+    """Inbound prospects (Phase 6, Roy Kent) received in the last 24h."""
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            """
+            SELECT name, company, icp_fit_score, status
+            FROM prospects
+            WHERE received_at > now() - interval '24 hours'
+            ORDER BY icp_fit_score DESC NULLS LAST, received_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+def format_new_prospects(prospects: list[dict]) -> str:
+    """Render the new-prospects section (pure). Empty string when there's
+    nothing — the briefing omits the section rather than showing a blank header."""
+    if not prospects:
+        return ""
+    lines = ["**🤝 New prospects — last 24h**"]
+    for p in prospects[:NEW_PROSPECTS_LIMIT]:
+        who = f"{p['name']} ({p['company']})" if p.get("company") else p["name"]
+        if p.get("icp_fit_score") is not None:
+            lines.append(f"• {who} — fit {p['icp_fit_score']:.2f}")
+        else:
+            lines.append(f"• {who} — not yet qualified")
+    return "\n".join(lines)
+
+
 def post_to_discord(text: str) -> None:
     """POST one message to #briefing via the REST API (Bot token auth)."""
     req = urllib.request.Request(
@@ -154,6 +188,7 @@ def main() -> int:
     status = gather_status()
     with db.connection() as conn:
         recs = fetch_reading_recs(conn)
+        prospects = fetch_new_prospects(conn)
     pending = task_tinder.count_pending()
     text = format_briefing(datetime.now(), status)
     if pending:
@@ -161,6 +196,9 @@ def main() -> int:
     recs_text = format_reading_recs(recs)
     if recs_text:
         text = f"{text}\n\n{recs_text}"
+    prospects_text = format_new_prospects(prospects)
+    if prospects_text:
+        text = f"{text}\n\n{prospects_text}"
     post_to_discord(text)
     # Success path only — the ping means "the briefing actually posted". Never
     # move this into a finally: a ping on a crashed run manufactures confidence.

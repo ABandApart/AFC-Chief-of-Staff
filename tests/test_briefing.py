@@ -68,3 +68,33 @@ def test_format_reading_recs_caps_at_limit():
     ]
     out = format_reading_recs(recs)
     assert out.count("• ") == READING_RECS_LIMIT
+
+
+# --- new prospects (Phase 6, Roy Kent) --------------------------------------
+
+from agents.briefing.run import NEW_PROSPECTS_LIMIT, format_new_prospects  # noqa: E402
+
+
+def test_format_new_prospects_empty_is_blank():
+    assert format_new_prospects([]) == ""
+
+
+def test_format_new_prospects_shows_fit_score_and_company():
+    prospects = [{"name": "Jane", "company": "Acme", "icp_fit_score": 0.82, "status": "qualified"}]
+    out = format_new_prospects(prospects)
+    assert "Jane (Acme)" in out and "fit 0.82" in out
+
+
+def test_format_new_prospects_unscored_lead_says_not_yet_qualified():
+    prospects = [{"name": "Jane", "company": None, "icp_fit_score": None, "status": "new"}]
+    out = format_new_prospects(prospects)
+    assert "not yet qualified" in out
+
+
+def test_format_new_prospects_caps_at_limit():
+    prospects = [
+        {"name": f"P{i}", "company": None, "icp_fit_score": 0.5, "status": "qualified"}
+        for i in range(8)
+    ]
+    out = format_new_prospects(prospects)
+    assert out.count("• ") == NEW_PROSPECTS_LIMIT
