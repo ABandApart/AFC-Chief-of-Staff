@@ -42,10 +42,13 @@ import logging
 import time
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 from agents._lib import cognee_setup, creds, ingest
+from agents._lib.brain_tools import InvocationContext, ToolError
 from agents.gateway import auth
+from agents.mcp import tools as mcp_tools
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +161,9 @@ def require_hmac(max_body_bytes: int):
         if not ok:
             raise HTTPException(status_code=401, detail="invalid or missing signature")
 
+        # Authenticated: record the caller so tool routes can attribute the audit.
+        request.state.caller = caller
+
     return _dependency
 
 
@@ -217,17 +223,23 @@ async def ingest_endpoint(body: IngestBody, background: BackgroundTasks) -> dict
     return {"status": "accepted", "source_ref": body.source_ref}
 
 
+def _ensure_cognee() -> None:
+    """Configure cognee once per process (lazy — importing this module must not
+    require the cognee group; only cognee-touching calls trigger it)."""
+    global _cognee_configured
+    if not _cognee_configured:
+        cognee_setup.configure_cognee()
+        _cognee_configured = True
+
+
 async def _process_ingest(*, text: str, source_ref: str, source_type: str) -> None:
     """Background worker: configure cognee once, then run the shared ingest core.
 
     Errors are logged, never surfaced (the caller already got its 202). B1
     holds: `ingest_note` treats the text as inert data.
     """
-    global _cognee_configured
     try:
-        if not _cognee_configured:
-            cognee_setup.configure_cognee()
-            _cognee_configured = True
+        _ensure_cognee()
         result = await ingest.ingest_note(
             text, source_ref=source_ref, source_type=source_type
         )
@@ -252,6 +264,55 @@ async def leads_webhook(request: Request) -> dict[str, str]:
         status_code=501,
         detail="lead webhook handler not implemented yet (Phase 6)",
     )
+
+
+# --- MCP tool layer: remote (REST) transport (Track I, Task 4) ---------------
+
+# Cap for tool bodies — accommodates ingest_note (32KB); reads are far smaller
+# and brain_tools bounds their args regardless.
+TOOLS_MAX_BYTES = 32 * 1024
+
+# ToolError.code → HTTP status (the common error envelope, PRD-mcp-tool-layer).
+_TOOL_ERROR_STATUS = {
+    "unauthorized": 401, "schema": 422, "bad_request": 422, "too_large": 413,
+    "not_found": 404, "over_ceiling": 429, "unavailable": 503,
+}
+
+# Tools that reach cognee (graph search / cognify) need configure_cognee() first.
+_COGNEE_TOOLS = frozenset({"recall", "ingest_note"})
+
+
+@app.post("/tools/{tool}", dependencies=[Depends(require_hmac(TOOLS_MAX_BYTES))])
+async def tools_endpoint(tool: str, request: Request) -> object:
+    """Remote transport for the MCP tool layer — the SAME `brain_tools` core and
+    dispatch as the stdio server, behind the SAME per-caller HMAC as the rest of
+    the gateway. The request body is the tool's JSON arguments; the authenticated
+    caller (set by `require_hmac`) attributes the audit."""
+    try:
+        arguments = await request.json()
+    except Exception:
+        arguments = None
+    if not isinstance(arguments, dict):
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "schema",
+                               "message": "body must be a JSON object",
+                               "retryable": False}},
+        )
+
+    ctx = InvocationContext(
+        caller=getattr(request.state, "caller", "unknown"), transport="gateway_rest"
+    )
+    if tool in _COGNEE_TOOLS:
+        _ensure_cognee()
+    try:
+        return await mcp_tools.dispatch(tool, arguments, ctx)
+    except ToolError as e:
+        return JSONResponse(
+            status_code=_TOOL_ERROR_STATUS.get(e.code, 400),
+            content={"error": {"code": e.code, "message": e.message,
+                               "retryable": e.retryable}},
+        )
 
 
 def main() -> None:

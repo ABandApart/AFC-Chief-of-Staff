@@ -268,3 +268,55 @@ def test_read_body_capped_returns_body_under_cap():
     req = _FakeStreamRequest([b"hello ", b"world"])
     body = asyncio.run(gw._read_body_capped(req, 1024))
     assert body == b"hello world"
+
+
+# --- MCP tool layer: REST transport (Track I, Task 4) ---------------------
+
+from unittest.mock import AsyncMock  # noqa: E402
+
+
+def test_tools_recall_signed_dispatches(client, mocker):
+    # Same brain_tools core as MCP, reached via dispatch; here dispatch is mocked
+    # so we test the route wiring (auth, JSON, caller/transport attribution).
+    disp = mocker.patch.object(
+        gw.mcp_tools, "dispatch",
+        new=AsyncMock(return_value={"answer": "A", "scope": "untrusted"}),
+    )
+    body = b'{"query":"what do we know"}'
+    r = client.post("/tools/recall", content=body, headers=_sign_headers(body))
+    assert r.status_code == 200
+    assert r.json() == {"answer": "A", "scope": "untrusted"}
+    name, args, ctx = disp.await_args.args
+    assert name == "recall" and args == {"query": "what do we know"}
+    assert ctx.transport == "gateway_rest" and ctx.caller == "tools"  # HMAC caller
+
+
+def test_tools_unsigned_is_401(client):
+    r = client.post("/tools/recall", content=b'{"query":"x"}')  # no signature
+    assert r.status_code == 401
+
+
+def test_tools_unknown_tool_is_404(client):
+    # Real dispatch → ToolError('not_found') → 404 envelope. No DB/cognee touched.
+    body = b"{}"
+    r = client.post("/tools/does_not_exist", content=body, headers=_sign_headers(body))
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "not_found"
+
+
+def test_tools_bad_json_is_422(client):
+    body = b"not json at all"  # validly signed, but not a JSON object
+    r = client.post("/tools/recall", content=body, headers=_sign_headers(body))
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "schema"
+
+
+def test_tools_toolerror_maps_to_http_status(client, mocker):
+    mocker.patch.object(
+        gw.mcp_tools, "dispatch",
+        new=AsyncMock(side_effect=gw.ToolError("too_large", "text exceeds 32KB")),
+    )
+    body = b'{"text":"x","source_ref":"r"}'
+    r = client.post("/tools/ingest_note", content=body, headers=_sign_headers(body))
+    assert r.status_code == 413
+    assert r.json()["error"]["code"] == "too_large"
