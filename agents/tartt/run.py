@@ -153,36 +153,42 @@ async def process_source(
     seen = await asyncio.to_thread(seen_urls, conn)
     n = 0
     for item in unseen_items(items, seen, cap):
-        text = await asyncio.to_thread(fetch.fetch_article_text, item["url"])
-        if not text:
-            continue
-        summary = await asyncio.to_thread(
-            summarize.summarize, item["title"], text, source_url=item["url"]
-        )
-        node = await content_graph.add_content_item(item["url"], item["title"], summary)
-        score = await asyncio.to_thread(scoring.score_content_item, node)
-        await asyncio.to_thread(
-            record_content, conn, source["id"], item, summary, node, score
-        )
-        # Interest-gate the expensive deep pass: only items above the threshold
-        # get mode-1 cognify (Anthropic extraction) for rich semantic recall.
-        if scoring.should_cognify(score):
-            await ingest.ingest_note(
-                f"{item['title']}\n\n{summary}",
-                source_ref=item["url"],
-                source_type="discovery",
-                dataset=CONTENT_DATASET,
-                label_agent="tartt",
-                label_function="news_aggregation",
+        try:
+            text = await asyncio.to_thread(fetch.fetch_article_text, item["url"])
+            if not text:
+                continue
+            summary = await asyncio.to_thread(
+                summarize.summarize, item["title"], text, source_url=item["url"]
             )
-        # Strongly-relevant items become a Task Tinder candidate (higher bar).
-        if scoring.is_task_worthy(score):
+            node = await content_graph.add_content_item(item["url"], item["title"], summary)
+            score = await asyncio.to_thread(scoring.score_content_item, node)
             await asyncio.to_thread(
-                propose_task_candidate,
-                conn,
-                task_candidate_fields(item, summary, node, score),
+                record_content, conn, source["id"], item, summary, node, score
             )
-        n += 1
+            # Interest-gate the expensive deep pass: only items above the threshold
+            # get mode-1 cognify (Anthropic extraction) for rich semantic recall.
+            if scoring.should_cognify(score):
+                await ingest.ingest_note(
+                    f"{item['title']}\n\n{summary}",
+                    source_ref=item["url"],
+                    source_type="discovery",
+                    dataset=CONTENT_DATASET,
+                    label_agent="tartt",
+                    label_function="news_aggregation",
+                )
+            # Strongly-relevant items become a Task Tinder candidate (higher bar).
+            if scoring.is_task_worthy(score):
+                await asyncio.to_thread(
+                    propose_task_candidate,
+                    conn,
+                    task_candidate_fields(item, summary, node, score),
+                )
+            n += 1
+        except Exception:
+            # One item's transient failure (a Gemini 503/429 mid-summarize, an
+            # extraction/embed error) must not lose the whole source's batch —
+            # skip it; its URL stays untracked so a later poll retries it.
+            logger.exception("tartt: item failed, skipping: %s", item["url"])
     return ("processed", n)
 
 
