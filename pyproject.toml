@@ -37,6 +37,10 @@ dev = [
     # synced. uvicorn (the server) is not needed to test the app object.
     "fastapi>=0.115,<1.0",
     "httpx>=0.27",
+    # Phase 4 (Tartt): feedparser is pure-Python and light, so it's in dev too —
+    # the feed-parsing unit test runs in the default env. trafilatura (lxml) stays
+    # in the `tartt` group only (heavy) and is imported lazily.
+    "feedparser>=6.0",
 ]
 # B3 gateway (exposure / ingest API). Runs where cognee runs (barry-agent):
 # `uv sync --group cognee --group gateway`. fastapi/uvicorn arrive transitively
@@ -63,6 +67,13 @@ cognee = [
 # transport shim (`agents/mcp/server.py`) imports the SDK.
 mcp = [
     "mcp>=1.2,<2.0",
+]
+# Phase 4 (Tartt) — content discovery. NOT synced by default; the poller needs it:
+# `uv sync --group cognee --group tartt`. trafilatura (HTML→clean text) pulls lxml,
+# so it's grouped and imported lazily; feedparser is also in `dev` for the unit test.
+tartt = [
+    "trafilatura>=1.8,<2.0",
+    "feedparser>=6.0",
 ]
 
 [tool.ruff]
