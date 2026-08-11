@@ -38,7 +38,8 @@ WITH expected(name) AS (VALUES
     ('prospects'),
     ('sources'),
     ('task_candidates'),
-    ('tasks')
+    ('tasks'),
+    ('tool_invocations')
 )
 SELECT
     e.name,

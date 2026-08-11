@@ -27,6 +27,7 @@ from agents._lib import creds
 EMBEDDING_DIM = 768
 
 _pool: ConnectionPool | None = None
+_ro_pool: ConnectionPool | None = None
 
 
 def _get_pool() -> ConnectionPool:
@@ -42,6 +43,25 @@ def _get_pool() -> ConnectionPool:
     return _pool
 
 
+def _get_ro_pool() -> ConnectionPool:
+    """Pool authenticated as the read-only `brain_reader` role (Track I).
+
+    Separate DSN (`brain-reader-db-url`) so the MCP tool layer's reads run over a
+    role that can only SELECT the `v_*` views — defense in depth (migration 0008).
+    Distinct from the read-write pool above.
+    """
+    global _ro_pool
+    if _ro_pool is None:
+        _ro_pool = ConnectionPool(
+            creds.keychain_get("brain-reader-db-url"),
+            min_size=0,
+            max_size=4,
+            open=True,
+            kwargs={"autocommit": True},
+        )
+    return _ro_pool
+
+
 @contextmanager
 def connection() -> Iterator[psycopg.Connection]:
     """Borrow a pooled connection (autocommit). Returned to the pool on exit."""
@@ -49,12 +69,22 @@ def connection() -> Iterator[psycopg.Connection]:
         yield conn
 
 
+@contextmanager
+def ro_connection() -> Iterator[psycopg.Connection]:
+    """Borrow a read-only (`brain_reader`) pooled connection (Track I reads)."""
+    with _get_ro_pool().connection() as conn:
+        yield conn
+
+
 def close_pool() -> None:
-    """Close the pool (clean shutdown of long-running processes)."""
-    global _pool
+    """Close the pools (clean shutdown of long-running processes)."""
+    global _pool, _ro_pool
     if _pool is not None:
         _pool.close()
         _pool = None
+    if _ro_pool is not None:
+        _ro_pool.close()
+        _ro_pool = None
 
 
 # One-shot CLIs never reach an explicit close_pool(); without this, the
