@@ -217,12 +217,13 @@ at `Scope.UNTRUSTED` (the only `cognee.search` call site is the wrapper's
 `_graph_completion`). CI grep is `tests/test_no_raw_retrieval.py` (pure Python;
 excludes `agents/test/` diagnostic probes). `Scope.TARGET` raises `NotImplementedError`
 pending Track O, and a scope resolving to no datasets raises rather than searching
-the whole graph. **Runtime-verify (barry-agent):** the installed cognee's
-`search(datasets=…)` kwarg is the scoping mechanism and is unverified on the build
-box — confirm `/recall` still answers *and* that a `TRUSTED` search cannot return
-`capture`/`granola` content (the actual B1 proof). `sources` on `RecallResult` is
-carried but not yet populated by `GRAPH_COMPLETION` — the citation fill is a UX-2
-follow-up.
+the whole graph. **Runtime-verified ✅ (barry-agent, 2026-08-11):** cognee's
+`search(datasets=…)` genuinely scopes (kwarg accepted, not ignored) — an
+`UNTRUSTED` search surfaced granola-only content ("Blair Murri", a real meeting
+attendee) that a `TRUSTED` (playbooks-only) search of the *same* query did not
+return. The B1 read-side boundary holds as a mechanism, not a convention.
+`sources` on `RecallResult` is carried but not yet populated by
+`GRAPH_COMPLETION` — the citation fill is a UX-2 follow-up.
 
 </retrieval_wrapper>
 
