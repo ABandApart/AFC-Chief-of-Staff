@@ -20,7 +20,7 @@ import asyncio
 import hashlib
 import logging
 
-from agents._lib import db
+from agents._lib import db, screening
 from agents._lib.telemetry_context import labeled
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,16 @@ async def ingest_note(
     Granola meeting poller) override them for their own dataset + spend attribution
     while sharing this one ingest core.
     """
+    # Shared ingest hardening (35- §11): H2 clean invisible/bidi/tag chars
+    # (deterministic, always safe) and H5 flag injection-shaped text before it
+    # reaches storage or the extraction LLM. H2 runs first so dedup keys on the
+    # cleaned bytes; H5 logs (→ #system) but doesn't block v1.
+    text, _removed = screening.harden(text)
+    if _removed:
+        logger.info("ingest %s: H2 stripped %d invisible/unicode char(s)", source_ref, _removed)
+    if _findings := screening.screen(text):
+        logger.warning("ingest %s: H5 flagged %s", source_ref, _findings)
+
     h = message_hash(text)
     if await asyncio.to_thread(_message_seen, h):
         logger.info("ingest %s: exact re-post (hash %s…) — skipped before cognify",
