@@ -34,16 +34,27 @@ def test_only_accept_promotes():
     assert "deferred" not in task_tinder.PROMOTE_STATUSES
 
 
-def test_task_from_candidate_maps_fields_and_keeps_provenance():
-    candidate = {
-        "id": 42,
-        "proposed_action": "Share or write about: Git-knife",
-        "evidence_text": "why it matters",
-        "confidence": 0.69,
-    }
-    task = task_tinder.task_from_candidate(candidate, owner="barry")
+CANDIDATE = {
+    "id": 42,
+    "proposed_action": "Share or write about: Git-knife",
+    "evidence_text": "why it matters",
+    "confidence": 0.69,
+}
+
+
+def test_followup_from_candidate_is_a_fresh_open_commitment():
+    fu = task_tinder.followup_from_candidate(CANDIDATE, owner="barry")
+    assert fu["owner"] == "barry"
+    assert fu["action"] == "Share or write about: Git-knife"
+    assert fu["status"] == "open"
+    assert fu["escalation_level"] == 0
+
+
+def test_task_from_candidate_maps_fields_links_followup_and_keeps_provenance():
+    task = task_tinder.task_from_candidate(CANDIDATE, owner="barry", follow_up_id=7)
     assert task["title"] == "Share or write about: Git-knife"
     assert task["description"] == "why it matters"
     assert task["owner"] == "barry"
     assert task["source_candidate_id"] == 42
     assert task["status"] == "open"
+    assert task["follow_up_id"] == 7

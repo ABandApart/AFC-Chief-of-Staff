@@ -10,12 +10,11 @@ Discord-free by design (like `_lib/approvals`): the pure status transitions and
 the candidate→task field mapping live here and are unit-tested without a bot or
 DB; the cog owns the Discord surface + the guarded writes.
 
-**CPX-4 note.** The `tasks`/`follow_ups` split (eval CPX-4) is unresolved. A
-discovery candidate ("share/write about X") promotes to a **task only** — a
-`follow_up` is a *chase-able external commitment* (what meeting captures produce),
-not a content suggestion. `task_from_candidate` encodes that; if the operator
-collapses the queue tables, or meeting-derived candidates later need a follow_up,
-this is the one place that changes.
+**CPX-4 decision (operator, 2026-08-11).** Keep the two tables; an accept creates
+a **`follow_up` (the chase-able commitment) and a `tasks` row linked to it**
+(`tasks.follow_up_id`) — the build-order "done when" for Phase 5. The eval's
+CPX-4 collapse is deferred; `followup_from_candidate` + `task_from_candidate` are
+the one place it would change.
 """
 
 from __future__ import annotations
@@ -47,11 +46,27 @@ def next_status(current: str, action: str) -> str | None:
     return _ACTION_STATUS[action]
 
 
-def task_from_candidate(candidate: dict[str, Any], *, owner: str) -> dict[str, Any]:
+def followup_from_candidate(candidate: dict[str, Any], *, owner: str) -> dict[str, Any]:
+    """Map an accepted `task_candidate` → the `follow_up` row to insert (pure).
+
+    The follow_up is the chase-able commitment (fresh escalation, no source
+    meeting for a discovery candidate). The task links to it.
+    """
+    return {
+        "owner": owner,
+        "action": candidate["proposed_action"],
+        "status": "open",
+        "escalation_level": 0,
+    }
+
+
+def task_from_candidate(
+    candidate: dict[str, Any], *, owner: str, follow_up_id: int
+) -> dict[str, Any]:
     """Map an accepted `task_candidate` → the `tasks` row to insert (pure).
 
-    Task-only (no follow_up) — see the CPX-4 note above. `source_candidate_id`
-    keeps the provenance link back to the candidate.
+    Linked to its `follow_up` (`follow_up_id`); `source_candidate_id` keeps the
+    provenance link back to the candidate.
     """
     return {
         "title": candidate["proposed_action"],
@@ -59,4 +74,5 @@ def task_from_candidate(candidate: dict[str, Any], *, owner: str) -> dict[str, A
         "owner": owner,
         "source_candidate_id": candidate["id"],
         "status": "open",
+        "follow_up_id": follow_up_id,
     }
