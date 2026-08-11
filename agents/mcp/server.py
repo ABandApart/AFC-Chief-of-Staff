@@ -28,6 +28,7 @@ import logging
 import anyio
 
 import mcp.types as types
+from agents._lib import cognee_setup
 from agents._lib.brain_tools import InvocationContext, ToolError
 from agents.mcp.tools import TOOLS, dispatch, json_default
 from mcp.server import Server
@@ -38,6 +39,20 @@ logger = logging.getLogger(__name__)
 
 # stdio server → the caller is always the local OS account.
 CTX = InvocationContext(caller="local:barry-agent", transport="mcp_stdio")
+
+# Tools that reach cognee (graph search / cognify) need configure_cognee() first
+# — the same lazy init the gateway does before dispatching these (a stdio process
+# doesn't get that for free). The Postgres-backed reads don't touch cognee.
+_COGNEE_TOOLS = frozenset({"recall", "ingest_note"})
+_cognee_configured = False
+
+
+def _ensure_cognee() -> None:
+    global _cognee_configured
+    if not _cognee_configured:
+        cognee_setup.configure_cognee()
+        _cognee_configured = True
+
 
 server: Server = Server("afc-brain")
 
@@ -55,6 +70,8 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
     """Route to the gated core; return the JSON result, or a structured error
     envelope (never a bare stack trace) so the shell can react programmatically."""
     try:
+        if name in _COGNEE_TOOLS:
+            _ensure_cognee()
         result = await dispatch(name, arguments or {}, CTX)
         text = json.dumps(result, default=json_default)
     except ToolError as e:
