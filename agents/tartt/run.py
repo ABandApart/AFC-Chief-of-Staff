@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 
 from psycopg.rows import dict_row
 
-from agents._lib import cognee_setup, db, ingest
+from agents._lib import cognee_setup, db, ingest, screening
 from agents.tartt import content_graph, fetch, scoring, summarize
 
 # Untrusted content dataset for the interest-gated mode-1 cognify (deep recall).
@@ -35,6 +35,10 @@ CONTENT_DATASET = "content"
 # Per-poll cap on NEW items processed per source — bounds the Gemini free-tier
 # spend during the quality trial (summarize touches Gemini once per item).
 MAX_ITEMS_PER_POLL = 5
+
+# H7 (35- §11): each screen failure decays the source's trust — a source whose
+# content repeatedly trips the H5 screen is low-quality or hostile.
+TRUST_DECAY_STEP = 0.1
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -90,6 +94,15 @@ def seen_urls(conn: object) -> set[str]:
     with conn.cursor() as cur:  # type: ignore[attr-defined]
         cur.execute("SELECT url FROM content_items")
         return {row[0] for row in cur.fetchall()}
+
+
+def decay_source_trust(conn: object, source_id: int, step: float = TRUST_DECAY_STEP) -> None:
+    """H7: lower a source's trust_score (floored at 0) after a screen failure."""
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            "UPDATE sources SET trust_score = greatest(0, trust_score - %s) WHERE id = %s",
+            (step, source_id),
+        )
 
 
 def record_content(
@@ -157,6 +170,12 @@ async def process_source(
             text = await asyncio.to_thread(fetch.fetch_article_text, item["url"])
             if not text:
                 continue
+            # H7: screen the raw extract; a hostile/low-quality source decays trust.
+            # (ingest_note also hardens the stored/cognified text — H2/H5.)
+            if flags := screening.screen(text):
+                logger.warning("tartt: screen flags %s on %s → decaying source trust",
+                               flags, item["url"])
+                await asyncio.to_thread(decay_source_trust, conn, source["id"])
             summary = await asyncio.to_thread(
                 summarize.summarize, item["title"], text, source_url=item["url"]
             )
