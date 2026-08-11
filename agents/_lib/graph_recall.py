@@ -1,47 +1,35 @@
 """Graph-native recall via cognee GRAPH_COMPLETION (W5).
 
-Replaces the RRF hybrid search over the `facts` table (`_lib/search.py`, removed).
-cognee owns retrieval: vector search finds relevant graph triplets, then
-traverses the graph to build structured context and generate an answer. So
-recall returns a synthesized **answer**, not a ranked list. Runs under
-`labeled('recall')` so the query embedding + completion spend lands in the
-ledger.
+Thin operator-facing entry point over the scoped retrieval wrapper
+(`agents/_lib/retrieval.py`, Phase 3.8). `/recall` and `cli/recall.py` call in
+here; the actual graph search call now lives (once, scoped) in the wrapper, so
+B1's read-side scoping is enforced structurally rather than by convention.
 
-M2 note: cognee owns the vector search here, so our old pgvector-cosine
-normalization fix doesn't apply on our side — recall quality with cognee's
-un-normalized 768-dim Gemini vectors is a runtime check (W7). If weak, configure
-cognee's embedding normalization / distance metric.
+Recall reads the **UNTRUSTED** scope (capture / granola / outreach_public) — the
+operator's general "what do we know about X" question — and returns the
+synthesized answer string. `answer_text` / `NO_RESULT` are re-exported from the
+wrapper for backward compatibility.
 
-`configure_cognee()` must have run first. cognee imported lazily.
+`configure_cognee()` must have run first. cognee is imported lazily inside the
+wrapper.
 """
 
 from __future__ import annotations
 
-from agents._lib.telemetry_context import labeled
+from agents._lib import retrieval
+from agents._lib.retrieval import NO_RESULT
+from agents._lib.retrieval import normalize_answer as answer_text
 
-NO_RESULT = "No matching facts."
-
-
-def answer_text(results: object) -> str:
-    """Normalize cognee.search output to a display string (pure — unit-tested)."""
-    if results is None:
-        return NO_RESULT
-    if isinstance(results, str):
-        text = results.strip()
-    elif isinstance(results, list | tuple):
-        text = "\n\n".join(s for r in results if (s := str(r).strip()))
-    else:
-        text = str(results).strip()
-    return text or NO_RESULT
+__all__ = ["NO_RESULT", "answer_text", "recall"]
 
 
 async def recall(query: str) -> str:
-    """Answer a recall query from the graph. Returns the synthesized answer."""
-    import cognee
-    from cognee import SearchType
+    """Answer a recall query from the graph. Returns the synthesized answer.
 
-    with labeled("recall", "infrastructure", trigger_kind="manual"):
-        results = await cognee.search(
-            query_type=SearchType.GRAPH_COMPLETION, query_text=query
-        )
-    return answer_text(results)
+    Delegates to the scoped wrapper at `Scope.UNTRUSTED` (the general recall
+    surface), labeled as a manual `/recall` invocation for telemetry.
+    """
+    result = await retrieval.recall(
+        query, scope=retrieval.Scope.UNTRUSTED, agent="recall", trigger_kind="manual"
+    )
+    return result.answer

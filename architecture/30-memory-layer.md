@@ -211,6 +211,19 @@ stops being a promise about developer memory.
 apart from rendering `result.sources`. `cli/publish_playbooks.py`-adjacent
 retrieval uses `Scope.TRUSTED`.
 
+**As-built (Phase 3.8, 2026-08-10).** `agents/_lib/retrieval.py` implements
+`Scope`/`DATASETS`/`RecallResult`/`recall()`; `graph_recall.recall()` now delegates
+at `Scope.UNTRUSTED` (the only `cognee.search` call site is the wrapper's
+`_graph_completion`). CI grep is `tests/test_no_raw_retrieval.py` (pure Python;
+excludes `agents/test/` diagnostic probes). `Scope.TARGET` raises `NotImplementedError`
+pending Track O, and a scope resolving to no datasets raises rather than searching
+the whole graph. **Runtime-verify (barry-agent):** the installed cognee's
+`search(datasets=…)` kwarg is the scoping mechanism and is unverified on the build
+box — confirm `/recall` still answers *and* that a `TRUSTED` search cannot return
+`capture`/`granola` content (the actual B1 proof). `sources` on `RecallResult` is
+carried but not yet populated by `GRAPH_COMPLETION` — the citation fill is a UX-2
+follow-up.
+
 </retrieval_wrapper>
 
 **A second retrieval mode — bounded traversal (Track O, 2026-08-08).** The
