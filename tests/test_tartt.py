@@ -49,3 +49,18 @@ def test_unseen_items_filters_seen_and_caps():
 def test_unseen_items_empty_when_all_seen():
     items = [{"url": "u0"}, {"url": "u1"}]
     assert run.unseen_items(items, seen={"u0", "u1"}, cap=5) == []
+
+
+def test_task_candidate_fields_populates_every_field():
+    item = {"url": "https://ex.com/x", "title": "  A Great Read  "}
+    f = run.task_candidate_fields(item, "why it matters", "node-123", 0.71)
+    assert f["proposed_action"] == "Share or write about: A Great Read"
+    assert f["source_type"] == "discovery"
+    assert f["source_ref"] == "node-123"
+    assert f["evidence_text"] == "why it matters"
+    assert f["confidence"] == 0.71
+
+
+def test_task_candidate_fields_falls_back_to_url_when_untitled():
+    f = run.task_candidate_fields({"url": "https://ex.com/x", "title": ""}, "s", "n", 0.6)
+    assert f["proposed_action"] == "Share or write about: https://ex.com/x"

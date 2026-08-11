@@ -110,6 +110,36 @@ def record_content(
         )
 
 
+def task_candidate_fields(item: dict, summary: str, content_node: str, score: float) -> dict:
+    """The task_candidate row for a high-interest discovered item (pure).
+
+    Populates every field meaningfully — Phase 5 (Task Tinder) is the explicit
+    trial of this contract, so the shape must hold with a real producer.
+    """
+    title = (item.get("title") or "").strip() or item["url"]
+    return {
+        "proposed_action": f"Share or write about: {title}",
+        "source_type": "discovery",
+        "source_ref": content_node,
+        "evidence_text": summary,
+        "confidence": score,
+    }
+
+
+def propose_task_candidate(conn: object, fields: dict) -> None:
+    """Enqueue a discovery task candidate for Task Tinder (Phase 5)."""
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            """
+            INSERT INTO task_candidates
+                (proposed_action, source_type, source_ref, evidence_text, confidence, status)
+            VALUES (%(proposed_action)s, %(source_type)s, %(source_ref)s,
+                    %(evidence_text)s, %(confidence)s, 'pending')
+            """,
+            fields,
+        )
+
+
 async def process_source(
     conn: object, source: dict, *, cap: int = MAX_ITEMS_PER_POLL
 ) -> tuple[str, int]:
@@ -144,6 +174,13 @@ async def process_source(
                 dataset=CONTENT_DATASET,
                 label_agent="tartt",
                 label_function="news_aggregation",
+            )
+        # Strongly-relevant items become a Task Tinder candidate (higher bar).
+        if scoring.is_task_worthy(score):
+            await asyncio.to_thread(
+                propose_task_candidate,
+                conn,
+                task_candidate_fields(item, summary, node, score),
             )
         n += 1
     return ("processed", n)

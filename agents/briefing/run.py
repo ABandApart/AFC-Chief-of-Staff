@@ -28,9 +28,15 @@ import urllib.request
 from datetime import datetime
 from typing import Any
 
+from psycopg.rows import dict_row
+
 from agents._lib import db, heartbeat
 from agents._lib.creds import keychain_get
 from agents.discord_bot.config import BRIEFING_CHANNEL_ID
+
+# Top reading recommendations to surface. Capped small on purpose: the briefing
+# has a Discord message budget (eval UX-1), so it shows the few best, not a list.
+READING_RECS_LIMIT = 3
 
 # Dead-man's-switch check slug (PERF-4 / 80-telemetry). Absence of this ping is
 # the alert that the morning briefing didn't run — the one failure the box can't
@@ -99,6 +105,35 @@ def format_briefing(now: datetime, status: dict[str, Any]) -> str:
     )
 
 
+def fetch_reading_recs(conn: object, limit: int = READING_RECS_LIMIT) -> list[dict]:
+    """The top recently-discovered content by interest score (Tartt, Phase 4)."""
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            """
+            SELECT url, title, interest_score
+            FROM content_items
+            WHERE interest_score IS NOT NULL
+              AND collected_at > now() - interval '48 hours'
+            ORDER BY interest_score DESC, collected_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+def format_reading_recs(recs: list[dict]) -> str:
+    """Render the reading-recs section (pure). Empty string when there's nothing —
+    so the briefing simply omits the section rather than showing a blank header."""
+    if not recs:
+        return ""
+    lines = ["**📚 Reading — new since yesterday**"]
+    for r in recs[:READING_RECS_LIMIT]:
+        score = r.get("interest_score") or 0.0
+        lines.append(f"• [{r['title']}]({r['url']}) — interest {score:.2f}")
+    return "\n".join(lines)
+
+
 def post_to_discord(text: str) -> None:
     """POST one message to #briefing via the REST API (Bot token auth)."""
     req = urllib.request.Request(
@@ -117,7 +152,12 @@ def post_to_discord(text: str) -> None:
 
 def main() -> int:
     status = gather_status()
+    with db.connection() as conn:
+        recs = fetch_reading_recs(conn)
     text = format_briefing(datetime.now(), status)
+    recs_text = format_reading_recs(recs)
+    if recs_text:
+        text = f"{text}\n\n{recs_text}"
     post_to_discord(text)
     # Success path only — the ping means "the briefing actually posted". Never
     # move this into a finally: a ping on a crashed run manufactures confidence.

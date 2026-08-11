@@ -44,3 +44,27 @@ def test_briefing_flags_failures():
 def test_briefing_marks_itself_as_skeleton():
     s = format_briefing(datetime(2026, 7, 6), STATUS)
     assert "Phase 4" in s
+
+
+# --- reading recs (Phase 4, Task 5) -----------------------------------------
+
+from agents.briefing.run import READING_RECS_LIMIT, format_reading_recs  # noqa: E402
+
+
+def test_format_reading_recs_empty_is_blank():
+    assert format_reading_recs([]) == ""
+
+
+def test_format_reading_recs_lists_title_url_score():
+    recs = [{"url": "https://ex.com/a", "title": "A Thing", "interest_score": 0.82}]
+    out = format_reading_recs(recs)
+    assert "A Thing" in out and "https://ex.com/a" in out and "0.82" in out
+
+
+def test_format_reading_recs_caps_at_limit():
+    recs = [
+        {"url": f"https://ex.com/{i}", "title": f"T{i}", "interest_score": 0.9 - i * 0.1}
+        for i in range(6)
+    ]
+    out = format_reading_recs(recs)
+    assert out.count("• ") == READING_RECS_LIMIT

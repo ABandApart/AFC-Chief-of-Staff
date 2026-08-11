@@ -25,3 +25,10 @@ def test_score_sql_targets_summary_not_title():
     assert '"ContentItem_summary"' in sql
     assert '"InterestSignal_topic_label"' in sql
     assert "ContentItem_title" not in sql
+
+
+def test_task_worthy_uses_higher_bar_than_cognify():
+    # A task candidate demands operator attention → stricter than the cognify gate.
+    assert scoring.TASK_CANDIDATE_THRESHOLD > scoring.INTEREST_THRESHOLD
+    assert scoring.is_task_worthy(scoring.TASK_CANDIDATE_THRESHOLD) is True
+    assert scoring.is_task_worthy(scoring.TASK_CANDIDATE_THRESHOLD - 0.01) is False

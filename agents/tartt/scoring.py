@@ -34,9 +34,19 @@ _SCORE_SQL = """
 INTEREST_THRESHOLD = 0.40
 
 
+# A higher bar than cognify: a task candidate asks for the operator's attention
+# (Task Tinder), so only strongly-relevant items become one. Tunable.
+TASK_CANDIDATE_THRESHOLD = 0.55
+
+
 def should_cognify(score: float) -> bool:
     """Whether an item is interesting enough for the deep (mode-1) cognify."""
     return score >= INTEREST_THRESHOLD
+
+
+def is_task_worthy(score: float) -> bool:
+    """Whether an item is relevant enough to propose as a task candidate."""
+    return score >= TASK_CANDIDATE_THRESHOLD
 
 
 def score_content_item(content_node_id: str) -> float:
