@@ -64,6 +64,9 @@ The phasing is borrowed in spirit from Logan Currie's COS getting-started docume
 | **15** | **Email channel** *(new)* | ~3–4 days | inbound ingest (B1) + drafted replies (B2) |
 | **16** | **Google Drive channel** *(new)* | ~3–4 days | ingest shared docs (B1) + document output (B2) |
 | **Track O** | **Outreach CRM** *(new, parallel — 2026-08-08)* | ~17 days (~11 to closed loop) | Evidence poller + scoring + Selector sequencing + deterministic packets + BCC capture + Trent Crimm watchlist. Steps and dependencies in `35-outreach-crm.md` §15. After Phase 5; B3 needed only for the Shortcut. |
+| **3.8** | **`retrieval.py` — B1 scope wrapper** *(new — 2026-08-10)* | ~1 day | The specified-not-built retrieval scope enforcement (`Scope` enum, default `UNTRUSTED`, scopes never union, CI grep forbids raw `cognee.search`). Load-bearing prereq for Track I **and** the cognee keep/kill fallback (`retrieval.py` must stay the only call site). Build **next**. |
+| **Track I** | **Interactive boundary — MCP tool layer** *(new, optional-but-recommended — 2026-08-10)* | ~3–4 days | Gated `_lib/brain_tools` core over local stdio MCP + Gateway REST; read/promote/act tools; `brain_reader` RO role + `v_*` views. Lets our own loop / Claude Code / Hermes drive the brain without bypassing B1/B2/B4. Spec: `PRD-mcp-tool-layer.md` (ADR-0001). Depends on 3.8 + B2 + B3 (all met after 3.8). Runs parallel to Phase 4. |
+| **Track H** | **Hermes optional shell** *(new, OPTIONAL — 2026-08-10)* | ~2–3 days integration | Adopt Hermes as an *additional* interactive front-end against the Track I boundary (multi-channel + voice + subagents), sandboxed to preserve B1/B2/B4 (self-authored skills disabled). **Not on any critical path**; build only if the interactive capability, proven first with our own loop, justifies it. Spec: `PRD-hermes-optional-shell.md` (ADR-0001 D2). |
 
 Total to a fully-functional v1 (Phases 1–12): ~15 weeks of evenings/weekends,
 plus ~2–3 weeks for the memory migration (3.6 + 3.7) if the pivot is taken.
@@ -71,18 +74,23 @@ Track O runs alongside from Phase 5 onward.
 Phases 14–16 (channels & exposure) are a later, additive track — each behind the
 trust boundaries B1/B2, with the tunnel (14) before any external channel.
 
-> **▶ ACTIVE build order (reprioritized 2026-08-03 — supersedes the numeric
+> **▶ ACTIVE build order (updated 2026-08-10 — supersedes the numeric
 > sequence above; see the decision log).** Done through Phase 3.7 + **Track C ch.1
-> (Granola, live)** + **B2 (approval gate — live, smoke-verified 2026-08-03)**.
-> Next, driven by the operator's lead-gen + market-intelligence priority:
-> **~~B2 (approval gate) ✅~~ → B3 (tunnel/ingest API) → Phase 4 (Tartt discovery) →
+> (Granola, live)** + **B2 (approval gate — live, smoke-verified 2026-08-03)** +
+> **B3 (tunnel/ingest API — VERIFIED 2026-08-10, barry-agent)**.
+> Next, driven by the operator's lead-gen + market-intelligence priority, with the
+> interactive-boundary work (ADR-0001) inserted immediately:
+> **~~B2 ✅~~ → ~~B3 ✅~~ → `retrieval.py` (B1 scope wrapper, the load-bearing
+> prereq) → Track I (MCP tool layer) → Phase 4 (Tartt discovery) →
 > Phase 10 (Nate/ICP, graph-native) → Phase 8/9 (content pipeline) → Phase 6
-> (lead-gen) → … → Phase 7 (meeting processor) later.**
-> Google Drive (Track C ch.2) is **paused**. Specs: `PRD-b2-approval-gate.md`,
-> `PRD-b3-tunnel.md`, `PRD-phase-4-discovery.md`. **B3 is the immediate next
-> build** (note its open decision: auth = HMAC ± Cloudflare Access needs an
-> operator Cloudflare account/tunnel cred — a human action, flagged in
-> `PRD-b3-tunnel.md`).
+> (lead-gen) → … → Phase 7 (meeting processor) later. Hermes (optional shell)
+> only if the interactive capability earns it.**
+> Google Drive (Track C ch.2) is **paused**. Specs: `ADR-0001-hermes-federation-and-brain-boundary.md`,
+> `PRD-mcp-tool-layer.md`, `PRD-hermes-optional-shell.md`, `PRD-phase-4-discovery.md`.
+> **`retrieval.py` is the immediate next build** — it is the B1 read-side
+> enforcement the tool layer, and the cognee keep/kill fallback, both depend on;
+> it is small and overdue independent of Track I. Track I can then run **parallel**
+> to Phase 4 (it does not block revenue phases; ADR-0001 §"the one judgment call").
 
 **Why Phase 2 (telemetry primitives) comes second**: every LLM call from Phase 3 onward must go through the cost helper. Building telemetry first means it's never retrofitted; every agent is born observable and rate-limited. This is a small phase (≤1 week) but blocking on everything that follows. *(Target-state note: Phase 3.7 MW1 re-plumbs this from pre-flight gates + per-agent keys to labeling + a soft post-hoc ceiling + monthly reconciliation, because cognee owns the call site — see `26-cognee-migration-plan.md`.)*
 
@@ -558,5 +566,8 @@ These are not commitments. They are evidence that the architecture has headroom.
 | **NocoDB as the outreach work surface** | Grid UI over the operational SQL for import, packet reading, and manual edits. Constraints: dedicated Postgres role (no UPDATE on derived views), **shared views disabled** (unauthenticated-by-default + CVE-2026-47379 plaintext-comparison timing leak, fixed 2026.5.1 — that is the version floor), Cloudflare Access at the **hostname** so share routes can never bypass auth. Tailscale Serve is the fallback posture. | 2026-08-08 |
 | **BCC-to-brain is a pull channel** | Send-capture = a dedicated plus-addressing mailbox + IMAP poller matching a per-touch token from `Delivered-To` — the Granola-poller shape, so it needs **neither B3 nor the Track C email channel** (~1 day, not ~5–7). Token-exact matching is mandatory: heuristic matching silently corrupts touch-of-first-reply, the method's key metric. LinkedIn sends are a *permanent* fallback (Shortcut/NocoDB), not transitional. | 2026-08-08 |
 | **E1 experiment: re-engagement allowance of 3 above the 15-cold cap** | Watchlist re-engagements (departure trigger = highest-converting message in the method) must not be blocked by cold targets mid-arc. Falsified if re-engagement conversion is not materially above cold — or, more tellingly, if the allowance is never hit in 2 quarters, which would mean detection is the binding constraint. **Departure detection itself stays OPEN (OQ1)**: no LinkedIn scraper will be built (account risk); Sales Navigator alert-forwarding or PredictLeads News Events are the candidates; careers-page proxy + quarterly manual sweep ship regardless. | 2026-08-08 |
+| **B3 tunnel — VERIFIED in production** | barry-agent runtime-tested the Cloudflare Tunnel end-to-end (2026-08-10): an external caller reached the authenticated `/ingest` through the tunnel, HMAC verified, `ingest_note` ran, and **Postgres never left the local socket**. B3 (`PRD-b3-tunnel.md`) is now live, not drafted. Consequence for the roadmap: the **remote transport** for the interactive boundary is unblocked — a serverless/off-box shell can reach the brain via the Gateway REST surface using the already-provisioned `tools` HMAC caller. Machine-caller exposure rides Cloudflare; human surfaces default to Tailscale Serve (the A2 split holds). | 2026-08-10 |
+| **Interactive boundary adopted — ADR-0001 (federate, don't migrate; boundary, not translation)** | Evaluated **Hermes** (NousResearch) against the governed fleet. Decision (`ADR-0001-hermes-federation-and-brain-boundary.md`): **(D1)** do not wholesale-migrate — Hermes is a generalist autonomous *runtime*; AFC is a governed *application*, and migration would dissolve B1/B2/B4, the `agent_runs` ledger, and the two-plane memory (and re-open the OpenClaw-lineage decision retired 2026-05). **(D2)** add the missing capability — an interactive, multi-step agent *over the brain* — as a **new front-end reaching the brain through a gated tool layer** (`PRD-mcp-tool-layer.md`); *the tool layer is the invariant, the shell is the variable*, so build-vs-adopt-Hermes stops being a one-way door. **(D3)** connect at the **API boundary, never storage** — a SQLite↔Postgres translation/sync is rejected (two systems of record, not two encodings; cognee isn't relational; FTS5≠graph/vector; a sync would breach B1/B4 bidirectionally). The one legitimate write of shell-learned knowledge into the brain is one-way `ingest_note`. **Sequencing:** `retrieval.py` (Phase 3.8) **next** — it is the B1 read-side enforcement the whole thing rests on and is overdue independent of this — then **Track I** (MCP tool layer) parallel to Phase 4. Validate first with Claude Code (trusted, on-box). | 2026-08-10 |
+| **Hermes planned as an OPTIONAL shell (Track H)** | Hermes is *not* adopted; it is **planned as an optional phase** (`PRD-hermes-optional-shell.md`, ADR-0001 D2) — an additional interactive front-end (multi-channel gateway: Slack/WhatsApp/Signal/Email/Telegram + voice; dynamic subagents) that drives the **same Track I boundary** as any other shell, so its gates are enforced server-side. Constraints to preserve governance: **self-authored skills disabled** (B4 stays git-only), reads are data (B1), actions go through `#approvals` (B2), Hermes keeps its own SQLite scratch (never synced to the brain — ADR-0001 D3). **Known limitation:** a third-party shell's *reasoning* tokens fall outside `agent_runs`; only tool-boundary spend is captured (route via litellm callback if Hermes becomes the standing shell). **Not on any critical path** — build only if the interactive capability, proven first with our own thin loop, earns the multi-channel/voice upside. | 2026-08-10 |
 
 </decision_log>

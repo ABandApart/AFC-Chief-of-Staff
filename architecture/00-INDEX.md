@@ -36,6 +36,15 @@ For **where the system is heading** (proposed cognee pivot, control plane, inges
 For **how the pivot was done** (three tracks, workstreams MW1–MW7, mitigations M1/M2, rollback, and the **2026-11-01 keep/kill review gate**):
 → [`26-cognee-migration-plan.md`](./26-cognee-migration-plan.md) — EXECUTED
 
+For **whether to migrate to Hermes, and how an interactive agent connects to the brain** (federate-don't-migrate; API boundary, not storage translation):
+→ [`ADR-0001-hermes-federation-and-brain-boundary.md`](./ADR-0001-hermes-federation-and-brain-boundary.md) — PROPOSED (roadmap sequencing adopted 2026-08-10)
+
+For the **gated tool layer** an interactive shell (our loop / Claude Code / Hermes) reaches the brain through (MCP + Gateway REST API spec):
+→ [`PRD-mcp-tool-layer.md`](./PRD-mcp-tool-layer.md) — Track I, build after `retrieval.py`
+
+For the **optional Hermes shell** (adoption plan, sandboxing to preserve B1/B2/B4):
+→ [`PRD-hermes-optional-shell.md`](./PRD-hermes-optional-shell.md) — Track H, OPTIONAL
+
 For questions about **where data lives and how it is queried** (Postgres schema, vectorization rules, hybrid search):
 → [`30-memory-layer.md`](./30-memory-layer.md)
 

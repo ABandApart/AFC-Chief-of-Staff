@@ -5,7 +5,7 @@
   <doc:theme>"From anywhere" = an authenticated API via a tunnel; the DB never leaves the box</doc:theme>
   <doc:duration>~2–3 days</doc:duration>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>drafted — build next (with B2), before Phase 6 (lead-gen webhook)</doc:status>
+  <doc:status>VERIFIED 2026-08-10 — barry-agent runtime-tested the Cloudflare Tunnel end-to-end (authenticated `/ingest` reachable through the tunnel; DB never left the local socket). Gateway is live. Unblocks the remote transport for the MCP tool layer (`PRD-mcp-tool-layer.md`) and Phase 6 (lead-gen webhook).</doc:status>
   <doc:depends_on>`_lib/ingest.ingest_note`; `configure_cognee`; keychain creds</doc:depends_on>
   <doc:blocks>Phase 6 (WordPress lead webhook), Phase 15 (inbound email), the primary API ingestion channel</doc:blocks>
 </doc:meta>
