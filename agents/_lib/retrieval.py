@@ -45,7 +45,9 @@ class Scope(StrEnum):
 
 # scope → the exact cognee datasets it may read. Never unioned across scopes.
 DATASETS: dict[Scope, tuple[str, ...]] = {
-    Scope.UNTRUSTED: ("capture", "granola", "outreach_public"),
+    # All untrusted ingest channels — capture (Discord), granola (meetings),
+    # content (Tartt news, Phase 4), outreach_public (scraped company/job text).
+    Scope.UNTRUSTED: ("capture", "granola", "content", "outreach_public"),
     Scope.TRUSTED: ("playbooks",),
     Scope.TARGET: (),  # resolved from the root node's own dataset, not a fixed set
 }

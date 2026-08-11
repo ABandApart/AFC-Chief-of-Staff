@@ -21,8 +21,9 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from agents._lib import ontology
 from agents._lib.telemetry_context import labeled
 
-# Stable namespace → ids reproducible across runs/processes.
+# Stable namespaces → ids reproducible across runs/processes.
 _CONTENT_NS = uuid5(NAMESPACE_URL, "afc-richmond/content")
+_INTEREST_NS = uuid5(NAMESPACE_URL, "afc-richmond/interest")
 
 
 def content_item_id(url: str) -> UUID:
@@ -57,3 +58,33 @@ async def add_content_item(url: str, title: str, summary: str | None) -> str:
     with labeled("tartt", "news_aggregation", trigger_kind="scheduled", correlation_id=url):
         await add_data_points([item])
     return str(item.id)
+
+
+def interest_signal_id(topic_label: str) -> UUID:
+    """Deterministic InterestSignal id: `uuid5` of the lowercased topic label —
+    re-seeding the same interest upserts to one node (topics are case-insensitive
+    concepts, unlike URLs)."""
+    return uuid5(_INTEREST_NS, topic_label.strip().lower())
+
+
+def build_interest_signal(topic_label: str, weight: float = 1.0) -> ontology.InterestSignal:
+    """Construct the typed InterestSignal DataPoint (pure — no cognee)."""
+    return ontology.InterestSignal(
+        id=interest_signal_id(topic_label),
+        topic_label=topic_label.strip(),
+        weight=weight,
+    )
+
+
+async def add_interest_signals(signals: list[tuple[str, float]]) -> list[str]:
+    """Seed/refresh the operator's InterestSignal nodes (local bge embed, no LLM).
+
+    Deterministic ids mean re-running with the same topics upserts rather than
+    duplicating. Returns the node ids. `configure_cognee()` must have run first.
+    """
+    from cognee.tasks.storage import add_data_points  # lazy — optional cognee
+
+    items = [build_interest_signal(label, weight) for label, weight in signals]
+    with labeled("tartt", "news_aggregation", trigger_kind="manual"):
+        await add_data_points(items)
+    return [str(i.id) for i in items]

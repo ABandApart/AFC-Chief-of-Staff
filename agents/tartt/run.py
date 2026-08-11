@@ -26,8 +26,11 @@ from datetime import UTC, datetime, timedelta
 
 from psycopg.rows import dict_row
 
-from agents._lib import cognee_setup, db
-from agents.tartt import content_graph, fetch, summarize
+from agents._lib import cognee_setup, db, ingest
+from agents.tartt import content_graph, fetch, scoring, summarize
+
+# Untrusted content dataset for the interest-gated mode-1 cognify (deep recall).
+CONTENT_DATASET = "content"
 
 # Per-poll cap on NEW items processed per source — bounds the Gemini free-tier
 # spend during the quality trial (summarize touches Gemini once per item).
@@ -90,18 +93,20 @@ def seen_urls(conn: object) -> set[str]:
 
 
 def record_content(
-    conn: object, source_id: int, item: dict, summary: str, content_node: str
+    conn: object, source_id: int, item: dict, summary: str, content_node: str,
+    interest_score: float,
 ) -> None:
     """Write the operational tracker row (one per URL; dedup-safe)."""
     with conn.cursor() as cur:  # type: ignore[attr-defined]
         cur.execute(
             """
             INSERT INTO content_items (url, title, source_id, summary, content_node,
-                                       content_type, collected_at)
-            VALUES (%s, %s, %s, %s, %s, 'article', now())
+                                       interest_score, content_type, collected_at)
+            VALUES (%s, %s, %s, %s, %s, %s, 'article', now())
             ON CONFLICT (url) DO NOTHING
             """,
-            (item["url"], item.get("title", ""), source_id, summary, content_node),
+            (item["url"], item.get("title", ""), source_id, summary, content_node,
+             interest_score),
         )
 
 
@@ -125,7 +130,21 @@ async def process_source(
             summarize.summarize, item["title"], text, source_url=item["url"]
         )
         node = await content_graph.add_content_item(item["url"], item["title"], summary)
-        await asyncio.to_thread(record_content, conn, source["id"], item, summary, node)
+        score = await asyncio.to_thread(scoring.score_content_item, node)
+        await asyncio.to_thread(
+            record_content, conn, source["id"], item, summary, node, score
+        )
+        # Interest-gate the expensive deep pass: only items above the threshold
+        # get mode-1 cognify (Anthropic extraction) for rich semantic recall.
+        if scoring.should_cognify(score):
+            await ingest.ingest_note(
+                f"{item['title']}\n\n{summary}",
+                source_ref=item["url"],
+                source_type="discovery",
+                dataset=CONTENT_DATASET,
+                label_agent="tartt",
+                label_function="news_aggregation",
+            )
         n += 1
     return ("processed", n)
 

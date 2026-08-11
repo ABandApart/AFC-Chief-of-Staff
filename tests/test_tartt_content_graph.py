@@ -39,3 +39,24 @@ def test_build_content_item_sets_fields_and_id():
 def test_build_content_item_summary_none_passthrough():
     item = content_graph.build_content_item("https://ex.com/1", "T", None)
     assert item.summary is None
+
+
+# --- InterestSignal (Task 4) -------------------------------------------------
+
+
+def test_interest_signal_id_is_case_insensitive():
+    # Topics are case-insensitive concepts → re-seeding upserts to one node.
+    assert content_graph.interest_signal_id("AI Agents") == content_graph.interest_signal_id(
+        "ai agents"
+    )
+
+
+def test_interest_signal_id_differs_by_topic():
+    assert content_graph.interest_signal_id("AI") != content_graph.interest_signal_id("cooking")
+
+
+def test_build_interest_signal_sets_fields_and_id():
+    s = content_graph.build_interest_signal("  Dev tools  ", weight=2.0)
+    assert s.id == content_graph.interest_signal_id("Dev tools")
+    assert s.topic_label == "Dev tools"
+    assert s.weight == 2.0

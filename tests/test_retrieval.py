@@ -70,7 +70,7 @@ def test_recall_defaults_to_untrusted_datasets(gc):
     assert res.answer == "the synthesized answer"
     query, datasets = gc.await_args.args
     assert query == "what do we know about X?"
-    assert datasets == ("capture", "granola", "outreach_public")
+    assert datasets == ("capture", "granola", "content", "outreach_public")
 
 
 def test_recall_trusted_scopes_to_playbooks_only(gc):
