@@ -69,6 +69,26 @@ SELECT
 FROM dashboard;
 
 \echo
+\echo '=== Track I read layer (migration 0008): brain_reader role + v_* views ==='
+SELECT
+    CASE WHEN EXISTS (SELECT FROM pg_roles WHERE rolname = 'brain_reader')
+         THEN 'OK   brain_reader role present'
+         ELSE 'FAIL brain_reader role missing — apply migration 0008'
+    END AS role_status;
+
+WITH expected(name) AS (
+    VALUES ('v_open_followups'), ('v_pending_task_candidates'),
+           ('v_prospect'), ('v_new_prospects'), ('v_spend_summary')
+)
+SELECT
+    e.name AS view_name,
+    CASE WHEN v.table_name IS NOT NULL THEN 'OK' ELSE 'MISSING' END AS status
+FROM expected e
+LEFT JOIN information_schema.views v
+       ON v.table_schema = 'public' AND v.table_name = e.name
+ORDER BY e.name;
+
+\echo
 \echo '=== Summary ==='
 SELECT
     (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public') AS total_tables,
