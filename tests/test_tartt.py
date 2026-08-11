@@ -39,7 +39,13 @@ def test_filter_due_selects_only_due_sources():
     assert [s["id"] for s in run.filter_due(sources, NOW)] == [1, 3]
 
 
-def test_process_source_is_a_skeleton_stub():
-    # Task-1 placeholder: reports no items until the Task 2-5 pipeline lands.
-    status, n = run.process_source({"name": "X", "source_kind": "rss", "url": "http://x"})
-    assert status == "skeleton" and n == 0
+def test_unseen_items_filters_seen_and_caps():
+    items = [{"url": f"u{i}"} for i in range(5)]
+    out = run.unseen_items(items, seen={"u1", "u3"}, cap=2)
+    # u1/u3 already tracked → dropped; remaining capped to 2, order preserved.
+    assert [i["url"] for i in out] == ["u0", "u2"]
+
+
+def test_unseen_items_empty_when_all_seen():
+    items = [{"url": "u0"}, {"url": "u1"}]
+    assert run.unseen_items(items, seen={"u0", "u1"}, cap=5) == []

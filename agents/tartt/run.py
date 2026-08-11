@@ -19,13 +19,19 @@ Run (barry-agent):
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from datetime import UTC, datetime, timedelta
 
 from psycopg.rows import dict_row
 
-from agents._lib import db
+from agents._lib import cognee_setup, db
+from agents.tartt import content_graph, fetch, summarize
+
+# Per-poll cap on NEW items processed per source — bounds the Gemini free-tier
+# spend during the quality trial (summarize touches Gemini once per item).
+MAX_ITEMS_PER_POLL = 5
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -68,30 +74,74 @@ def mark_polled(conn: object, source_id: int, when: datetime) -> None:
         cur.execute("UPDATE sources SET last_polled_at = %s WHERE id = %s", (when, source_id))
 
 
-def process_source(source: dict) -> tuple[str, int]:
-    """Fetch → summarize → ingest one source's new items. Returns (status, count).
+def unseen_items(items: list[dict], seen: set[str], cap: int) -> list[dict]:
+    """Feed items whose URL isn't tracked yet, capped (pure).
 
-    **Task-1 stub:** the real pipeline (fetch/extract/summarize/ContentItem/score)
-    is Tasks 2–5. For now this just logs what it would poll and reports no items,
-    so the skeleton (selection + watermark) is exercisable end to end.
+    Dedup skips re-summarizing seen URLs; the cap bounds per-poll Gemini spend.
     """
-    logger.info(
-        "tartt: would poll %s [%s] %s", source["name"], source["source_kind"], source["url"]
-    )
-    return ("skeleton", 0)
+    fresh = [i for i in items if i["url"] not in seen]
+    return fresh[:cap]
 
 
-def poll(now: datetime | None = None) -> int:
+def seen_urls(conn: object) -> set[str]:
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute("SELECT url FROM content_items")
+        return {row[0] for row in cur.fetchall()}
+
+
+def record_content(
+    conn: object, source_id: int, item: dict, summary: str, content_node: str
+) -> None:
+    """Write the operational tracker row (one per URL; dedup-safe)."""
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            """
+            INSERT INTO content_items (url, title, source_id, summary, content_node,
+                                       content_type, collected_at)
+            VALUES (%s, %s, %s, %s, %s, 'article', now())
+            ON CONFLICT (url) DO NOTHING
+            """,
+            (item["url"], item.get("title", ""), source_id, summary, content_node),
+        )
+
+
+async def process_source(
+    conn: object, source: dict, *, cap: int = MAX_ITEMS_PER_POLL
+) -> tuple[str, int]:
+    """Fetch → dedup → extract → summarize → typed ContentItem → tracker row.
+
+    Interest scoring, gated mode-1 cognify, and task_candidates are Tasks 4-5;
+    this lands each new article as a typed graph node (local embed) + a tracker
+    row. A URL with no extractable text is skipped (no summarize, no spend).
+    """
+    items = await asyncio.to_thread(fetch.list_source_items, source["url"])
+    seen = await asyncio.to_thread(seen_urls, conn)
+    n = 0
+    for item in unseen_items(items, seen, cap):
+        text = await asyncio.to_thread(fetch.fetch_article_text, item["url"])
+        if not text:
+            continue
+        summary = await asyncio.to_thread(
+            summarize.summarize, item["title"], text, source_url=item["url"]
+        )
+        node = await content_graph.add_content_item(item["url"], item["title"], summary)
+        await asyncio.to_thread(record_content, conn, source["id"], item, summary, node)
+        n += 1
+    return ("processed", n)
+
+
+async def poll(now: datetime | None = None) -> int:
     """Poll every due source, advancing its watermark. Returns items processed."""
     now = now or datetime.now(UTC)
+    cognee_setup.configure_cognee()
     total = 0
     with db.connection() as conn:
-        due = filter_due(active_sources(conn), now)
+        due = filter_due(await asyncio.to_thread(active_sources, conn), now)
         logger.info("tartt: %d source(s) due", len(due))
         for s in due:
             try:
-                status, n = process_source(s)
-                mark_polled(conn, s["id"], now)
+                status, n = await process_source(conn, s)
+                await asyncio.to_thread(mark_polled, conn, s["id"], now)
                 total += n
                 logger.info("tartt: %s → %s (%d item(s))", s["name"], status, n)
             except Exception:
@@ -116,7 +166,7 @@ def main() -> int:
         print(f"{len(due)} source(s) due")
         return 0
 
-    poll()
+    asyncio.run(poll())
     return 0
 
 
