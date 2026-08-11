@@ -30,7 +30,7 @@ from typing import Any
 
 from psycopg.rows import dict_row
 
-from agents._lib import db, heartbeat
+from agents._lib import db, heartbeat, task_tinder
 from agents._lib.creds import keychain_get
 from agents.discord_bot.config import BRIEFING_CHANNEL_ID
 
@@ -154,7 +154,10 @@ def main() -> int:
     status = gather_status()
     with db.connection() as conn:
         recs = fetch_reading_recs(conn)
+    pending = task_tinder.count_pending()
     text = format_briefing(datetime.now(), status)
+    if pending:
+        text = f"{text}\n\n🗂️ **Pending in Task Tinder:** {pending} candidate(s)"
     recs_text = format_reading_recs(recs)
     if recs_text:
         text = f"{text}\n\n{recs_text}"
