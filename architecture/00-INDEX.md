@@ -69,6 +69,11 @@ For questions about **the content pipeline specifically** (state machine, Buffer
 For questions about **build order and dependencies** (what to build first, what each phase enables):
 → [`70-build-order.md`](./70-build-order.md)
 
+For **how work is expected to be done here** — the spec-driven convention, what a
+spec must contain (S1–S6), and what to do when a spec meets reality mid-build:
+→ [`70-build-order.md`](./70-build-order.md) §"Working convention", summarised in
+the repo root [`CLAUDE.md`](../CLAUDE.md) that every session loads
+
 For questions about **how the system measures itself** (agent_runs, cost helper, runaway-prevention guards, weekly dashboard):
 → [`80-telemetry-layer.md`](./80-telemetry-layer.md)
 
