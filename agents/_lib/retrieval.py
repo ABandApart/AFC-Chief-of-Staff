@@ -27,10 +27,13 @@ Design (see `30-memory-layer.md` §retrieval_wrapper):
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 from agents._lib.telemetry_context import labeled
+
+logger = logging.getLogger(__name__)
 
 NO_RESULT = "No matching facts."
 
@@ -49,17 +52,35 @@ DATASETS: dict[Scope, tuple[str, ...]] = {
     # content (Tartt news, Phase 4), outreach_public (scraped company/job text).
     Scope.UNTRUSTED: ("capture", "granola", "content", "outreach_public"),
     Scope.TRUSTED: ("playbooks",),
-    Scope.TARGET: (),  # resolved from the root node's own dataset, not a fixed set
+    # TARGET reads the same untrusted-class background as UNTRUSTED — company
+    # background, people, what a meeting said — but reaches it by walking edges
+    # from a known node instead of by semantic search. It is a separate scope
+    # (not an alias) because the *mechanism* differs and H3 requires an explicit
+    # permitted set: the traversal must never reach playbooks (trusted
+    # instructions) or, when they exist, client datasets.
+    Scope.TARGET: ("capture", "granola", "content", "outreach_public"),
 }
+
+# Bounded means bounded (H4). Two hops reaches the target's people and the
+# meetings/articles that mention it; three is the ceiling. An unbounded walk on a
+# connected graph is a full-graph read wearing a traversal's clothes.
+DEFAULT_TARGET_HOPS = 2
+MAX_TARGET_HOPS = 3
 
 
 @dataclass(frozen=True)
 class RecallResult:
-    """A retrieval answer with its provenance and the scope it was read under."""
+    """A retrieval answer with its provenance and the scope it was read under.
+
+    `nodes` is populated only by `Scope.TARGET` (bounded traversal), where there
+    is no synthesized answer to return — the caller renders the nodes itself.
+    The completion path leaves it empty.
+    """
 
     answer: str
     scope_used: Scope
     sources: tuple[str, ...] = field(default_factory=tuple)
+    nodes: tuple[dict[str, object], ...] = field(default_factory=tuple)
 
 
 def normalize_answer(results: object) -> str:
@@ -76,6 +97,102 @@ def normalize_answer(results: object) -> str:
     else:
         text = str(results).strip()
     return text or NO_RESULT
+
+
+def _node_field(node: object, *names: str) -> object:
+    """First present value among `names`, whether `node` is a dict or an object.
+
+    cognee's graph adapters hand back node shapes that vary by provider, so the
+    packet's rendering must not depend on one of them. Pure — unit-tested.
+    """
+    for name in names:
+        if isinstance(node, dict):
+            if name in node and node[name] is not None:
+                return node[name]
+        else:
+            value = getattr(node, name, None)
+            if value is not None:
+                return value
+    return None
+
+
+def normalize_nodes(
+    raw_nodes: object, permitted: tuple[str, ...]
+) -> tuple[tuple[dict[str, object], ...], tuple[str, ...]]:
+    """Map raw traversal nodes → (display dicts, source refs), dropping any node
+    whose dataset is known and not permitted (H3). Pure — unit-tested.
+
+    **A node whose dataset cannot be determined is kept, not dropped.** Dropping
+    would empty the packet on every provider whose nodes omit the field, turning
+    a containment control into an outage. The `dataset_known` flag rides along on
+    each node so the caller can see the difference, and `recall()` logs a warning
+    when nothing carries dataset metadata — which is the signal to revisit this
+    before any client dataset exists. There are no client datasets today; this is
+    the control being staged ahead of the risk, not a hole being left open.
+    """
+    if not raw_nodes:
+        return (), ()
+    if not isinstance(raw_nodes, list | tuple):
+        raw_nodes = [raw_nodes]
+
+    kept: list[dict[str, object]] = []
+    sources: list[str] = []
+    for node in raw_nodes:
+        dataset = _node_field(node, "dataset", "dataset_name", "belongs_to_set")
+        if dataset is not None and str(dataset) not in permitted:
+            continue
+        source = _node_field(node, "source_ref", "source_url", "url")
+        entry: dict[str, object] = {
+            "id": str(_node_field(node, "id", "uuid", "node_id") or ""),
+            "type": str(_node_field(node, "type", "node_type", "label") or ""),
+            "name": str(_node_field(node, "name", "title") or ""),
+            "text": str(_node_field(node, "text", "summary", "description") or ""),
+            "source_ref": str(source) if source is not None else "",
+            "dataset_known": dataset is not None,
+        }
+        kept.append(entry)
+        if source is not None and str(source) not in sources:
+            sources.append(str(source))
+    return tuple(kept), tuple(sources)
+
+
+def render_nodes(nodes: tuple[dict[str, object], ...]) -> str:
+    """Render traversal nodes as read-only display text (pure).
+
+    Deliberately plain: this is background context a human skims beside the
+    evidence, not prose to copy. No synthesis happens anywhere in this path.
+    """
+    if not nodes:
+        return NO_RESULT
+    lines: list[str] = []
+    for n in nodes:
+        label = n.get("name") or n.get("id") or "(unnamed)"
+        kind = f" [{n['type']}]" if n.get("type") else ""
+        line = f"- {label}{kind}"
+        if text := str(n.get("text") or "").strip():
+            line += f": {text}"
+        if ref := str(n.get("source_ref") or "").strip():
+            line += f" ({ref})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+async def _bounded_traversal(root_node_id: str, hops: int) -> tuple[object, object]:
+    """The one place the graph engine is walked directly — isolated for the same
+    reason `_graph_completion` is: one legal call site, unit-testable orchestration.
+
+    Deliberately NOT `cognee.search`. Its `neighborhood_depth` option routes
+    through `brute_force_triplet_search`, which requires vector-search seed ids
+    and ends in an LLM completion — the exact coupling H4 forbids. The graph
+    engine's `get_neighborhood` is a recursive CTE over the node/edge tables:
+    no embedding query, no synthesis, no provider call, no ledger row.
+
+    cognee is imported lazily (optional dep). `configure_cognee()` must have run.
+    """
+    from cognee.infrastructure.databases.graph.get_graph_engine import get_graph_engine
+
+    engine = await get_graph_engine()
+    return await engine.get_neighborhood([str(root_node_id)], depth=hops)
 
 
 async def _graph_completion(query: str, datasets: tuple[str, ...]) -> object:
@@ -111,14 +228,38 @@ async def recall(
     caller. Returns a `RecallResult` carrying the synthesized answer, its sources,
     and the scope actually used.
 
-    `Scope.TARGET` (bounded N-hop traversal from `root_node_id`, no embedding
-    query, no synthesis) is the Track O outreach-packet path; it is not built yet
-    and raises until Track O lands.
+    `Scope.TARGET` is the Track O outreach-packet path: a bounded N-hop traversal
+    from `root_node_id` with no embedding query, no synthesis, and no LLM call
+    (§7 / H4). It ignores `query`, requires `root_node_id`, and returns the
+    retrieved nodes in `RecallResult.nodes` with `answer` set to a plain
+    rendering of them — the caller displays them, nothing writes prose.
     """
     if scope is Scope.TARGET:
-        raise NotImplementedError(
-            "Scope.TARGET (bounded traversal) is Track O — not implemented yet "
-            f"(root_node_id={root_node_id!r}, hops={hops!r})."
+        if not root_node_id:
+            raise ValueError("Scope.TARGET requires root_node_id (the traversal root).")
+        depth = DEFAULT_TARGET_HOPS if hops is None else hops
+        if depth < 1 or depth > MAX_TARGET_HOPS:
+            raise ValueError(
+                f"hops must be between 1 and {MAX_TARGET_HOPS} for Scope.TARGET "
+                f"(got {depth}) — an unbounded walk is a full-graph read."
+            )
+        # Labeled like any other retrieval so the call is visible in the ledger's
+        # shape, even though a traversal spends nothing (no provider call).
+        with labeled(agent, "infrastructure", trigger_kind=trigger_kind):
+            raw_nodes, _edges = await _bounded_traversal(root_node_id, depth)
+        nodes, sources = normalize_nodes(raw_nodes, DATASETS[Scope.TARGET])
+        if nodes and not any(n["dataset_known"] for n in nodes):
+            logger.warning(
+                "retrieval: traversal from %s returned %d node(s) with no dataset "
+                "metadata — H3 dataset filtering is inert on this provider. Revisit "
+                "before any client dataset exists.",
+                root_node_id, len(nodes),
+            )
+        return RecallResult(
+            answer=render_nodes(nodes),
+            scope_used=scope,
+            sources=sources,
+            nodes=nodes,
         )
 
     datasets = DATASETS[scope]

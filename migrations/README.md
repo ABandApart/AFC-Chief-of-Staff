@@ -27,3 +27,7 @@ new tables.
 | # | Name | Applied | Phase |
 |---|------|---------|-------|
 | 0001 | initial schema | pending | 1 |
+
+(This table stopped being maintained after 0001; `verify_schema.sql` is the
+living source of truth for what should exist. Latest migration: **0013** —
+Track O outreach CRM.)

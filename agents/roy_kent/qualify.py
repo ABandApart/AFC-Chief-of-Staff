@@ -7,11 +7,14 @@ statement in the scorecard free text, and raise a `task_candidates` row for a
 high-fit lead. `40-action-layer.md` Roy_Kent spec; DF3 in
 `20-architecture-overview.md`.
 
-**Scope note (operator, 2026-08-11):** DF3 also mentions an `outreach_targets`
-row for high-fit leads. That table belongs to Track O (outbound, unqualified
-prospecting) and inbound WordPress leads are a different thing — already
-qualified, not something to prospect into. Track O is deferred entirely;
-Phase 6 writes only `prospects` / `icp_signals` / `task_candidates`.
+**`outreach_targets` (DF3 / `35-` §5 D2) — deferred at Phase 6, wired in Track O.**
+The table did not exist when Phase 6 shipped, so the hand-off was deliberately
+left out. Track O's migration 0013 created it, and `seed_outreach_target` now
+runs on the same `>= 0.7` gate as the task candidate. Inbound stays inbound:
+`trigger_kind='inbound_enquiry'` never materialises the cold five-touch arc
+(`36-inbound-leads.md` I1), the row starts at `status='candidate'` so it consumes
+no outreach capacity, and how inbound is actually *handled* remains an open
+design question in `36-` §4 — this writes the record, not the handling.
 
 **Order of writes** (matches the architecture's error-handling contract): the
 `prospects` row is written *before* qualification, unconditionally — a Haiku
@@ -31,12 +34,13 @@ payload on first live webhook delivery.
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Any
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from agents._lib import db, screening
+from agents._lib import db, outreach, screening
 from agents._lib.runs import agent_run
 
 logger = logging.getLogger(__name__)
@@ -261,6 +265,51 @@ def fetch_icp_criteria(conn: object) -> str:
     return "\n".join(f"- {title}: {rationale}" for title, rationale in rows)
 
 
+def seed_outreach_target(conn: object, prospect: dict[str, Any]) -> int | None:
+    """Create/refresh the `outreach_targets` row for a high-fit inbound lead.
+
+    `35-outreach-crm.md` §5 D2 and `36-inbound-leads.md` I2: an inbound lead gets
+    the full record — a target row, the rubric, history through `outreach_events`,
+    and the watchlist if it goes cold. **Only the sequence differs**, and I1 makes
+    that structural: `trigger_kind='inbound_enquiry'` never materialises the cold
+    five-touch arc, and the row is left at `status='candidate'` so it consumes no
+    capacity until the operator decides anything.
+
+    Returns the target id, or None when the lead has no company identity to key
+    on — `company_domain` is the dedup key, so a lead that only gave a gmail
+    address gets no target row rather than a fabricated one that would collide
+    with the next gmail lead. The prospect record itself is unaffected.
+
+    (Deliberately NOT done for low-fit leads: the >= 0.7 gate is the same one
+    that raises the task candidate.)
+    """
+    domain = outreach.company_domain_from_email(prospect.get("email"))
+    if domain is None:
+        logger.info(
+            "roy-kent: prospect %s has no company domain (email=%r) — no outreach "
+            "target seeded", prospect["id"], prospect.get("email"),
+        )
+        return None
+    row = outreach.upsert_target(conn, {
+        "company_name": prospect.get("company") or domain,
+        "company_domain": domain,
+        # stage is genuinely unknown from a scorecard — left NULL, which the
+        # schema permits only for inbound_enquiry (migration 0013).
+        "stage": None,
+        "trigger_kind": "inbound_enquiry",
+        "trigger_date": date.today(),
+        "contact_name": prospect.get("name"),
+        "contact_role": prospect.get("role"),
+        "contact_email": prospect.get("email"),
+        "prospect_id": prospect["id"],
+    })
+    logger.info(
+        "roy-kent: outreach target %s (%s) seeded for prospect %s",
+        row["id"], domain, prospect["id"],
+    )
+    return row["id"]
+
+
 def propose_task_candidate(conn: object, prospect: dict[str, Any], fit: dict[str, Any]) -> None:
     with conn.cursor() as cur:  # type: ignore[attr-defined]
         cur.execute(
@@ -350,8 +399,13 @@ def process_lead(payload: dict[str, Any]) -> dict[str, Any]:
                 "roy-kent: pain-signal embedding failed for prospect_id=%s", prospect["id"]
             )
 
+    target_id: int | None = None
     if fit is not None and fit["icp_fit_score"] >= TASK_CANDIDATE_THRESHOLD:
         with db.connection() as conn:
             propose_task_candidate(conn, prospect, fit)
+            target_id = seed_outreach_target(conn, prospect)
 
-    return {"status": "processed", "prospect_id": prospect["id"], "fit": fit}
+    return {
+        "status": "processed", "prospect_id": prospect["id"],
+        "fit": fit, "outreach_target_id": target_id,
+    }

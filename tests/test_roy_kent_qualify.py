@@ -171,6 +171,7 @@ def test_process_lead_happy_path_qualifies_embeds_and_proposes_task(mocker):
     mocker.patch.object(qualify, "embed_pain_points", return_value=[[0.1] * 768])
     insert_signal_mock = mocker.patch.object(qualify, "insert_pain_signal")
     propose_mock = mocker.patch.object(qualify, "propose_task_candidate")
+    mocker.patch.object(qualify, "seed_outreach_target", return_value=55)
 
     result = qualify.process_lead(PAYLOAD)
 
@@ -180,6 +181,7 @@ def test_process_lead_happy_path_qualifies_embeds_and_proposes_task(mocker):
     insert_signal_mock.assert_called_once()
     assert insert_signal_mock.call_args.kwargs["icp_segment_hint"] == "solo consultant"
     propose_mock.assert_called_once()
+    assert result["outreach_target_id"] == 55
 
 
 def test_process_lead_low_fit_no_task_candidate(mocker):
@@ -195,11 +197,15 @@ def test_process_lead_low_fit_no_task_candidate(mocker):
     mocker.patch.object(qualify, "embed_pain_points", return_value=[[0.1] * 768])
     mocker.patch.object(qualify, "insert_pain_signal")
     propose_mock = mocker.patch.object(qualify, "propose_task_candidate")
+    seed_mock = mocker.patch.object(qualify, "seed_outreach_target")
 
     result = qualify.process_lead(PAYLOAD)
 
     assert result["fit"]["icp_fit_score"] < qualify.TASK_CANDIDATE_THRESHOLD
     propose_mock.assert_not_called()
+    # The outreach hand-off rides the SAME >= 0.7 gate as the task candidate.
+    seed_mock.assert_not_called()
+    assert result["outreach_target_id"] is None
 
 
 def test_process_lead_qualification_failure_leaves_prospect_unscored(mocker):
@@ -239,3 +245,48 @@ def test_process_lead_no_pain_points_skips_embedding(mocker):
     qualify.process_lead(payload)
 
     embed_mock.assert_not_called()
+
+
+# --- outreach hand-off (Track O, 35- §5 D2 / 36- I2) -------------------------
+
+
+def test_seed_outreach_target_uses_the_work_email_domain(mocker):
+    up = mocker.patch.object(qualify.outreach, "upsert_target", return_value={"id": 9})
+    prospect = {"id": 3, "name": "Jane", "company": "Acme Co", "role": "Founder",
+                "email": "jane@acme.com"}
+
+    assert qualify.seed_outreach_target(mocker.MagicMock(), prospect) == 9
+
+    row = up.call_args.args[1]
+    assert row["company_domain"] == "acme.com"
+    assert row["prospect_id"] == 3
+    assert row["contact_email"] == "jane@acme.com"
+    # I1: inbound never runs the cold arc — the trigger kind is what enforces it.
+    assert row["trigger_kind"] == "inbound_enquiry"
+    # A scorecard cannot report a funding stage; NULL beats a fabricated value
+    # that would score silently through S2.
+    assert row["stage"] is None
+
+
+def test_seed_outreach_target_skips_a_free_email_lead(mocker):
+    # Two gmail leads would otherwise collide onto ONE target row via the
+    # company_domain dedup key.
+    up = mocker.patch.object(qualify.outreach, "upsert_target")
+    prospect = {"id": 4, "name": "Jane", "company": "Acme", "email": "jane@gmail.com"}
+
+    assert qualify.seed_outreach_target(mocker.MagicMock(), prospect) is None
+    up.assert_not_called()
+
+
+def test_seed_outreach_target_skips_when_no_email_at_all(mocker):
+    up = mocker.patch.object(qualify.outreach, "upsert_target")
+    prospect = {"id": 5, "name": "J", "email": None}
+    assert qualify.seed_outreach_target(mocker.MagicMock(), prospect) is None
+    up.assert_not_called()
+
+
+def test_seed_outreach_target_falls_back_to_the_domain_for_a_missing_company(mocker):
+    up = mocker.patch.object(qualify.outreach, "upsert_target", return_value={"id": 10})
+    prospect = {"id": 6, "name": "Jane", "company": None, "email": "jane@acme.com"}
+    qualify.seed_outreach_target(mocker.MagicMock(), prospect)
+    assert up.call_args.args[1]["company_name"] == "acme.com"
