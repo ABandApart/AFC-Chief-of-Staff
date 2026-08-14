@@ -1,0 +1,223 @@
+# Outreach Selector — (stage, slot, evidence) → template  (Track O, `35-` §5)
+#
+# The deterministic lookup that materialises five touches at intake. **No LLM.**
+# Read top-to-bottom: the first rule whose conditions hold wins, and its
+# `because` is shown on the intake card so the choice is auditable rather than
+# magic.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS IS NOT THE "9-ROW GRID" `35-` §5 DESCRIBES
+# ---------------------------------------------------------------------------
+# The spec anticipated `(stage, function_state, slot) → template_code`. The real
+# template pack (operator, 2026-08-14) is organised differently:
+#
+#   * Sections are by STAGE only — Seed / Series A / Series B and Beyond.
+#     `function_state` is not a selection axis anywhere in the pack.
+#   * Templates within a stage span several slots, not just touch 1 (T06 is
+#     "touch three", T11 is "weeks four through ten", T16 is a breakup message).
+#   * Touches 2–5 have their own stage-independent templates.
+#
+# And several templates cannot be selected mechanically at all, because their
+# precondition lives in the operator's head: T02 needs working history inside
+# the lead investor's portfolio, T15 a same-stage same-sector engagement, T13
+# enough engagements to see a pattern, T04 a shared connection. Those are listed
+# as `alternates` — offered on the card, never auto-selected.
+#
+# So: a defensible evidence-driven DEFAULT plus a visible override (operator
+# decision, 2026-08-14), rather than a grid that pretends to know things it
+# cannot.
+# ---------------------------------------------------------------------------
+
+version: 1
+
+# Stage → the pack's section heading. `mature` has no section of its own; the
+# operator mapped it to Series B and Beyond (2026-08-14) — both describe
+# established companies with scale problems rather than post-raise urgency.
+stage_sections:
+  seed:           "Seed Stage"
+  series_a:       "Series A"
+  series_b_plus:  "Series B and Beyond"
+  mature:         "Series B and Beyond"
+
+# `mature` reuses Series B+'s rules rather than duplicating them, so a change to
+# one cannot silently diverge from the other. If mature ever earns its own
+# templates, delete this alias and give it a real rule block.
+stage_aliases:
+  mature: series_b_plus
+
+# --- placeholder partition (`35-` §7 substitution classes) -------------------
+# Anything not listed here and not containing a ':' is treated as `operator`,
+# which BLOCKS `ready`. That default is deliberate and asymmetric: a token
+# wrongly called `auto` ships a literal "[Client 1]" to a founder (R1), while a
+# token wrongly called `operator` merely makes someone look at it.
+placeholders:
+  # Resolved from columns, dates, and evidence. Safe to substitute unattended.
+  auto:
+    - First Name
+    - Company Name
+    - Company
+    - Role Title
+    - Title
+    - function
+    - Function
+    - month
+    - X                      # "[X] weeks" — computed from first_seen_at
+    - Original Subject
+    - Your Name
+
+  # From the operator's own book — ungeneratable, and fabricating them is the
+  # documented failure mode of T13 and T15 (`35-` §7). These block `ready`.
+  operator:
+    - Client
+    - Client 1
+    - Client 2
+    - Similar Company
+    - Peer Company
+    - Portfolio Company
+    - Investor Name          # only reliable if funding evidence names it
+    - Mutual Connection
+    - specific outcome with a number
+    - number
+    - timeframe
+    - framework / checklist
+    - URL
+    - Time
+    - topic
+    - Topic
+    - specific topic
+    - industry
+    - transition
+    - trigger event
+    - the piece
+    - the search / the gap
+
+  # Everything containing ':' is an `observed` prompt — the sentence the
+  # operator writes from the evidence at Gate 2 (e.g. "[trigger: the first board
+  # meeting where someone asks for the number]"). Expected to be open in the
+  # packet; does NOT block `ready`.
+  observed_marker: ":"
+
+# --- slot 1 — Recognition ----------------------------------------------------
+# The arc's defining property for this slot is that it contains NO ASK (`35-`
+# §5, `37-` D4). Defaults respect that: T05 ("The Short and Direct Ask") is an
+# alternate, never a default, however well it might score.
+slots:
+  1:
+    name: Recognition
+    rules:
+      seed:
+        - when: {trigger_kind: [funding_announced, second_raise], days_since_trigger_max: 7}
+          template: template-01-congrats-relevance-opener
+          because: "Funding trigger inside 7 days — T01 is explicitly touch one"
+        - when: {open_role_age_min: 1}
+          template: template-03-problem-specific-open
+          because: "An open req is a public signal exposing an unowned function (T03)"
+        - default: template-07-value-first-noask
+          because: "No trigger evidence yet; T07 is the no-ask entry slot 1 calls for"
+      series_a:
+        - when: {open_role_age_min: 30}
+          template: template-10-hiring-trigger
+          because: "Req open 30+ days — the strongest Series A angle in the pack (T10)"
+        - default: template-09-growth-mandate-angle
+          because: "Function under strain but no req posted yet (T09)"
+      series_b_plus:
+        - when: {open_role_age_min: 60}
+          template: template-19-cost-open-seat
+          because: "Search running 60+ days — T19's stated condition"
+        - default: template-17-scale-transition
+          because: "Outgrown how the function ran at Series A (T17)"
+    # Offered on the intake card, never auto-selected: each needs something only
+    # the operator knows they have.
+    alternates:
+      seed:
+        - {template: template-02-investor-alignment-angle, needs: "working history in the lead investor's portfolio"}
+        - {template: template-04-mutual-connection-open,   needs: "a shared connection or cohort"}
+        - {template: template-05-short-direct-ask,         needs: "high score — note this one DOES ask, unlike slot 1's intent"}
+        - {template: template-06-case-study-lead,          needs: "same-stage proof (guidance places it at touch three)"}
+        - {template: template-08-current-arrangement,      needs: "knowing who covers the function today"}
+      series_a:
+        - {template: template-11-board-pressure-angle,     needs: "weeks 4-10 post-announcement"}
+        - {template: template-12-use-of-funds,             needs: "the announcement naming where the money goes"}
+        - {template: template-13-pattern-lead,             needs: "enough engagements to see a real pattern"}
+        - {template: template-14-org-chart-observation,    needs: "team page + open roles revealing the org shape"}
+        - {template: template-15-peer-company-reference,   needs: "a genuine same-stage, same-sector engagement"}
+        - {template: template-16-risk-mitigation-angle,    needs: "nothing — also the best breakup/re-engagement message"}
+      series_b_plus:
+        - {template: template-18-executive-briefing,       needs: "having run the same transition multiple times"}
+        - {template: template-20-multi-stakeholder-intro,  needs: "no identifiable single decision owner"}
+        - {template: template-21-expansion-timing-play,    needs: "the announcement naming a funded expansion"}
+        - {template: template-22-readiness-gap,            needs: "an approaching compliance/enterprise requirement"}
+        - {template: template-23-efficiency-at-scale,      needs: "post-raise headcount already in place"}
+        - {template: template-24-direct-executive-email,   needs: "strong named proof + wanting to compress the cycle"}
+
+  # --- slots 2-5 — stage-independent -----------------------------------------
+  # The pack gives one template per follow-up touch, and they do not vary by
+  # stage. Stage-specific templates whose guidance fits these windows (T06 at
+  # touch three, T11 at weeks 4-10) are alternates, not defaults.
+  2:
+    name: Relevance
+    rules:
+      all:
+        - default: touch-2-new-angle-followup
+          because: "The pack's touch-2 template; must carry something touch 1 did not"
+    alternates:
+      all:
+        - {template: template-12-use-of-funds,   needs: "days 7-14 and the announcement named the use of funds"}
+        - {template: template-21-expansion-timing-play, needs: "days 7-14 and a funded expansion was named"}
+  3:
+    name: Proof
+    rules:
+      all:
+        - default: touch-3-proof-followup
+          because: "The pack's touch-3 template"
+    alternates:
+      all:
+        - {template: template-06-case-study-lead, needs: "same-stage proof — guidance places T06 exactly here"}
+        - {template: template-15-peer-company-reference, needs: "a same-stage, same-sector engagement"}
+  4:
+    name: The bridge
+    rules:
+      all:
+        - default: touch-4-bridge-followup
+          because: "The pack's touch-4 template — the arc's only direct ask"
+    alternates:
+      all:
+        - {template: template-11-board-pressure-angle, needs: "weeks 4-10, ahead of the first post-raise board meeting"}
+  5:
+    name: Close the loop
+    rules:
+      all:
+        - default: touch-5-close-the-loop
+          because: "The pack's touch-5 template — the day-60 hinge, highest converting"
+    alternates:
+      all:
+        - {template: template-16-risk-mitigation-angle, needs: "nothing — the pack's best breakup message"}
+
+# --- not part of the cold arc ------------------------------------------------
+# Reachable by override or by the reactive/re-engagement cards, never
+# materialised into the five-touch sequence.
+out_of_arc:
+  # Gate 3 — reactive routing on a reply (`35-` §6, `50-` task_tinder).
+  handling_the_reply:
+    - template-43-booking-the-call
+    - template-44-answering-advancing
+    - template-45-fulltime-hire-objection
+    - template-46-budget-objection
+  # Gate 4 — re-engagement from the watchlist (Trent Crimm surfaces these).
+  re_engagement:
+    - template-47-departure-trigger
+    - template-48-trigger-event-reengagement
+    - template-49-new-evidence-reengagement
+  # LinkedIn is a permanently manual channel — sends there can never be
+  # BCC-captured (`35-` §8), so these are reference copy for the operator.
+  linkedin:
+    - template-33-shared-background-connection
+    - template-34-funding-congrats-connection
+    - template-35-shared-interest-connection
+    - template-36-mutual-connection-request
+    - template-37-content-event-connection
+    - template-38-soft-open-connection
+    - template-39-value-drop-connection
+    - template-40-direct-after-connection
+    - template-41-inmail-with-proof
+    - template-42-inmail-with-question
