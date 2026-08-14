@@ -5,11 +5,12 @@ work; one scheduler daemon reads these and fires them (replacing the per-job
 launchd plists — refactor item A7). Part of the control plane: authored in git,
 trusted (boundary B4).
 
-> **Status:** manifests are the source-of-truth declarations *now*; the
-> scheduler daemon that executes them is the next Track-A step. Until it lands,
-> launchd still runs the jobs — these manifests mirror those schedules so the
-> cutover is mechanical. Do not bootout launchd until the daemon is validated in
-> runtime (barry-agent).
+> **Status (corrected 2026-08-14):** the scheduler daemon is **live** —
+> `com.aiadaptive.cos.scheduler` under barry-agent, cut over 2026-07-28, with the
+> old per-job calendar plists disabled. These manifests are what actually runs.
+> *(This block previously described the daemon as "the next Track-A step" months
+> after it landed — the staleness `70-build-order.md` §Working convention S6
+> exists to catch.)*
 
 ## Convention
 
@@ -36,6 +37,43 @@ Rules enforced by the loader (`agents/_lib/control_plane.py`, `cli/control.py
 validate`): `name` matches the filename; `schedule` is a valid 5-field cron;
 exactly one of `agent` / `command`; a referenced `playbook` must exist when the
 loop is `enabled`.
+
+## Activation — ships disabled, flipped deliberately
+
+**Written down 2026-08-14.** This was an unwritten habit (`tartt-poll`,
+`granola-poll`, `outreach-evidence` all shipped `enabled: false`) that the
+operator reasonably could not find in any spec. It is a convention, now stated:
+
+**A new loop ships `enabled: false`.** A manifest is authored in the same commit
+as the agent it runs, but the agent is rarely ready to run unattended the moment
+its code lands — it usually needs seed data, a credential, or one manual run that
+looks right. Shipping enabled means the scheduler starts firing it on the next
+pull, before anyone has looked.
+
+**Activating is a two-account, two-step move:**
+
+1. **barry-admin** flips `enabled: false → true` and pushes. Nothing happens yet
+   — the repo is not what the scheduler reads.
+2. **barry-agent** pulls. The scheduler picks the manifest up on its next cycle
+   and the loop starts firing on its cron.
+
+**Confirm with the operator before flipping.** Not ceremony: activation is the
+moment a loop starts doing things unattended — spending, calling third parties,
+or writing on a schedule nobody is watching. The operator is the one who knows
+whether the preconditions are actually met.
+
+**State what activation costs when you ask.** The answer differs sharply per
+loop and is what the decision turns on:
+
+| Loop | What activation starts |
+|------|------------------------|
+| `tartt-poll` | Real Gemini spend, per item, on a 6-hourly cadence |
+| `outreach-evidence` | Nothing billable — public JSON GETs, no LLM, no `agent_runs` rows, writes only `outreach_evidence` |
+
+A loop whose activation costs nothing and whose data only accrues forward should
+be activated as soon as it works; one that spends money on every cycle deserves
+the pause. Do not apply the same caution to both — treating a free read-only poll
+like a metered LLM loop just delays data you cannot backfill.
 
 ## Not loops
 
