@@ -166,12 +166,33 @@ readiness gate is a *precondition of creation*, not a check at send time.
 This channel improves R1 (an unresolved `[operator]` placeholder reaching a
 prospect) and forces a correction to how the `ready` flag is enforced.
 
-**Prevention moves earlier.** Today `ready = false` blocks *marking* a touch
-sent. That is a lagging control: by the time it fires the email has already gone.
-With drafts, the control moves to **not creating the artifact at all** — no
-draft, nothing to send, and the operator never sees a half-filled message they
-might fire off. `outreach-daily` creates drafts **only** for packets with
-`ready = true`.
+> **AMENDED 2026-08-14 — draft creation is NOT gated on `ready`.** The original
+> rule below said `outreach-daily` creates drafts only for `ready = true`
+> packets. That collides with how the operator intends to work: templates carry
+> `operator` placeholders by design (T17 has four, T09 six), `ready` is false
+> while any is unresolved, and the operator's stated approach is to **calibrate
+> from real drafts containing visible placeholders** rather than pre-filling
+> them. Under the original rule, almost no draft would ever be created.
+>
+> The rule was also aimed at the wrong risk. R1 is a literal `[Client 1]`
+> reaching *a prospect* — that is a property of **sending**, not drafting. A
+> draft sits unsent in the operator's own mailbox and is read and edited before
+> it goes anywhere.
+>
+> **So: create the draft regardless, with unresolved slots visibly marked, and
+> keep the hard guard where it already is** — the `outreach_touch_ready_guard()`
+> trigger blocking a not-ready touch from being marked sent on the assertion
+> paths (migration 0013, §6 below). One exception survives: **do not draft when
+> the driving evidence is stale or closed**, because that is R19 — the draft
+> would state a posting age that may be false, and no amount of editing catches
+> what the operator has no reason to doubt.
+
+**Prevention moves earlier — but not as far as first written.** `ready = false`
+blocks *marking* a touch sent, which is a lagging control: by the time it fires
+the email has gone. Drafting earlier does help — a draft is a checkpoint where a
+half-filled message is visible before it can be sent — but per the amendment
+above, an unresolved `operator` slot is a thing to *show*, not a reason to
+withhold the draft.
 
 **Recording must therefore stop refusing.** The `outreach_touch_ready_guard()`
 trigger from migration 0013 raises when a not-ready touch is marked sent. That is
@@ -251,7 +272,7 @@ supplies `sent_body` (§3).
 |----|------|----------|------------|
 | **G-R1** | The system holds a send-capable token; a future bug or careless change sends mail unattended | **High** | G3: no call site, CI grep, `35-` §13 amendment naming any system-initiated send as a fresh B2 crossing |
 | **G-R2** | Mis-correlation attributes a send to the wrong touch, silently corrupting touch-of-first-reply | **Medium** | Three independent keys (§4); disagreement alerts rather than picking |
-| **G-R3** | A draft is created for a packet that later goes stale, and is sent with a now-false claim | **Medium** | Creation gated on `ready` (§6); staleness alert on existing drafts; the §6 open sub-question |
+| **G-R3** | A draft is created for a packet that later goes stale, and is sent with a now-false claim | **Medium** | Creation gated on **evidence freshness** (not on `ready` — see the §6 amendment); staleness alert on existing drafts; the §6 open sub-question |
 | **G-R4** | Duplicate drafts accumulate — `outreach-daily` regenerates packets every morning | Low | Idempotent on `gmail_draft_id`; update-in-place only when unedited |
 | **G-R5** | Refresh token revoked (password change, admin action) and the loop silently stops drafting | Low | Ted alert on auth failure; the loop is visible in the morning briefing line either way |
 | **G-R6** | Scope creep back to `gmail.readonly` for convenience | Medium | G2 is an operator decision, not an implementation detail — V2 failing means **returning to the operator**, per §7 |
