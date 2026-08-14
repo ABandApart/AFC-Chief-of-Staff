@@ -17,7 +17,7 @@ CSV columns — `company_name`, `company_domain`, `stage`, `trigger_kind`,
 `trigger_source_url` are optional:
 
     company_name,company_domain,stage,trigger_kind,trigger_date,careers_url
-    Cadence Health,cadence.health,series_a,req_open_45d,2026-06-17,https://boards.greenhouse.io/cadencehealth
+    Cadence Health,cadence.health,series_a,request_open_past_45_days,2026-06-17,https://boards.greenhouse.io/cadencehealth
 
 `careers_url` is worth filling in on every row: it is what the evidence poller
 walks, and posting age only accrues from the day polling starts.
@@ -44,10 +44,30 @@ OPTIONAL = (
     "contact_email", "contact_linkedin_url", "trigger_source_url",
 )
 
-# Mirrors the `stage` comment in migration 0013. Checked here rather than by a DB
-# constraint because the spec's house convention is TEXT-with-an-enumerating-
-# comment — but a typo'd stage silently breaks S2 scoring, so the import refuses.
-VALID_STAGES = ("seed", "series_a", "series_b_plus")
+# Mirrors `outreach_targets_stage_values_ck` (migration 0014). Kept here too so a
+# bad CSV fails with a line number rather than a constraint violation halfway
+# through the file.
+#
+# `mature` exists because the first real target list was established, non-venture
+# firms with no funding stage, and the importer's only options were to fabricate
+# one or refuse the row (operator, 2026-08-13). The startup ladder stays — both
+# populations are expected in the mix.
+VALID_STAGES = ("seed", "series_a", "series_b_plus", "mature")
+
+# The eight triggers (35- §2, enumerated by the operator 2026-08-13) —
+# `outreach_targets_trigger_kind_ck` enforces the same set in the database.
+# `inbound_enquiry` is deliberately absent: that is Roy Kent's hand-off, never
+# something a CSV import should be able to mint.
+VALID_TRIGGER_KINDS = (
+    "executive_departure",
+    "request_open_past_45_days",
+    "new_executive_hire",
+    "second_raise",
+    "funding_announced",
+    "restructuring_or_layoffs",
+    "market_or_region_expansion",
+    "product_launch",
+)
 
 
 def parse_row(row: dict[str, str], *, line: int) -> dict[str, Any]:
@@ -67,6 +87,13 @@ def parse_row(row: dict[str, str], *, line: int) -> dict[str, Any]:
             f"line {line}: stage {stage!r} is not one of {', '.join(VALID_STAGES)}"
         )
 
+    trigger_kind = clean["trigger_kind"]
+    if trigger_kind not in VALID_TRIGGER_KINDS:
+        raise ValueError(
+            f"line {line}: trigger_kind {trigger_kind!r} is not one of "
+            f"{', '.join(VALID_TRIGGER_KINDS)}"
+        )
+
     raw_date = clean["trigger_date"]
     try:
         trigger_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
@@ -81,7 +108,7 @@ def parse_row(row: dict[str, str], *, line: int) -> dict[str, Any]:
         "company_name": clean["company_name"],
         "company_domain": clean["company_domain"],
         "stage": stage,
-        "trigger_kind": clean["trigger_kind"],
+        "trigger_kind": trigger_kind,
         "trigger_date": trigger_date,
     }
     for col in OPTIONAL:

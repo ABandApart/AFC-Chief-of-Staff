@@ -135,6 +135,22 @@ SELECT
 FROM expected e
 ORDER BY e.tbl;
 
+-- Vocabulary constraints (migration 0014). `stage` must be NULLABLE — a target
+-- whose stage is genuinely unknown has to be able to say so, because 0013's
+-- not-null rule is what forced six fabricated stages into the first real import.
+SELECT
+    CASE WHEN NOT EXISTS (
+             SELECT FROM pg_constraint WHERE conname = 'outreach_targets_stage_ck')
+          AND EXISTS (
+             SELECT FROM pg_constraint WHERE conname = 'outreach_targets_stage_values_ck')
+          AND EXISTS (
+             SELECT FROM pg_constraint WHERE conname = 'outreach_targets_trigger_kind_ck')
+          AND (SELECT is_nullable FROM information_schema.columns
+                WHERE table_name = 'outreach_targets' AND column_name = 'stage') = 'YES'
+         THEN 'OK   0014 vocabulary: stage nullable + value-checked, trigger_kind pinned'
+         ELSE 'FAIL 0014 not applied cleanly — check stage nullability and the two CHECKs'
+    END AS vocabulary_status;
+
 -- The runtime app connects as barry_agent; objects it must write have to be
 -- owned by it (the bug 0011 fixed for tool_invocations — silent write failures).
 SELECT

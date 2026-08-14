@@ -124,7 +124,7 @@ TARGET = {
     "company_name": "Cadence Health",
     "company_domain": "https://WWW.Cadence.Health/",
     "stage": "series_a",
-    "trigger_kind": "req_open_45d",
+    "trigger_kind": "request_open_past_45_days",
     "trigger_date": date(2026, 6, 17),
 }
 

@@ -111,7 +111,10 @@ CREATE TABLE outreach_targets (
     careers_url             TEXT,            -- polled by the evidence loop (§6)
     sector                  TEXT,
 
-    stage                   TEXT NOT NULL,   -- 'seed'|'series_a'|'series_b_plus'
+    stage                   TEXT,            -- 'seed'|'series_a'|'series_b_plus'|'mature'
+                                             -- NULLABLE since 0014: an unknown stage
+                                             -- scores as absent, never as wrong.
+                                             -- Required before in_sequence (seq_ck).
     function_state          TEXT,            -- 'self_covered'|'under_led'|'vacant_seat'
                                              -- NULL until the two-tab diagnostic is done
 
@@ -121,6 +124,7 @@ CREATE TABLE outreach_targets (
     contact_linkedin_url    TEXT,
 
     trigger_kind            TEXT NOT NULL,   -- the eight triggers, plus 'inbound_enquiry'
+                                             -- (enumerated below — CHECK-pinned in 0014)
     trigger_date            DATE NOT NULL,   -- the arc anchors HERE
     trigger_source_url      TEXT,
 
@@ -171,6 +175,31 @@ CREATE INDEX outreach_targets_status_idx        ON outreach_targets (status, tri
 CREATE INDEX outreach_targets_watch_idx         ON outreach_targets (watch_until)
     WHERE status IN ('watchlist','lost_to_hire');
 ```
+
+### The eight triggers
+
+<triggers>
+
+**Added 2026-08-13 (operator).** Versions up to 0.3.0 referred to "the eight
+triggers" in three places — here, §10, and `40-action-layer.md`'s Trent Crimm
+spec — and enumerated them nowhere. Unconstrained, the vocabulary drifted on
+first contact with real data (`request_open_past_45_days` in the seeded set vs
+`req_open_45d` in an example). They are now CHECK-pinned by migration 0014, and
+this table is the source both the constraint and `cli/outreach_import.py` follow.
+
+| `trigger_kind` | Notes |
+|----------------|-------|
+| `executive_departure` | The highest-converting trigger in the method; detection remains open (OQ1) |
+| `request_open_past_45_days` | Feeds S4's top band and T10's posting-date mechanic — the evidence poller's whole purpose |
+| `new_executive_hire` | |
+| `second_raise` | The second-raise mechanic (`36-` I4) |
+| `funding_announced` | |
+| `restructuring_or_layoffs` | |
+| `market_or_region_expansion` | |
+| `product_launch` | |
+| `inbound_enquiry` | **Not a cold trigger.** Roy Kent's hand-off (§5 D2); never materialises the arc (`36-` I1), and the CSV importer deliberately cannot mint it. |
+
+</triggers>
 
 ### Evidence — the new core table
 

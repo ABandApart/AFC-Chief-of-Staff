@@ -17,7 +17,7 @@ ROW = {
     "company_name": "Cadence Health",
     "company_domain": "cadence.health",
     "stage": "series_a",
-    "trigger_kind": "req_open_45d",
+    "trigger_kind": "request_open_past_45_days",
     "trigger_date": "2026-06-17",
 }
 
@@ -61,6 +61,37 @@ def test_parse_row_rejects_an_unknown_stage():
         outreach_import.parse_row({**ROW, "stage": "series-a"}, line=2)
 
 
+@pytest.mark.parametrize("stage", ["seed", "series_a", "series_b_plus", "mature"])
+def test_parse_row_accepts_every_stage_including_mature(stage):
+    # `mature` exists because the real target list is established non-venture
+    # firms; without it the importer's only options were fabricate or refuse.
+    assert outreach_import.parse_row({**ROW, "stage": stage}, line=2)["stage"] == stage
+
+
+@pytest.mark.parametrize("trigger", list(outreach_import.VALID_TRIGGER_KINDS))
+def test_parse_row_accepts_each_of_the_eight_triggers(trigger):
+    out = outreach_import.parse_row({**ROW, "trigger_kind": trigger}, line=2)
+    assert out["trigger_kind"] == trigger
+
+
+def test_the_eight_triggers_are_eight():
+    assert len(outreach_import.VALID_TRIGGER_KINDS) == 8
+
+
+def test_parse_row_rejects_trigger_vocabulary_drift():
+    # `req_open_45d` was a real example in migration 0013's comments; the seeded
+    # data used `request_open_past_45_days`. Unconstrained, both would coexist.
+    with pytest.raises(ValueError, match="trigger_kind"):
+        outreach_import.parse_row({**ROW, "trigger_kind": "req_open_45d"}, line=2)
+
+
+def test_import_cannot_mint_an_inbound_trigger():
+    # inbound_enquiry is Roy Kent's hand-off. A CSV must not be able to create a
+    # row that claims to be an inbound lead — 36- I1 hangs off that value.
+    with pytest.raises(ValueError, match="trigger_kind"):
+        outreach_import.parse_row({**ROW, "trigger_kind": "inbound_enquiry"}, line=2)
+
+
 def test_parse_row_rejects_a_malformed_date():
     with pytest.raises(ValueError, match="YYYY-MM-DD"):
         outreach_import.parse_row({**ROW, "trigger_date": "17/06/2026"}, line=2)
@@ -88,8 +119,8 @@ HEADER = "company_name,company_domain,stage,trigger_kind,trigger_date\n"
 
 def test_read_targets_parses_all_rows(tmp_path):
     path = _write(tmp_path, HEADER
-                  + "Acme,acme.com,seed,funding_round,2026-05-01\n"
-                  + "Cadence,cadence.health,series_a,req_open_45d,2026-06-17\n")
+                  + "Acme,acme.com,seed,funding_announced,2026-05-01\n"
+                  + "Cadence,cadence.health,series_a,request_open_past_45_days,2026-06-17\n")
     assert [t["company_name"] for t in outreach_import.read_targets(path)] == ["Acme", "Cadence"]
 
 
@@ -102,7 +133,7 @@ def test_read_targets_fails_the_whole_file_on_one_bad_row(tmp_path):
     # All-or-nothing: a half-applied import leaves the operator guessing which
     # rows landed.
     path = _write(tmp_path, HEADER
-                  + "Acme,acme.com,seed,funding_round,2026-05-01\n"
-                  + "Bad,bad.com,NOT_A_STAGE,funding_round,2026-05-01\n")
+                  + "Acme,acme.com,seed,funding_announced,2026-05-01\n"
+                  + "Bad,bad.com,NOT_A_STAGE,funding_announced,2026-05-01\n")
     with pytest.raises(ValueError, match="line 3"):
         outreach_import.read_targets(path)
