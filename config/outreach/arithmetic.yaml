@@ -1,0 +1,58 @@
+# Arithmetic constants for packet assembly (Track O, `35-` §7)
+#
+# The packet's highest-value element and a purely computed one: posting age plus
+# search-window maths, precomputed so the operator never does it at the keyboard.
+# §7's worked example —
+#
+#   "Req first seen 10 Jun — 56 days, confirmed open today. Searches at this
+#    level run 90-120 days, then ramp. Revenue is effectively unled through Q3,
+#    the quarter the raise was meant to accelerate."
+#
+# The method's own guidance is that doing the arithmetic out loud converts better
+# than asserting urgency, because the reader finishes the calculation themselves.
+#
+# ---------------------------------------------------------------------------
+# THESE NUMBERS ARE NOT INVENTED — the template copy already states them.
+# ---------------------------------------------------------------------------
+# T10 and touch-4 both say, verbatim: "Searches at that level run ninety to a
+# hundred and twenty days, then ramp" and "two quarters where [function] is
+# effectively unled". T19's trigger condition is "a search running more than
+# sixty days".
+#
+# So the constants below are transcribed from the copy, and that direction
+# matters: if these drifted from the templates, a packet's computed arithmetic
+# would contradict the sentence sitting directly beneath it in the same email.
+# Change the copy and this file together, or not at all.
+# ---------------------------------------------------------------------------
+
+version: 1
+
+search:
+  # "Searches at that level run ninety to a hundred and twenty days" (T10,
+  # touch-4). Executive search only — this is the number the whole T10 mechanic
+  # rests on, which is why `derive_function` refuses to fire on IC reqs.
+  duration_days_low: 90
+  duration_days_high: 120
+
+  # "then ramp" — the period after a hire lands before they are productive.
+  # Stated qualitatively in the copy, quantified here for the projection only.
+  # NOT asserted in any sentence, so it cannot contradict the templates.
+  ramp_days: 90
+
+  # T19: "a search running more than sixty days" is the condition for citing
+  # cost-of-the-open-seat. Mirrors the Selector's slot-1 rule for series_b_plus.
+  visible_vacancy_days: 60
+
+# "That is two quarters where [function] is effectively unled, during the two
+# quarters you raised the money to accelerate." Used to phrase the impact
+# window, not to compute the fill date.
+impact:
+  unled_quarters: 2
+
+# Freshness gates on the arithmetic (`35-` §3). Stale facts are EXCLUDED from
+# the computation entirely — a req that closed three weeks ago rendered as
+# "open 56 days" is specific, confident, wrong, and checkable in one click,
+# which is R19, the dominant risk since the generation removal.
+freshness:
+  ageing_after_days: 7
+  stale_after_days: 14
