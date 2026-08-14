@@ -151,6 +151,24 @@ SELECT
          ELSE 'FAIL 0014 not applied cleanly — check stage nullability and the two CHECKs'
     END AS vocabulary_status;
 
+-- View-column drift. `v_outreach_scored` is `SELECT t.*, <computed>`, and a
+-- view's column list is FROZEN at creation — so any migration adding a column to
+-- outreach_targets must drop and recreate it (0016 had to). Without this check
+-- the drift shows up as "column X does not exist" from a query against the view
+-- while the column plainly exists on the table.
+SELECT
+    CASE WHEN NOT EXISTS (
+        SELECT c.column_name
+        FROM information_schema.columns c
+        WHERE c.table_schema = 'public' AND c.table_name = 'outreach_targets'
+        EXCEPT
+        SELECT v.column_name
+        FROM information_schema.columns v
+        WHERE v.table_schema = 'public' AND v.table_name = 'v_outreach_scored'
+    ) THEN 'OK   v_outreach_scored exposes every outreach_targets column'
+      ELSE 'FAIL v_outreach_scored is stale — recreate it (see migration 0016)'
+    END AS view_drift_status;
+
 -- The runtime app connects as barry_agent; objects it must write have to be
 -- owned by it (the bug 0011 fixed for tool_invocations — silent write failures).
 SELECT
