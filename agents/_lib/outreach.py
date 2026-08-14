@@ -28,6 +28,7 @@ Everything that mutates state here is also covered by the DB audit trigger
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from typing import Any
 
@@ -53,9 +54,14 @@ _IMPORT_REFRESHABLE = (
     "sector",
     "stage",
     "contact_name",
+    "contact_first_name",
     "contact_role",
     "contact_email",
     "contact_linkedin_url",
+    # `function` is refreshable, unlike `function_state`. The CSV is allowed to
+    # name which function is being pitched into; only its *diagnosis* is the
+    # operator's two-tab judgement and therefore protected (D1).
+    "function",
     "cognee_node_id",
 )
 
@@ -105,6 +111,104 @@ def company_domain_from_email(email: str | None) -> str | None:
     return domain
 
 
+# --- [function] derivation (migration 0015) ----------------------------------
+# `[function]` is a bare noun for substitution — "I run revenue fractionally".
+# It is derived from an open **leadership** req's title, with the level stripped.
+#
+# The leadership restriction is the load-bearing part, not fussiness. T10's whole
+# mechanic is that an *executive* search runs 90–120 days, and `35-` §2 already
+# separates `open_role` (feeds S4, the leadership gap) from `ic_hire` (feeds S5,
+# team-build-below). Deriving a function from "Account Executive" would claim the
+# revenue function is unled when the company is simply hiring a rep — a specific,
+# confident, checkable falsehood of exactly the kind R19 is about.
+
+# Titles at or above the seat a fractional engagement holds. "Manager" and "Lead"
+# are deliberately absent: they are first-line or IC-plus, and a manager req does
+# not mean the function is unowned.
+_LEADERSHIP_MARKERS = (
+    "chief", "vice president", "vp", "svp", "evp", "head of", "director",
+    "president", "partner",
+)
+
+# Words carrying rank rather than function — stripped once a marker is found.
+_RANK_WORDS = frozenset({
+    "senior", "sr", "junior", "jr", "global", "regional", "group", "deputy",
+    "associate", "assistant", "interim", "fractional", "officer", "of", "and",
+    "the", "for", "executive",
+})
+
+# Acronyms that carry their own function. `CPO` is omitted on purpose — it means
+# Chief Product Officer or Chief People Officer depending on the company, and
+# guessing wrong puts the wrong noun in a sentence about what is unled.
+_ACRONYM_FUNCTIONS = {
+    "cro": "revenue", "cmo": "marketing", "cfo": "finance",
+    "coo": "operations", "cto": "technology", "chro": "people",
+    "ciso": "security", "cio": "technology",
+}
+
+
+def derive_function(role_title: str | None) -> str | None:
+    """The bare function noun implied by a leadership job title (pure).
+
+    Returns None — meaning "operator, you tell me" — for IC titles, bare
+    acronyms we cannot disambiguate, and anything that reduces to nothing. A
+    NULL `function` blocks the placeholder; a wrong one ships a confident claim
+    about the wrong department.
+
+        "VP Revenue"                 -> "revenue"
+        "Chief Revenue Officer"      -> "revenue"
+        "Senior Director, Finance"   -> "finance"
+        "Account Executive"          -> None      (an IC req, not a leadership gap)
+    """
+    if not role_title:
+        return None
+    text = re.sub(r"[^a-z0-9\s]+", " ", role_title.lower())
+    words = text.split()
+    if not words:
+        return None
+
+    if len(words) == 1 and words[0] in _ACRONYM_FUNCTIONS:
+        return _ACRONYM_FUNCTIONS[words[0]]
+
+    # Find the leadership marker. Longest markers first so "vice president"
+    # matches before the bare "vp", and "head of" consumes its own connector.
+    remainder: list[str] | None = None
+    for marker in sorted(_LEADERSHIP_MARKERS, key=len, reverse=True):
+        marker_words = marker.split()
+        for i in range(len(words) - len(marker_words) + 1):
+            if words[i:i + len(marker_words)] == marker_words:
+                remainder = words[:i] + words[i + len(marker_words):]
+                break
+        if remainder is not None:
+            break
+    if remainder is None:
+        return None            # no leadership marker — an IC req
+
+    kept = [w for w in remainder if w not in _RANK_WORDS]
+    return " ".join(kept) or None
+
+
+def suggest_first_name(contact_name: str | None) -> str | None:
+    """A *suggested* greeting name from a full name (pure) — never auto-applied.
+
+    Display only: the gaps report offers it so filling `contact_first_name` is
+    quick. It is deliberately not written anywhere, because the cases it gets
+    wrong (honorifics, initials) are exactly the ones that would produce
+    "Hi Dr.," in the first line a prospect reads.
+    """
+    if not contact_name:
+        return None
+    honorifics = {"mr", "mrs", "ms", "miss", "dr", "prof", "sir", "rev"}
+    for token in contact_name.split():
+        cleaned = token.strip(".,").strip()
+        if not cleaned or cleaned.lower() in honorifics:
+            continue
+        if len(cleaned) <= 1:      # a bare initial tells us nothing
+            return None
+        return cleaned
+    return None
+
+
 def normalize_domain(raw: str) -> str:
     """Normalize a company domain to the import dedup key (pure).
 
@@ -135,21 +239,16 @@ def upsert_target(conn: object, target: dict[str, Any]) -> dict[str, Any]:
     row = dict(target)
     row["company_domain"] = normalize_domain(row["company_domain"])
     for key in ("company_name", "company_url", "careers_url", "sector", "stage",
-                "contact_name", "contact_role", "contact_email",
-                "contact_linkedin_url", "trigger_kind", "trigger_source_url",
-                "cognee_node_id"):
+                "contact_name", "contact_first_name", "contact_role",
+                "contact_email", "contact_linkedin_url", "trigger_kind",
+                "trigger_source_url", "function", "cognee_node_id"):
         if key in row:
             row[key] = clean_field(row[key])
-    row.setdefault("company_url", None)
-    row.setdefault("careers_url", None)
-    row.setdefault("sector", None)
-    row.setdefault("contact_name", None)
-    row.setdefault("contact_role", None)
-    row.setdefault("contact_email", None)
-    row.setdefault("contact_linkedin_url", None)
-    row.setdefault("trigger_source_url", None)
-    row.setdefault("cognee_node_id", None)
-    row.setdefault("prospect_id", None)
+    for key in ("company_url", "careers_url", "sector", "contact_name",
+                "contact_first_name", "contact_role", "contact_email",
+                "contact_linkedin_url", "trigger_source_url", "function",
+                "cognee_node_id", "prospect_id"):
+        row.setdefault(key, None)
 
     # Refreshable columns COALESCE so a sparse import doesn't blank existing data.
     # trigger_* move forward only. Judgement columns are absent by construction.
@@ -160,13 +259,15 @@ def upsert_target(conn: object, target: dict[str, Any]) -> dict[str, Any]:
     sql = f"""
         INSERT INTO outreach_targets (
             company_name, company_domain, company_url, careers_url, sector, stage,
-            contact_name, contact_role, contact_email, contact_linkedin_url,
-            trigger_kind, trigger_date, trigger_source_url, cognee_node_id, prospect_id
+            contact_name, contact_first_name, contact_role, contact_email,
+            contact_linkedin_url, trigger_kind, trigger_date, trigger_source_url,
+            function, cognee_node_id, prospect_id
         ) VALUES (
             %(company_name)s, %(company_domain)s, %(company_url)s, %(careers_url)s,
-            %(sector)s, %(stage)s, %(contact_name)s, %(contact_role)s,
-            %(contact_email)s, %(contact_linkedin_url)s, %(trigger_kind)s,
-            %(trigger_date)s, %(trigger_source_url)s, %(cognee_node_id)s, %(prospect_id)s
+            %(sector)s, %(stage)s, %(contact_name)s, %(contact_first_name)s,
+            %(contact_role)s, %(contact_email)s, %(contact_linkedin_url)s,
+            %(trigger_kind)s, %(trigger_date)s, %(trigger_source_url)s,
+            %(function)s, %(cognee_node_id)s, %(prospect_id)s
         )
         ON CONFLICT (company_domain) DO UPDATE SET
                 {refresh},
@@ -277,6 +378,39 @@ def close_absent_evidence(
              "seen_keys": seen_keys, "today": today},
         )
         return cur.rowcount
+
+
+def backfill_function(conn: object, target_id: int, role_titles: list[str]) -> str | None:
+    """Fill a NULL `function` from the leadership reqs just observed.
+
+    Returns the value written, or None if nothing was written. **Only ever fills
+    a NULL** — `WHERE function IS NULL` in the statement, not a check in Python,
+    so a value the operator corrected survives every subsequent poll regardless
+    of what the board says next.
+
+    Where several leadership reqs are open, the first derivable one wins. That is
+    arbitrary between equals and deliberately so: the column exists to be
+    overridden, and guessing harder at which of two open exec seats to name would
+    not make the guess more right.
+    """
+    for title in role_titles:
+        derived = derive_function(title)
+        if derived is None:
+            continue
+        with conn.cursor() as cur:  # type: ignore[attr-defined]
+            cur.execute(
+                "UPDATE outreach_targets SET function = %s "
+                "WHERE id = %s AND function IS NULL",
+                (derived, target_id),
+            )
+            if cur.rowcount:
+                logger.info(
+                    "outreach: derived function=%r for target %s from %r",
+                    derived, target_id, title,
+                )
+                return derived
+        return None            # a function was already set — leave it alone
+    return None
 
 
 def pollable_targets(conn: object) -> list[dict[str, Any]]:

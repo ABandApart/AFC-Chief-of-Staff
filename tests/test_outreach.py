@@ -20,6 +20,110 @@ import pytest
 
 from agents._lib import outreach
 
+# --- derive_function (pure, migration 0015) -----------------------------------
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("VP Revenue", "revenue"),
+    ("VP of Revenue", "revenue"),
+    ("Vice President, Marketing", "marketing"),
+    ("Head of Marketing", "marketing"),
+    ("Director of Finance", "finance"),
+    ("Senior Director, People Operations", "people operations"),
+    ("Chief Revenue Officer", "revenue"),
+    ("Global VP, Customer Success", "customer success"),
+    ("Interim Head of Product", "product"),
+])
+def test_derive_function_strips_the_leadership_level(title, expected):
+    assert outreach.derive_function(title) == expected
+
+
+@pytest.mark.parametrize("acronym,expected", [
+    ("CRO", "revenue"), ("CMO", "marketing"), ("CFO", "finance"),
+    ("COO", "operations"), ("CTO", "technology"),
+])
+def test_derive_function_resolves_unambiguous_acronyms(acronym, expected):
+    assert outreach.derive_function(acronym) == expected
+
+
+def test_cpo_is_deliberately_not_guessed():
+    # Chief Product Officer or Chief People Officer, depending on the company.
+    # Guessing wrong puts the wrong noun in a sentence about what is unled.
+    assert outreach.derive_function("CPO") is None
+
+
+@pytest.mark.parametrize("title", [
+    "Account Executive", "Sales Consultant", "Change Management Consultant",
+    "Senior Marketing Manager", "QA Engineering Lead", "Client Success Associate",
+    "General Application", None, "", "   ",
+])
+def test_derive_function_refuses_non_leadership_titles(title):
+    # THE restriction that matters. T10's mechanic is that an *executive* search
+    # runs 90-120 days; `35-` separates open_role (S4, leadership gap) from
+    # ic_hire (S5, team-build-below). Deriving "revenue" from an open AE req
+    # would claim the function is unled when they are hiring a rep.
+    assert outreach.derive_function(title) is None
+
+
+def test_derive_function_returns_none_when_nothing_survives_stripping():
+    assert outreach.derive_function("Senior Vice President") is None
+    assert outreach.derive_function("Chief of Staff") == "staff"
+
+
+# --- suggest_first_name (pure, display only) ---------------------------------
+
+
+@pytest.mark.parametrize("full,expected", [
+    ("Jane Smith", "Jane"),
+    ("Dr. Jane Smith", "Jane"),
+    ("Prof Jane Smith", "Jane"),
+    ("Jean-Pierre Dupont", "Jean-Pierre"),
+    ("Jane van der Berg", "Jane"),
+])
+def test_suggest_first_name(full, expected):
+    assert outreach.suggest_first_name(full) == expected
+
+
+@pytest.mark.parametrize("full", ["J. Smith", "", None, "Dr."])
+def test_suggest_first_name_declines_rather_than_guessing(full):
+    # A bare initial or an honorific alone tells us nothing, and this feeds the
+    # greeting — the first line a cold prospect reads. None is the right answer.
+    assert outreach.suggest_first_name(full) is None
+
+
+# --- backfill_function --------------------------------------------------------
+
+
+def test_backfill_function_only_ever_fills_a_null(mocker):
+    conn, cur = _conn(mocker)
+    cur.rowcount = 1
+    assert outreach.backfill_function(conn, 7, ["VP Revenue"]) == "revenue"
+    sql, params = cur.execute.call_args.args
+    # The guard is in the STATEMENT, not in Python — an operator's correction
+    # survives every later poll regardless of what the board says next.
+    assert "function IS NULL" in sql
+    assert params == ("revenue", 7)
+
+
+def test_backfill_function_reports_nothing_written_when_already_set(mocker):
+    conn, cur = _conn(mocker)
+    cur.rowcount = 0                      # the WHERE matched no row
+    assert outreach.backfill_function(conn, 7, ["VP Revenue"]) is None
+
+
+def test_backfill_function_skips_ic_titles_entirely(mocker):
+    conn, cur = _conn(mocker)
+    assert outreach.backfill_function(conn, 7, ["Account Executive", "Sales Rep"]) is None
+    cur.execute.assert_not_called()       # nothing derivable → no write attempted
+
+
+def test_backfill_function_uses_the_first_derivable_leadership_title(mocker):
+    conn, cur = _conn(mocker)
+    cur.rowcount = 1
+    result = outreach.backfill_function(conn, 7, ["Account Executive", "Head of Finance"])
+    assert result == "finance"
+
+
 # --- normalize_domain (pure) --------------------------------------------------
 
 

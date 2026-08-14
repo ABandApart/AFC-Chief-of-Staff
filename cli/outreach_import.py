@@ -42,6 +42,13 @@ REQUIRED = ("company_name", "company_domain", "stage", "trigger_kind", "trigger_
 OPTIONAL = (
     "company_url", "careers_url", "sector", "contact_name", "contact_role",
     "contact_email", "contact_linkedin_url", "trigger_source_url",
+    # `contact_first_name` is the greeting name and is set HERE or not at all —
+    # it is never split from `contact_name` at send time (migration 0015).
+    "contact_first_name",
+    # `function` is the bare noun templates substitute ("revenue", not "VP
+    # Revenue"). Left blank, the evidence poller derives it from an open
+    # leadership req; a value here wins and is never overwritten by that.
+    "function",
 )
 
 # Mirrors `outreach_targets_stage_values_ck` (migration 0014). Kept here too so a

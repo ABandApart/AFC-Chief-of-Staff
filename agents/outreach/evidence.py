@@ -72,6 +72,12 @@ def poll_target(conn: object, target: dict, *, today: date) -> dict[str, int | s
         conn, target_id=target["id"], fact_kind="open_role",
         seen_keys=seen_keys, today=today,
     )
+
+    # Opportunistic: an open *leadership* req names the function the templates
+    # substitute into. Fills a NULL only, so an operator correction is permanent.
+    outreach.backfill_function(
+        conn, target["id"], [r["title"] for r in result.roles]
+    )
     logger.info(
         "outreach: %s — %d open role(s) (%d new, %d closed) via %s",
         target["company_name"], len(result.roles), new_count, closed, result.provider,

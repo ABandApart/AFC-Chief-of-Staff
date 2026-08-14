@@ -14,7 +14,8 @@ HEALTHY = {
     "id": 1, "company_name": "Acme", "status": "candidate",
     "careers_url": "https://jobs.lever.co/acme",
     "stage": "series_a", "trigger_kind": "funding_announced",
-    "contact_name": "Jane Smith", "contact_email": "jane@acme.com",
+    "contact_name": "Jane Smith", "contact_first_name": "Jane",
+    "contact_email": "jane@acme.com", "function": "revenue",
     "unscored": False, "open_roles": 2, "days_since_confirmed": 0,
 }
 
@@ -39,6 +40,27 @@ def test_missing_stage_blocks_sequencing():
 def test_missing_contact_fields_block():
     assert "blocker" in _severities({**HEALTHY, "contact_name": None})
     assert "blocker" in _severities({**HEALTHY, "contact_email": None})
+
+
+def test_missing_first_name_blocks_and_offers_a_suggestion():
+    # Offered, never applied — a wrong guess lands in the greeting.
+    gaps = outreach_gaps.find_gaps({**HEALTHY, "contact_first_name": None})
+    assert any(s == "blocker" and "'Jane'" in m for s, m in gaps)
+
+
+def test_first_name_gap_omits_the_suggestion_when_none_is_safe():
+    gaps = outreach_gaps.find_gaps(
+        {**HEALTHY, "contact_name": "J. Smith", "contact_first_name": None}
+    )
+    assert any("no contact_first_name" in m and "suggestion" not in m for _, m in gaps)
+
+
+def test_missing_function_is_incomplete_not_a_blocker():
+    # The poller may still derive it from an open leadership req, so this is
+    # "not yet", not "cannot".
+    gaps = outreach_gaps.find_gaps({**HEALTHY, "function": None})
+    assert any(s == "incomplete" and "most-used placeholder" in m for s, m in gaps)
+    assert "blocker" not in [s for s, _ in gaps]
 
 
 # --- evidence acquisition ------------------------------------------------------

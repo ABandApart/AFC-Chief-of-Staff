@@ -1,0 +1,21 @@
+# Sender identity — the constants that are the same on every outreach message.
+#
+# Separate from `selector.yaml` on purpose: that file answers "which template",
+# this one answers "who is sending". Packet assembly reads both.
+#
+# `[Your Name]` is the sign-off line, so it is the operator, not the contact —
+# it appears after the closing question in every template in the pack.
+
+version: 1
+
+sender:
+  # The sign-off. First-name-only matches the register of the pack, which opens
+  # "Hi [First Name]," and closes with a question rather than a title block.
+  # A one-word change if a fuller signature reads better in practice.
+  name: "Barry"
+
+  # Reserved for the BCC send-capture channel (`35-` §8) and the Gmail channel
+  # (`PRD-outreach-gmail-channel.md`). Both are unbuilt; the mailbox provider is
+  # still open decision #2 in `35-` §16, so this is deliberately unset rather
+  # than guessed — a wrong BCC address silently loses every send record.
+  bcc_domain: null

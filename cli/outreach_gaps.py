@@ -35,7 +35,7 @@ from typing import Any
 
 from psycopg.rows import dict_row
 
-from agents._lib import db
+from agents._lib import db, outreach
 from agents.outreach import adapters
 
 # Severity order — also the display order.
@@ -50,7 +50,7 @@ STALE_AFTER_DAYS = 14
 
 _GAPS_SQL = """
     SELECT t.id, t.company_name, t.careers_url, t.stage, t.trigger_kind, t.status,
-           t.contact_name, t.contact_email,
+           t.contact_name, t.contact_first_name, t.contact_email, t.function,
            (t.s2_stage_fit IS NULL OR t.s3_sector_match IS NULL
             OR t.s4_leadership_gap IS NULL OR t.s5_team_build_below IS NULL) AS unscored,
            count(e.id) FILTER (WHERE e.fact_kind = 'open_role'
@@ -80,6 +80,14 @@ def find_gaps(row: dict[str, Any], *, board_ok: bool | None = None) -> list[tupl
                      "and slot 1 has no stage-specific template"))
     if not row.get("contact_name"):
         gaps.append(("blocker", "no contact name — nothing to address the message to"))
+    elif not row.get("contact_first_name"):
+        # Offered, never applied: the report suggests so filling it is quick,
+        # but a wrong guess lands in the greeting, which is the first line read.
+        hint = outreach.suggest_first_name(row["contact_name"])
+        suggestion = f" (suggestion from contact_name: {hint!r})" if hint else ""
+        gaps.append(("blocker",
+                     f"no contact_first_name — [First Name] cannot resolve, so the "
+                     f"greeting blocks{suggestion}"))
     if not row.get("contact_email"):
         gaps.append(("blocker", "no contact email — no way to send"))
 
@@ -113,6 +121,11 @@ def find_gaps(row: dict[str, Any], *, board_ok: bool | None = None) -> list[tupl
                      "so it is excluded from the arithmetic and blocks `ready`"))
 
     # --- incomplete -----------------------------------------------------------
+    if not row.get("function"):
+        gaps.append(("incomplete",
+                     "no function — [function] is the pack's most-used placeholder "
+                     "(57 uses); set it, or wait for an open leadership req the "
+                     "poller can derive it from"))
     if row.get("unscored"):
         gaps.append(("incomplete",
                      "S2-S5 not fully scored — no score, no treatment, cannot reach "
