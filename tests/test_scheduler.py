@@ -74,15 +74,29 @@ def test_next_fire_every_six_hours():
 
 
 def test_scheduler_plans_only_enabled_real_loops():
+    # Asserts the PROPERTY, not the current roster. This test previously
+    # hardcoded the enabled set, so it went red on every intentional
+    # activation — granola-poll's, then outreach-evidence's — training whoever
+    # flipped the flag to just update the constant. A test that fails for
+    # correct changes stops being read as a signal.
     cp = discover(repo_root())
     now = datetime(2026, 1, 1, 0, 0)
     sched = Scheduler(cp, repo_root(), now)
-    names = {name for name, _, _ in sched.plan()}
-    assert names == {"morning-briefing", "nightly-backup", "granola-poll"}
-    # plan is sorted by next fire: granola-poll (*/15 → 00:15) before the 02:00
-    # backup before the 06:00 briefing.
-    ordered = [name for name, _, _ in sched.plan()]
-    assert ordered == ["granola-poll", "nightly-backup", "morning-briefing"]
+    planned = {name for name, _, _ in sched.plan()}
+
+    enabled = {lp.name for lp in cp.enabled_loops()}
+    disabled = {lp.name for lp in cp.loops} - enabled
+
+    assert planned == enabled
+    assert planned.isdisjoint(disabled)   # the thing the name actually promises
+    assert enabled and disabled           # a repo with neither would vacuously pass
+
+
+def test_scheduler_plan_is_ordered_by_next_fire():
+    cp = discover(repo_root())
+    sched = Scheduler(cp, repo_root(), datetime(2026, 1, 1, 0, 0))
+    fire_times = [when for _, when, _ in sched.plan()]
+    assert fire_times == sorted(fire_times)
 
 
 def test_scheduler_briefing_job_invokes_agent_with_playbook():
