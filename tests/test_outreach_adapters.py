@@ -32,11 +32,38 @@ def test_detect_board_recognises_hosted_and_api_urls(url, expected):
     assert adapters.detect_board(url) == expected
 
 
+@pytest.mark.parametrize("url,expected", [
+    ("https://apply.workable.com/aiir-consulting/", ("workable", "aiir-consulting")),
+    ("https://apply.workable.com/unboxed-technology", ("workable", "unboxed-technology")),
+    # Board id from the SUBDOMAIN, not a path segment.
+    ("https://experiencepoint.bamboohr.com/careers", ("bamboohr", "experiencepoint")),
+    ("https://workingvoices.bamboohr.com/careers", ("bamboohr", "workingvoices")),
+    # TeamTailor accounts can contain their own dots — keep the whole prefix.
+    ("https://salesgravy-1748472865.na.teamtailor.com",
+     ("teamtailor", "salesgravy-1748472865.na")),
+    ("https://ats.rippling.com/ttcinnovations/jobs", ("rippling", "ttcinnovations")),
+])
+def test_detect_board_recognises_the_increment_1b_platforms(url, expected):
+    assert adapters.detect_board(url) == expected
+
+
+def test_workable_single_job_link_is_not_a_board():
+    # apply.workable.com/j/<shortcode> is ONE posting. Treating it as a board
+    # would poll a nonexistent account and quietly accrue nothing.
+    assert adapters.detect_board("https://apply.workable.com/j/EF0DC62338") is None
+
+
 @pytest.mark.parametrize("url", [
     None, "", "   ",
     "https://acme.com/careers",              # generic page — no stable role ids
     "https://www.notion.so/acme/jobs",
     "https://boards.greenhouse.io",          # host with no board token
+    # Probed 2026-08-14: no public JSON feed. BreatheHR's .json route is 401,
+    # Hireology and SaaSHR serve HTML only. Unsupported is the honest answer.
+    "https://careers.hireology.com/torrancelearning",
+    "https://hr.breathehr.com/recruitment/vacancies?identifier=roffeypark",
+    "https://secure7.saashr.com/ta/6208035.careers",
+    "https://careers.maximus.com.au/",
 ])
 def test_detect_board_returns_none_for_unsupported(url):
     assert adapters.detect_board(url) is None
@@ -69,6 +96,7 @@ def test_parse_greenhouse():
         "external_id": "4567", "title": "VP Revenue",
         "url": "https://boards.greenhouse.io/acme/jobs/4567",
         "location": "Remote (US)", "team": "Sales",
+        "posted_at": None,   # Greenhouse's board feed carries no publish date
     }
 
 
@@ -92,6 +120,95 @@ def test_parse_ashby():
     }]}
     (role,) = adapters.parse_ashby(payload)
     assert role["external_id"] == "u-9" and role["title"] == "Head of Growth"
+
+
+def test_parse_workable():
+    # Shape captured from the live widget feed, 2026-08-14.
+    payload = {"jobs": [{
+        "title": "QA Engineering Lead", "shortcode": "EF0DC62338",
+        "department": "Product", "url": "https://apply.workable.com/j/EF0DC62338",
+        "published_on": "2026-07-29", "city": "Richmond",
+        "state": "Virginia", "country": "United States",
+    }]}
+    (role,) = adapters.parse_workable(payload)
+    assert role["external_id"] == "EF0DC62338"   # shortcode, not the title
+    assert role["title"] == "QA Engineering Lead"
+    assert role["location"] == "Richmond, Virginia, United States"
+    assert role["team"] == "Product"
+    assert role["posted_at"] == "2026-07-29"
+
+
+def test_parse_bamboohr_reconstructs_the_job_url_from_the_token():
+    # BambooHR's payload has no URL at all — without the token the packet would
+    # show a role with nothing to click through to.
+    payload = {"result": [{
+        "id": "48", "jobOpeningName": "General Application ",
+        "departmentLabel": "All Departments",
+        "location": {"city": "Toronto", "state": "Ontario"},
+    }]}
+    (role,) = adapters.parse_bamboohr(payload, "experiencepoint")
+    assert role["external_id"] == "48"
+    assert role["title"] == "General Application"          # trailing space trimmed
+    assert role["url"] == "https://experiencepoint.bamboohr.com/careers/48"
+    assert role["location"] == "Toronto, Ontario"
+
+
+def test_parse_bamboohr_without_a_token_yields_no_url_not_a_broken_one():
+    payload = {"result": [{"id": "48", "jobOpeningName": "Role"}]}
+    (role,) = adapters.parse_bamboohr(payload, "")
+    assert role["url"] is None
+
+
+def test_parse_teamtailor_ignores_the_description_blob():
+    # H1: evidence carries short bounded fields. content_html is a whole job
+    # description and must not reach the payload.
+    payload = {"items": [{
+        "id": "81bd2305-cf44-46f9-a2f8-8f105eef2dd0",
+        "title": "Sales Consultant and Trainer",
+        "url": "https://x.teamtailor.com/jobs/592669",
+        "date_published": "2026-04-15T10:04:41-04:00",
+        "content_html": "<p>" + "x" * 5000 + "</p>",
+    }]}
+    (role,) = adapters.parse_teamtailor(payload)
+    assert role["external_id"] == "81bd2305-cf44-46f9-a2f8-8f105eef2dd0"
+    assert "x" * 100 not in str(role)          # the blob is nowhere in the role
+    assert role["posted_at"] == "2026-04-15"   # date only, time dropped
+
+
+def test_parse_rippling():
+    payload = [{
+        "uuid": "d524c7fd-6205-4ddb-a861-4ef6e7272f24",
+        "name": "Change Management Consultant",
+        "department": {"label": "Performance Consulting"},
+        "url": "https://ats.rippling.com/ttcinnovations/jobs/d524c7fd",
+        "workLocation": {"label": "Charlotte, NC"},
+    }]
+    (role,) = adapters.parse_rippling(payload)
+    assert role["external_id"] == "d524c7fd-6205-4ddb-a861-4ef6e7272f24"
+    assert role["team"] == "Performance Consulting"
+    assert role["location"] == "Charlotte, NC"
+
+
+def test_posted_at_never_becomes_first_seen_at():
+    # The board's claimed date rides in the payload for display; first_seen_at
+    # stays OUR observation. A provider date can reset on an edit or repost, and
+    # mixing the two would make "open 56 days" mean different things per row.
+    role = {"external_id": "1", "title": "T", "url": None, "posted_at": "2020-01-01"}
+    fact = adapters.role_to_fact(role, "workable")
+    assert fact["payload"]["posted_at"] == "2020-01-01"
+    assert "first_seen_at" not in fact         # the poller stamps it, from today
+
+
+@pytest.mark.parametrize("provider", list(adapters._PARSERS))
+def test_every_provider_has_an_api_url(provider):
+    assert adapters.board_api_url(provider, "acme").startswith("https://")
+
+
+def test_all_seven_platforms_are_wired():
+    assert set(adapters._PARSERS) == {
+        "greenhouse", "lever", "ashby",
+        "workable", "bamboohr", "teamtailor", "rippling",
+    }
 
 
 def test_parsers_skip_postings_with_no_usable_identity():
