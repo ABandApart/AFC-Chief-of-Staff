@@ -43,11 +43,36 @@ def test_parse_row_ignores_blank_optionals_and_trims():
     assert out["company_name"] == "Cadence Health"
 
 
-@pytest.mark.parametrize("missing", list(ROW))
+@pytest.mark.parametrize("missing", list(outreach_import.REQUIRED))
 def test_parse_row_requires_every_required_column(missing):
     row = {**ROW, missing: ""}
     with pytest.raises(ValueError, match="missing required"):
         outreach_import.parse_row(row, line=7)
+
+
+def test_a_blank_stage_imports_as_null():
+    # Migration 0014 made stage nullable precisely so an unknown stage can stay
+    # unknown. `stage` was left in REQUIRED by mistake, which made a blank
+    # un-importable and forced a fabricated value — the exact failure 0014
+    # exists to prevent, reintroduced one layer up (barry-agent, 2026-08-14).
+    out = outreach_import.parse_row({**ROW, "stage": ""}, line=2)
+    assert out["stage"] is None
+
+
+def test_a_missing_stage_column_entirely_is_also_fine():
+    row = {k: v for k, v in ROW.items() if k != "stage"}
+    assert outreach_import.parse_row(row, line=2)["stage"] is None
+
+
+def test_stage_is_not_required():
+    assert "stage" not in outreach_import.REQUIRED
+    assert "stage" in outreach_import.OPTIONAL
+
+
+def test_a_present_but_invalid_stage_is_still_rejected():
+    # Optional does not mean unvalidated: a typo'd stage silently breaks S2.
+    with pytest.raises(ValueError, match="stage"):
+        outreach_import.parse_row({**ROW, "stage": "Mature"}, line=2)
 
 
 def test_parse_row_error_names_the_line():

@@ -85,6 +85,24 @@ def test_genuinely_empty_board_still_closes_absent_evidence(mocker):
     assert cl.call_args.kwargs["seen_keys"] == []
 
 
+def test_one_req_listed_per_location_counts_once(mocker):
+    # Rippling lists a req once per location — ttcInnovations' feed returns 7
+    # entries for 3 distinct postings. The upsert already collapsed them, but
+    # the log said "7 open roles" over 3 stored rows, which reads as a dedup bug
+    # and sends someone hunting one that is not there (barry-agent, 2026-08-14).
+    duplicated = [ROLE, {**ROLE, "location": "Austin"}, {**ROLE, "location": "NYC"}]
+    up, cl = _patch(
+        mocker,
+        result=adapters.BoardResult(ok=True, roles=duplicated, provider="rippling"),
+    )
+    summary = evidence.poll_target(mocker.MagicMock(), TARGET, today=TODAY)
+
+    assert summary["roles"] == 1              # distinct dedup_keys, not listings
+    assert up.call_count == 3                 # every listing still upserts
+    # Close-detection sees the key once, so the ANY(...) list stays clean.
+    assert cl.call_args.kwargs["seen_keys"] == ["rippling:1"]
+
+
 def test_confirming_poll_counts_no_new_facts(mocker):
     _patch(mocker, result=adapters.BoardResult(ok=True, roles=[ROLE], provider="lever"), new=False)
     summary = evidence.poll_target(mocker.MagicMock(), TARGET, today=TODAY)

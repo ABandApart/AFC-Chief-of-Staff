@@ -57,11 +57,16 @@ def poll_target(conn: object, target: dict, *, today: date) -> dict[str, int | s
         )
         return {"status": "skipped", "reason": result.reason or "unknown"}
 
-    seen_keys: list[str] = []
+    # A dict, not a list: several feed entries can share one posting id. Rippling
+    # lists a req once per location, so ttcInnovations' 7 entries are 3 distinct
+    # reqs. The upsert already collapses them — this keeps the COUNT honest too,
+    # since "7 open roles" in the log about 3 stored rows reads as a dedup bug
+    # and sends someone hunting one that is not there.
+    seen_keys: dict[str, None] = {}
     new_count = 0
     for role in result.roles:
         fact = adapters.role_to_fact(role, result.provider or "unknown")
-        seen_keys.append(fact["dedup_key"])
+        seen_keys[fact["dedup_key"]] = None
         row = outreach.evidence_row(fact, target_id=target["id"], today=today)
         if outreach.upsert_evidence(conn, row):
             new_count += 1
@@ -70,7 +75,7 @@ def poll_target(conn: object, target: dict, *, today: date) -> dict[str, int | s
     # an absent key genuinely means the req came down.
     closed = outreach.close_absent_evidence(
         conn, target_id=target["id"], fact_kind="open_role",
-        seen_keys=seen_keys, today=today,
+        seen_keys=list(seen_keys), today=today,
     )
 
     # Opportunistic: an open *leadership* req names the function the templates
@@ -78,12 +83,14 @@ def poll_target(conn: object, target: dict, *, today: date) -> dict[str, int | s
     outreach.backfill_function(
         conn, target["id"], [r["title"] for r in result.roles]
     )
+    distinct = len(seen_keys)
+    listings = "" if distinct == len(result.roles) else f" from {len(result.roles)} listings"
     logger.info(
-        "outreach: %s — %d open role(s) (%d new, %d closed) via %s",
-        target["company_name"], len(result.roles), new_count, closed, result.provider,
+        "outreach: %s — %d open role(s)%s (%d new, %d closed) via %s",
+        target["company_name"], distinct, listings, new_count, closed, result.provider,
     )
     return {
-        "status": "polled", "roles": len(result.roles),
+        "status": "polled", "roles": distinct,
         "new": new_count, "closed": closed,
     }
 

@@ -38,10 +38,18 @@ from typing import Any
 
 from agents._lib import db, outreach
 
-REQUIRED = ("company_name", "company_domain", "stage", "trigger_kind", "trigger_date")
+REQUIRED = ("company_name", "company_domain", "trigger_kind", "trigger_date")
 OPTIONAL = (
     "company_url", "careers_url", "sector", "contact_name", "contact_role",
     "contact_email", "contact_linkedin_url", "trigger_source_url",
+    # `stage` is OPTIONAL, not required — migration 0014 made the column
+    # nullable precisely so an unknown stage can stay unknown. It was left in
+    # REQUIRED by mistake, which made a blank stage un-importable and forced a
+    # fabricated value: the exact failure 0014 exists to prevent, reintroduced
+    # one layer up. When present it is still validated against VALID_STAGES;
+    # sequencing re-imposes the requirement via outreach_targets_seq_ck, which
+    # is the only place stage is actually consumed.
+    "stage",
     # `contact_first_name` is the greeting name and is set HERE or not at all —
     # it is never split from `contact_name` at send time (migration 0015).
     "contact_first_name",
@@ -88,8 +96,10 @@ def parse_row(row: dict[str, str], *, line: int) -> dict[str, Any]:
     if missing:
         raise ValueError(f"line {line}: missing required column(s): {', '.join(missing)}")
 
-    stage = clean["stage"]
-    if stage not in VALID_STAGES:
+    # Blank means genuinely unknown and is allowed through as NULL; a non-blank
+    # value still has to be one of the four.
+    stage = clean.get("stage") or None
+    if stage is not None and stage not in VALID_STAGES:
         raise ValueError(
             f"line {line}: stage {stage!r} is not one of {', '.join(VALID_STAGES)}"
         )
