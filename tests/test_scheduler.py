@@ -92,6 +92,82 @@ def test_scheduler_plans_only_enabled_real_loops():
     assert enabled and disabled           # a repo with neither would vacuously pass
 
 
+def test_reload_picks_up_a_newly_enabled_loop(tmp_path):
+    # THE regression. The scheduler read manifests once at startup and never
+    # again, so `enabled: false -> true` had no effect until someone restarted
+    # the daemon — and nothing said so. outreach-evidence was flipped on, pulled,
+    # and silently never fired for a full night.
+    (tmp_path / "playbooks").mkdir()
+    loops = tmp_path / "loops"
+    loops.mkdir()
+    manifest = loops / "later.md"
+    manifest.write_text(
+        "---\nname: later\nschedule: \"0 */12 * * *\"\ntrigger_kind: scheduled\n"
+        "enabled: false\ncommand: echo hi\ndescription: d\n---\n", encoding="utf-8"
+    )
+    now = datetime(2026, 1, 1, 0, 0)
+    sched = Scheduler(discover(tmp_path), tmp_path, now)
+    assert sched.plan() == []
+
+    manifest.write_text(manifest.read_text().replace("enabled: false", "enabled: true"))
+    added, removed = sched.reload(now)
+
+    assert added == {"later"} and removed == set()
+    assert [n for n, _, _ in sched.plan()] == ["later"]
+
+
+def test_reload_notices_a_disabled_loop(tmp_path):
+    (tmp_path / "playbooks").mkdir()
+    loops = tmp_path / "loops"
+    loops.mkdir()
+    manifest = loops / "going.md"
+    manifest.write_text(
+        "---\nname: going\nschedule: \"0 6 * * *\"\ntrigger_kind: scheduled\n"
+        "enabled: true\ncommand: echo hi\ndescription: d\n---\n", encoding="utf-8"
+    )
+    now = datetime(2026, 1, 1, 0, 0)
+    sched = Scheduler(discover(tmp_path), tmp_path, now)
+    manifest.write_text(manifest.read_text().replace("enabled: true", "enabled: false"))
+
+    added, removed = sched.reload(now)
+    assert removed == {"going"} and sched.plan() == []
+
+
+def test_reload_does_not_reset_an_unchanged_loops_countdown(tmp_path):
+    # Re-reading every 60s must not push next_run forward each time, or a daily
+    # loop would never reach its fire time.
+    (tmp_path / "playbooks").mkdir()
+    loops = tmp_path / "loops"
+    loops.mkdir()
+    (loops / "steady.md").write_text(
+        "---\nname: steady\nschedule: \"0 6 * * *\"\ntrigger_kind: scheduled\n"
+        "enabled: true\ncommand: echo hi\ndescription: d\n---\n", encoding="utf-8"
+    )
+    sched = Scheduler(discover(tmp_path), tmp_path, datetime(2026, 1, 1, 0, 0))
+    before = sched.plan()[0][1]
+
+    sched.reload(datetime(2026, 1, 1, 5, 59))     # a later "now"
+    assert sched.plan()[0][1] == before
+
+
+def test_reload_keeps_the_current_schedule_when_a_manifest_is_broken(tmp_path):
+    # A typo mid-edit must not drop every loop — that turns a mistake into an
+    # outage across the whole control plane.
+    (tmp_path / "playbooks").mkdir()
+    loops = tmp_path / "loops"
+    loops.mkdir()
+    (loops / "good.md").write_text(
+        "---\nname: good\nschedule: \"0 6 * * *\"\ntrigger_kind: scheduled\n"
+        "enabled: true\ncommand: echo hi\ndescription: d\n---\n", encoding="utf-8"
+    )
+    sched = Scheduler(discover(tmp_path), tmp_path, datetime(2026, 1, 1, 0, 0))
+    (loops / "broken.md").write_text("no frontmatter here", encoding="utf-8")
+
+    added, removed = sched.reload(datetime(2026, 1, 1, 0, 1))
+    assert (added, removed) == (set(), set())
+    assert [n for n, _, _ in sched.plan()] == ["good"]
+
+
 def test_scheduler_plan_is_ordered_by_next_fire():
     cp = discover(repo_root())
     sched = Scheduler(cp, repo_root(), datetime(2026, 1, 1, 0, 0))

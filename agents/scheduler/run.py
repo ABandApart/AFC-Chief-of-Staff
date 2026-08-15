@@ -44,6 +44,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# How long the daemon may sleep before re-reading the loop manifests. Bounds how
+# stale the running schedule can be after an activation — one minute, rather than
+# "until someone restarts the daemon", which is what it used to be.
+RELOAD_SECONDS = 60
+
 
 def build_command(loop: Loop, root: Path | str) -> tuple[list[str], dict[str, str]]:
     """Return (argv, env-overlay) to run one loop from the repo root.
@@ -92,6 +97,46 @@ class Scheduler:
             key=lambda t: t[1],
         )
 
+    def reload(self, now: datetime) -> tuple[set[str], set[str]]:
+        """Re-read the manifests. Returns (newly enabled, newly disabled) names.
+
+        **Added 2026-08-15 after this cost a night of polling.** The scheduler
+        read manifests once at startup and never again, so enabling a loop in git
+        had no effect until the daemon happened to be restarted — and nothing
+        said so, in the logs or in `loops/README.md`. `outreach-evidence` was
+        flipped on, pulled, and simply never fired, while every health signal
+        looked fine. A loop that silently never runs is the worst failure this
+        daemon has, because there is nothing to notice.
+
+        A job whose schedule is unchanged keeps its existing `next_run`, so
+        re-reading never resets a countdown or causes a double fire.
+        """
+        cp = discover(self.root)
+        if not cp.ok:
+            # Keep the schedule we already have. Dropping every loop because
+            # someone is mid-edit on one manifest would turn a typo into an
+            # outage.
+            for e in cp.errors:
+                logger.error(
+                    "control-plane error on reload (keeping current schedule): %s", e
+                )
+            return set(), set()
+
+        existing = {j.loop.name: j for j in self.jobs}
+        rebuilt: list[Job] = []
+        for lp in cp.enabled_loops():
+            prior = existing.get(lp.name)
+            if prior is not None and prior.loop.schedule == lp.schedule:
+                rebuilt.append(prior)          # keep its next_run
+            else:
+                argv, env = build_command(lp, self.root)
+                rebuilt.append(Job(lp, argv, env, next_fire(lp.schedule, now)))
+
+        names = {j.loop.name for j in rebuilt}
+        added, removed = names - set(existing), set(existing) - names
+        self.jobs = rebuilt
+        return added, removed
+
     def _fire(self, job: Job) -> None:
         logger.info("firing loop '%s': %s", job.loop.name, job.loop.target)
         env = {**os.environ, **job.env}
@@ -101,15 +146,28 @@ class Scheduler:
             logger.exception("failed to launch loop '%s'", job.loop.name)
 
     def run_forever(self, stop: threading.Event) -> None:
-        if not self.jobs:
-            logger.warning("no enabled loops — scheduler idle until stopped")
-            stop.wait()
-            return
         logger.info("scheduling %d loop(s): %s", len(self.jobs),
-                    ", ".join(j.loop.name for j in self.jobs))
+                    ", ".join(j.loop.name for j in self.jobs) or "(none yet)")
         while not stop.is_set():
+            added, removed = self.reload(datetime.now())
+            if added:
+                logger.info("loop(s) enabled since last check: %s", ", ".join(sorted(added)))
+            if removed:
+                logger.info("loop(s) disabled since last check: %s", ", ".join(sorted(removed)))
+
+            if not self.jobs:
+                # Bounded wait, not an indefinite one: with nothing enabled the
+                # daemon used to block forever, so enabling the first loop
+                # required a restart nobody knew to do.
+                logger.warning("no enabled loops — re-checking in %ds", RELOAD_SECONDS)
+                if stop.wait(timeout=RELOAD_SECONDS):
+                    break
+                continue
+
+            # Never sleep past the next reload, or a loop enabled today would
+            # wait for whatever is scheduled furthest out before being noticed.
             soonest = min(j.next_run for j in self.jobs)
-            wait_s = (soonest - datetime.now()).total_seconds()
+            wait_s = min((soonest - datetime.now()).total_seconds(), RELOAD_SECONDS)
             if wait_s > 0 and stop.wait(timeout=wait_s):
                 break
             now = datetime.now()

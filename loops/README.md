@@ -54,8 +54,18 @@ pull, before anyone has looked.
 
 1. **barry-admin** flips `enabled: false → true` and pushes. Nothing happens yet
    — the repo is not what the scheduler reads.
-2. **barry-agent** pulls. The scheduler picks the manifest up on its next cycle
-   and the loop starts firing on its cron.
+2. **barry-agent** pulls. The scheduler re-reads manifests every 60 seconds, so
+   the loop starts firing on its cron within about a minute.
+
+> **This used to require a daemon restart, and the earlier version of this note
+> said otherwise.** Until 2026-08-15 the scheduler read manifests **once at
+> startup** and never again, so a pulled `enabled: true` did nothing until
+> someone happened to restart `com.aiadaptive.cos.scheduler`. It cost
+> `outreach-evidence` a night of polling: the flag was set, the file was pulled,
+> every health signal looked fine, and the loop simply never fired. `reload()`
+> now runs on each wake and logs what changed. If you are ever debugging a loop
+> that will not fire, `scheduling N loop(s): …` in the scheduler log names
+> exactly what it believes it is running.
 
 **Confirm with the operator before flipping.** Not ceremony: activation is the
 moment a loop starts doing things unattended — spending, calling third parties,
