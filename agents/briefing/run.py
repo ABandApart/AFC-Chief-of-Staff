@@ -168,6 +168,33 @@ def format_new_prospects(prospects: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def fetch_outreach_line(conn: object) -> str:
+    """Track O's one briefing line (`35-` §9), or "" when nothing is live.
+
+    Computed here rather than handed over by the 05:45 loop: the numbers are
+    cheap and reading them live means the briefing can never quote a stale
+    snapshot if that loop failed or was disabled. The loop still has to run
+    first — it is what makes the packets the "not ready" count refers to exist.
+
+    Imported lazily so a briefing on a box without the outreach tables (or with
+    the loop never activated) degrades to omitting the line rather than failing.
+    """
+    try:
+        from agents.outreach import daily
+
+        counts = daily.briefing_counts(conn)
+        with conn.cursor() as cur:  # type: ignore[attr-defined]
+            cur.execute(
+                "SELECT count(*) FROM outreach_packets p WHERE NOT p.ready "
+                "AND p.assembled_at > CURRENT_DATE"
+            )
+            not_ready = cur.fetchone()[0]
+        return daily.format_briefing_line(counts, not_ready)
+    except Exception:
+        logger.exception("briefing: outreach line unavailable — omitting it")
+        return ""
+
+
 def post_to_discord(text: str) -> None:
     """POST one message to #briefing via the REST API (Bot token auth)."""
     req = urllib.request.Request(
@@ -189,6 +216,7 @@ def main() -> int:
     with db.connection() as conn:
         recs = fetch_reading_recs(conn)
         prospects = fetch_new_prospects(conn)
+        outreach_line = fetch_outreach_line(conn)
     pending = task_tinder.count_pending()
     text = format_briefing(datetime.now(), status)
     if pending:
@@ -199,6 +227,8 @@ def main() -> int:
     prospects_text = format_new_prospects(prospects)
     if prospects_text:
         text = f"{text}\n\n{prospects_text}"
+    if outreach_line:
+        text = f"{text}\n\n{outreach_line}"
     post_to_discord(text)
     # Success path only — the ping means "the briefing actually posted". Never
     # move this into a finally: a ping on a crashed run manufactures confidence.
