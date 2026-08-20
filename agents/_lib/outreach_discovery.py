@@ -71,11 +71,14 @@ REJECT_REASONS = frozenset({
 })
 
 # R0.5: a firm is surfaced only on at least two independent kinds of evidence.
+# Named for what is actually checked, not what R0.5's prose claimed - see the
+# module docstring of `agents/outreach/verify.py` for the three corrections.
+# `open_req` is the strongest: a live fetch against a structured API.
 VERIFICATION_KINDS = frozenset({
-    "live_site",          # reachable site with content dated inside 12 months
-    "open_req",           # an open req on a supported ATS board
-    "third_party_dated",  # award list, ranking, or dated press
-    "linkedin_resolves",  # company LinkedIn URL resolves (URL only; never read)
+    "live_site",              # the site answered a request. Recency NOT verified
+    "open_req",               # a supported ATS board returned >= 1 open role
+    "third_party_dated",      # an award/ranking/press citation supplied by the sourcer
+    "linkedin_url_present",   # a company LinkedIn URL is on file. NEVER fetched (R14)
 })
 MIN_VERIFICATION_KINDS = 2
 

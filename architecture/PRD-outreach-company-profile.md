@@ -61,6 +61,11 @@ Operator revisions, 2026-08-19, taken as given:
 | `agents/outreach/discover.py` + `loops/outreach-discover.md` | **Not built.** |
 | `agents/discord_bot/cogs/outreach_discovery.py` | **Not built.** |
 
+**Second slice, 2026-08-20** — sourcing framework, verification, and the daily
+run. Suite 643 → 664. Building it corrected R0.4 and R0.5 (see both): three of
+the four named channels cannot produce a name and domain unaided, and three of
+the four verification kinds promised more than the code can check.
+
 **Verified against §0.6 on the live database:**
 
 - **V0-1** provenance — 0 rows with a NULL `discovered_via`.
@@ -326,9 +331,16 @@ surface, and each stamps `discovered_via`:
 - *Segment news queries* — Google News RSS per segment and geography, the same
   unauthenticated endpoint Part 1 already uses (R1.2). Finds firms in the act of
   doing something.
-- *ATS board enumeration* — the seven adapters already built. A firm with an open
-  req on a supported board is discoverable, verifiable, and already reachable by
-  the evidence poller on day one.
+- *ATS board enumeration* — **corrected 2026-08-20: this does not exist.** No ATS
+  provider publishes an index of boards; every adapter takes a board *token* and
+  returns that board. So the seven adapters **verify** a firm already in hand —
+  which is real value, and is the strongest verification kind available — but they
+  cannot find one. The same correction applies to the two feed-shaped channels
+  below: see `agents/outreach/discovery/__init__.py` for what each can and cannot
+  do. **Finding boutique firms at this size is a research problem, not a fetch
+  problem**, which is how the operator's own 100 rows came to exist, so the
+  curated `seed_list` channel is the workhorse and the others become buildable
+  once an entity-extraction step is sanctioned.
 - *Award and ranking lists* — the sources the workbook already cites in its own
   Verification Notes: Selling Power, Training Industry Top 20, Forrester Wave, and
   the equivalent lists for the three new segments. High precision, low volume,
@@ -347,10 +359,17 @@ automated access. This is the binding constraint on discovery volume, and with
 is reported as a finding rather than padded around.
 
 **R0.5 — Verification is evidence, not a status.** A firm is surfaced only when at
-least two of the following hold, and the *Verification Note* names which:
-a reachable site with content dated inside 12 months; an open req on a supported
-ATS board; a dated third-party mention (award list, press, ranking); an active
-company LinkedIn URL that resolves. **`35-` §3's discipline applies unchanged:** an
+least two of four kinds hold, and the *Verification Note* names which. **Three of
+the four were narrowed on 2026-08-20** because the code could not honestly do what
+this rule first claimed — each correction is narrower than the original, never
+wider (`agents/outreach/verify.py` carries the reasoning):
+
+| Kind | What is actually checked |
+|---|---|
+| `open_req` | A supported ATS board returns **at least one** open role. The strongest kind — a live fetch against a structured API. A detected but *empty* board does not count; that is AIIR's exact situation. |
+| `live_site` | The site answered a request. **Recency is NOT verified** — there is no generic way to date an arbitrary homepage, so the original "content dated inside 12 months" was a promise the code cannot keep. |
+| `third_party_dated` | A citation **supplied by whoever sourced the firm**. Parsing an award or press mention out of free text by keyword would be guessing. |
+| `linkedin_url_present` | A company LinkedIn URL is **on file**. Renamed from `linkedin_resolves`: LinkedIn is never fetched, because R14 is Policy and LinkedIn blocks automated requests. The weakest kind, named so nobody reads it as more. | **`35-` §3's discipline applies unchanged:** an
 unverified firm shown as verified produces a confident, checkable, wrong outreach,
 which is the failure mode the whole staleness model exists to prevent.
 
@@ -640,13 +659,13 @@ line, not a table, and the modal carries the rest.
 | Artifact | Content |
 |---|---|
 | **Migration 0018** | `outreach_discoveries` — `id`, `company_name`, `company_domain UNIQUE`, `company_url`, `careers_url`, `segment` (CHECK, six values), `country`, `hq_location`, `headcount_band`, `arr_estimate_low/high/basis`, `description`, `icp_fit_score`, `icp_model_version`, `contact_name`, `contact_title`, `contact_email`, `email_confidence` (CHECK: three workbook values), `company_linkedin_url`, `contact_linkedin_url`, `verification_note`, `verified_on` (array of evidence kinds), `pain_layer` (CHECK: L1/L2/L3, nullable), `discovered_via`, `discovery_query`, `discovered_at`, `surfaced_at`, `reviewed_at`, `review_decision` (CHECK: accept/reject/defer), `reject_reason` (CHECK enum), `reject_note`, `promoted_target_id FK`. CHECK: `review_decision='reject'` implies `reject_reason IS NOT NULL`. **`ALTER TABLE … OWNER TO barry_agent`** — the 0011 bug. Audit trigger `outreach_log_event()` attached, so every review is attributable. |
-| `agents/outreach/discovery/` | One module per channel behind a common `find(segment, since) -> list[Candidate]` interface: `news_query.py`, `ats_enum.py`, `award_lists.py`, `directories.py`. Adding a channel is adding a file. |
-| `agents/outreach/verify.py` | R0.5 evidence checks, each returning `(passed, note)`. Pure except the fetch. |
+| `agents/outreach/discovery/` | **Built.** Channel registry behind a common `find(segment)` interface, plus `seed_list.py` reading the git-tracked `config/outreach/discovery/seeds.yaml`. `news_query` / `award_lists` / `directories` are **not built** — see the corrected R0.4 for why each needs either entity extraction or a bespoke per-source parser and terms review. Adding one is adding a file. |
+| `agents/outreach/verify.py` | **Built.** The four R0.5 checks, each returning `(passed, note)`, pure except the fetch. Never raises; never fetches LinkedIn. |
 | `agents/outreach/icp.py` | v1 scorer (R0.8), versioned. Part 4 adds v2 beside it; it does not edit v1. |
-| `agents/outreach/discover.py` | The daily loop: source → dedup → verify → score → insert. Per-candidate try/except, same posture as `evidence.py`. |
+| `agents/outreach/discover.py` | **Built.** Source → scope-filter → dedup → verify → score → insert, across all six segments. A thin firm is recorded rather than skipped, so the next run dedups instead of re-probing. |
 | `agents/_lib/outreach_discovery.py` | Decision core, Discord-free, mirroring `_lib/outreach_intake.py`: `list_for_review(conn, limit)`, `decide(id, action, reason)`, `promote(id, trigger)`. |
 | `agents/discord_bot/cogs/outreach_discovery.py` | The Gate 0 surface (R0.15): a `LayoutView` of up to 11 `Section` rows per message, each with a Review button opening the detail modal that carries all 13 fields and captures decision + reason. Asserts its own component count against the 40 ceiling. |
-| `loops/outreach-discover.md` | `schedule: "0 5 * * *"`, `enabled: false`, before `outreach-daily` at 05:45 so the briefing can count it. |
+| `loops/outreach-discover.md` | **Built**, `enabled: false`. Unusually there is a real reason beyond convention: the seed list is empty, so enabling it today buys network calls and a zero. |
 | `cli/discovery_import.py` | Bulk-import the workbook's **49 US rows** into the pool as unreviewed (R0.13); the 37 non-US rows are skipped and reported, not stored. Part 4 then starts with real inventory rather than an empty table. |
 | Tests | Pure: segment CHECK, dedup against both tables, reject-without-reason rejected by the database, ICP v1 determinism and version stamping, ARR band arithmetic and its absence when headcount is unknown, ranking and the `min(20, n)` window. Against live Postgres: idempotent re-run, audit rows on review, promotion refusing a target with no trigger. |
 

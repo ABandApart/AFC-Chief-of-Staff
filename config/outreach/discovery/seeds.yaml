@@ -1,0 +1,48 @@
+# Discovery seed list — Track O Part 0, the `seed_list` channel (R0.4).
+#
+# Control plane: authored in git, therefore trusted (B4). One key per segment,
+# using the CHECK-pinned vocabulary from migration 0018:
+#
+#   corporate_l_and_d · coaching_leadership · instructional_design
+#   engineering_consultancy · product_design_agency · msp_it_consultancy
+#
+# A seed entry is a CLAIM that a firm exists and belongs to a segment. It is not
+# a decision and not a judgement:
+#
+#   1. `verify.py` decides whether it is real enough to surface (R0.5 — at least
+#      two independent kinds of evidence).
+#   2. The operator decides at Gate 0 whether it is worth pursuing.
+#
+# Adding a name here therefore puts nothing in front of anyone by itself.
+#
+# Required per entry: `name`, `url`. Everything else is optional and improves
+# either verification or the review card:
+#
+#   - name:            Acme Engineering Partners
+#     url:             https://acme.example
+#     careers_url:     https://boards.greenhouse.io/acme   # strongest verification
+#     linkedin:        https://www.linkedin.com/company/acme
+#     citation:        "Inc. 5000 2025, #412"              # -> third_party_dated
+#     hq:              Austin, TX
+#     headcount:       30-50
+#     contact_name:    Dana Reyes
+#     contact_title:   Founder & CEO
+#     description:     One line on what they do.
+#
+# GEOGRAPHY: US only (OQ-C, 2026-08-20). `country` defaults to US; entries for
+# other countries are accepted by the schema and filtered by the runner, so
+# reopening geography is a flag rather than a re-import.
+#
+# WHY THIS FILE IS THE WORKHOUSE rather than a news feed: of the four channels
+# R0.4 names, three cannot produce a firm's name and domain on their own — ATS
+# APIs have no board index, Google News returns stories rather than companies,
+# and award lists need a bespoke parser and a terms review each. Finding boutique
+# firms at this size is a research problem, not a fetch problem. This is where a
+# research pass deposits its results.
+
+corporate_l_and_d: []
+coaching_leadership: []
+instructional_design: []
+engineering_consultancy: []
+product_design_agency: []
+msp_it_consultancy: []

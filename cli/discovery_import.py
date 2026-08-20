@@ -79,14 +79,18 @@ def _verification(row: dict[str, Any]) -> list[str]:
 
     Two only, and neither is inferred from prose. The Guide sheet states every
     row was verified as real and operational with an active site, so `live_site`
-    holds; `linkedin_resolves` holds where a company LinkedIn URL is present.
+    holds; `linkedin_url_present` holds where a company LinkedIn URL is on file.
     Reading `third_party_dated` out of the free-text Verification Note by keyword
     would be guessing, and a firm shown as verified that is not produces
     confident, checkable, wrong outreach.
+
+    Note `live_site` here rests on the OPERATOR's verification, recorded in his
+    note, not on a fetch by this importer - which is also the only place recency
+    is attested at all (see `verify.py`).
     """
     kinds = ["live_site"]
     if _cell(row, "Company LinkedIn"):
-        kinds.append("linkedin_resolves")
+        kinds.append("linkedin_url_present")
     return kinds
 
 
