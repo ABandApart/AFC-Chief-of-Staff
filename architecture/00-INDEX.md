@@ -54,6 +54,9 @@ For the **outreach CRM** (evidence table, five-touch sequencing, capacity cap, B
 For **inbound lead handling** (why inbound never runs the cold arc; the design is deliberately OPEN, gated on measuring volume):
 → [`36-inbound-leads.md`](./36-inbound-leads.md)
 
+For **market discovery and company profiling** (sourcing candidate firms across six segments, the daily-20 review surface, news observation, classification into the eight triggers, contact/firmographic enrichment, and the ICP selection feedback loop — five parts, none built):
+→ [`PRD-outreach-company-profile.md`](./PRD-outreach-company-profile.md) — Track O, rev 2 (2026-08-19) for operator review; Parts 0 and 1 unblocked
+
 For the **outreach workflow as a picture** (six diagrams — read this before 35-):
 → [`37-outreach-workflow.md`](./37-outreach-workflow.md)
 

@@ -21,6 +21,13 @@ dependencies = [
     "pyyaml>=6.0",
     # Phase 3.6: scheduler daemon — cron evaluation for loop manifests.
     "croniter>=2.0",
+    # Track O Part 0: read the operator's CRM workbook directly. Main deps
+    # rather than an optional group because the workbook stays the system of
+    # record for the market model (R4.6) — Part 4 reports proposed segment
+    # weights back against it — so this is recurring, not a one-off import.
+    # Reading the .xlsx also removes the manual CSV export step, which is how
+    # the workbook's "Date Added" column became every target's trigger_date.
+    "openpyxl>=3.1",
 ]
 
 [dependency-groups]
