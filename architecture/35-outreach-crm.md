@@ -827,8 +827,11 @@ loops/
 ├── outreach-evidence.md   every 12h — poll careers pages, upsert evidence,
 │                          maintain first/last-seen, close disappeared facts
 ├── outreach-bcc.md        every 15 min — IMAP poll, token match, log sends
-├── outreach-rescore.md    Sunday 18:00 — recompute S1, band-change events,
-│                          stale-signal cards
+├── outreach-rescore.md    Sunday 18:00 — band-change record, stale-signal
+│                          cards. NOT "recompute S1" (corrected 2026-08-17):
+│                          S1 is evaluated live in v_outreach_scored, so
+│                          nothing is stored to recompute. Full spec, with
+│                          four open decisions: loops/outreach-rescore.md
 └── outreach-watch.md      Sunday 19:00 — Trent Crimm
 
 playbooks/
