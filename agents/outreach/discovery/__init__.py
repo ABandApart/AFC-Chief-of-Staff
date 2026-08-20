@@ -24,8 +24,10 @@ would quietly emit garbage:
     `verify.check_open_reqs` uses them for - but they cannot find one.
   * **Google News by segment returns stories, not firms.** The RSS feed gives a
     headline, a link and a date. Turning "boutique L&D firm raises Series A" into
-    a company name and a domain is entity extraction and resolution. Without it,
-    a news channel emits publisher domains instead of subject companies.
+    a company name and a domain is entity extraction and resolution. **Sanctioned
+    2026-08-20 (R0.21)** and now built: `news_query` fetches the feed and
+    `extract` makes one bounded Haiku call per batch. A hallucinated firm fails
+    `verify.py` and never surfaces, which is what makes an unreliable step safe.
   * **Award lists and directories are real but bespoke.** Each is an HTML page
     needing its own parser, published annually, and each carries its own terms
     that have to be read before it is fetched. High precision, low volume, and
@@ -33,10 +35,11 @@ would quietly emit garbage:
 
 So the honest position: **finding boutique firms at this size is a research
 problem, not a fetch problem** - which is also how the operator's own 100 rows
-came to exist. `seed_list` is therefore the workhorse, and it is where a research
-pass (human or LLM-assisted) deposits its results. The news and award channels
-become buildable the moment an entity-extraction step is sanctioned; the
-interface below does not change when they are.
+came to exist. `seed_list` remains the highest-precision channel and is where a
+research pass deposits its results; `news_query` is the automated one, and it
+trades precision for reach behind the verification bar and the operator's own
+review. Award lists and directories stay unbuilt: each needs a bespoke parser and
+its own terms review, which is per-source work rather than a channel.
 """
 
 from __future__ import annotations
@@ -45,7 +48,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from agents.outreach.discovery import seed_list
+from agents.outreach.discovery import news_query, seed_list
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,7 @@ class Channel(Protocol):
 # Registry. Order is stable so a run's output is reproducible.
 CHANNELS: dict[str, Callable[[str], list[dict[str, Any]]]] = {
     seed_list.NAME: seed_list.find,
+    news_query.NAME: news_query.find,
 }
 
 

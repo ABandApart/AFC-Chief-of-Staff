@@ -5,7 +5,7 @@
   <doc:theme>Cast a wide net, learn from the operator's own accept/reject decisions which industries, firms, and problem spaces convert, and profile the survivors</doc:theme>
   <doc:duration>Part 0 ~4–5 days · Part 1 ~2 days · Part 2 ~2–3 days · Part 3 gated, ~2 days once accounts exist · Part 4 ~2 days</doc:duration>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>rev 2.3, 2026-08-20 — nine of ten decisions settled (§0.9); OQ-G open, gates Part 4 only. **Part 0 foundation BUILT** (§0.10): migration 0018 applied, ICP v1, the Gate 0 decision core, and the workbook importer — 49 US rows in the pool. Sourcing channels, verification, the daily loop and the Discord surface are not built yet. Rev 1 (2026-08-17) specified profiling of an existing 14-target list. Rev 2 makes discovery the primary job on operator revision, adds the daily-20 review surface and its field contract, widens the segment taxonomy from three to six, and un-defers the ICP feedback loop.</doc:status>
+  <doc:status>rev 2.4, 2026-08-20 — nine of ten decisions settled (§0.9); OQ-G open, gates Part 4 only. **PART 0 IS BUILT** (§0.10): schema, ICP v1, the decision core, the workbook importer, verification, two sourcing channels including bounded entity extraction, the daily loop, the Gate 0 review sheet, the segment-rating affordance, and the briefing line. Parts 1-4 remain. Rev 1 (2026-08-17) specified profiling of an existing 14-target list. Rev 2 makes discovery the primary job on operator revision, adds the daily-20 review surface and its field contract, widens the segment taxonomy from three to six, and un-defers the ICP feedback loop.</doc:status>
   <doc:depends_on>`35-outreach-crm.md` §2 (schema), §3 (staleness), §5 (intake), §7 (packet), §8 (capacity), §9 (surfaces), §10 (Trent Crimm), §11 (H1–H7); migration 0013 (`outreach_evidence`, `outreach_watch_signals`); `agents/_lib/retrieval.py` `Scope.TARGET`; `agents/tartt/`; `agents/_lib/ontology.py`; the operator CRM workbook `Education_LD_Leads_CRM_(current).xlsx`</doc:depends_on>
   <doc:blocks>nothing today. Part 0 becomes the top of the funnel that `35-` §5 intake assumes already exists.</doc:blocks>
 </doc:meta>
@@ -56,15 +56,21 @@ Operator revisions, 2026-08-19, taken as given:
 | `agents/_lib/outreach_discovery.py` | **Built.** Window with the 25% exploration reserve (R0.17), decisions, dedup across both tables, promotion guard. |
 | `cli/discovery_import.py` | **Built and run.** 49 US rows imported unreviewed. |
 | `tests/test_outreach_discovery.py` | **Built.** 45 tests. Suite 592 → 627, ruff unchanged at the 6 known pre-existing errors. |
-| `agents/outreach/discovery/` (sourcing channels) | **Not built.** |
-| `agents/outreach/verify.py` | **Not built** — the importer derives verification for workbook rows inline. |
-| `agents/outreach/discover.py` + `loops/outreach-discover.md` | **Not built.** |
-| `agents/discord_bot/cogs/outreach_discovery.py` | **Not built.** |
+| `agents/outreach/discovery/` | **Built.** Registry + `seed_list` + `news_query`. |
+| `agents/outreach/discovery/extract.py` | **Built** (R0.21). Bounded Haiku extraction, H5-screened, ceiling-metered. |
+| `agents/outreach/verify.py` | **Built.** Four checks; never fetches LinkedIn. |
+| `agents/outreach/discover.py` + `loops/outreach-discover.md` | **Built**, ships disabled — the seed list is empty and `news_query` costs money, so enabling is deliberate. |
+| **Migration 0019** | **Applied.** `outreach_segment_scores` (R0.20) + `outreach_discoveries.source_url` (R0.21). |
+| `agents/discord_bot/cogs/outreach_discovery.py` | **Built.** Components V2 sheet, 12 rows/message, Review → modal. Registered in `run.py`. |
+| `agents/outreach/daily.py` | **Extended.** The briefing line now carries the Gate 0 queue, after the intake cards. |
 
-**Second slice, 2026-08-20** — sourcing framework, verification, and the daily
-run. Suite 643 → 664. Building it corrected R0.4 and R0.5 (see both): three of
-the four named channels cannot produce a name and domain unaided, and three of
-the four verification kinds promised more than the code can check.
+**Third slice, 2026-08-20** — extraction sanctioned and built, the review sheet,
+segment ratings, and the briefing. Suite 664 → 698. Live line reads
+`🎯 Outreach: 1 card(s) awaiting a decision · 47 to review`.
+
+**Part 0 is complete.** What remains is Parts 1–4, and one thing Part 0 cannot do
+for itself: **the pool only grows as fast as its channels find firms.**
+`seed_list` is empty and `news_query` needs the loop enabled.
 
 **Verified against §0.6 on the live database:**
 
@@ -615,15 +621,59 @@ the same mechanism rather than two features.
 **Not built.** Next increment, alongside the sourcing channels. Stated here so it
 is designed rather than discovered.
 
+**R0.21 — Bounded entity extraction is sanctioned, and the operator validates the
+name** (2026-08-20). The three feed-shaped channels R0.4 named can now be built:
+one bounded LLM call turns news items and award-list entries into candidate
+company names and likely domains.
+
+The operator's condition is what makes this safe, and it is load-bearing:
+
+> The entity name can be something that I validate as part of my scoring process.
+
+So extraction does not have to be right — it has to be **cheap, bounded, and
+caught when wrong**. Four properties make that true, and none of them is the LLM
+being accurate:
+
+1. **A hallucinated firm cannot surface.** Extraction proposes a name and a
+   likely domain; `verify.py` then fetches that domain. An invented company has
+   no site to answer, so it clears at most one verification kind and the two-kind
+   minimum keeps it out of the window. **The verification bar, written for a
+   different reason, is what makes extraction survivable.**
+2. **The operator sees the name and the source.** Every extracted candidate
+   carries the article URL that produced it, displayed on the review card beside
+   the name, so a wrong entity is visible rather than inferred.
+3. **It is metered like every other LLM path.** `agent_name='outreach-discover'`,
+   `function_label='outreach_discovery'`, its own daily ceiling, one
+   `agent_runs` row per call — so a runaway loop stops rather than bills.
+4. **H5 is enforced at this prompt boundary.** Feed text is third-party content
+   and this is the first place in Part 0 that a prompt exists. A signal whose text
+   trips `screening.screen()` is quarantined and never placed in the prompt, which
+   is the same rule Part 2 applies to the classifier.
+
+**This changes the outreach LLM budget, which `35-` §14 states.** Outreach was
+"$0.30/day, Trent Crimm only, the only outreach LLM spend". That sentence is no
+longer true and has been corrected there rather than left to rot.
+
+**What extraction must never do:** decide a segment (the query already fixes it),
+decide fit, write a pain hook, or promote anything. It names a company and guesses
+a domain. Everything downstream — verification, scoring, the operator's decision —
+is unchanged and unaware that an LLM was involved.
+
 **R0.15 — The review surface is Components V2 sheet rows, and the row button opens
 a detail modal** (OQ-E, 2026-08-20). Both uncertainties flagged at wireframe time
 are now resolved against Discord's component reference and the installed
 discord.py 2.7.1:
 
 *The per-message budget is 40 components,* counting nested children. One row costs
-three — `Section` + `TextDisplay` + `Button` accessory. With one `Container`, one
-header `TextDisplay`, and a footer `ActionRow` carrying three buttons, 34 remain:
-**11 rows per message**, so the daily 20 posts as 11 + 9. `Separator` between rows
+three — `Section` + `TextDisplay` + `Button` accessory — and the chrome is a
+`Container` plus a header `TextDisplay`, so **12 rows fit** and the daily 25 posts
+as three messages.
+
+**There is deliberately no footer action row.** The wireframe carried one, with
+"Accept all shown" among its buttons. Built, that turns out to be a one-click way
+to fabricate training labels — **risk D1, the risk this design rates High** — so
+it is gone, and every accept costs one deliberate modal. Dropping it also buys
+back the four components that took the earlier estimate from 12 rows down to 11. `Separator` between rows
 would cost a fourth component each and drop the ceiling to 8, so rows are separated
 by styling rather than by a component. **This is enforced as a test, not as prose:**
 the view builder counts its own components and fails over 40, because a silent

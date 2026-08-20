@@ -92,7 +92,12 @@ _COUNTS_SQL = """
         WHERE status = 'candidate' AND intake_message_id IS NOT NULL) AS cards_open,
       (SELECT count(DISTINCT e.target_id) FROM v_outreach_evidence_display e
         WHERE e.freshness IN ('ageing', 'stale') AND e.closed_at IS NULL
-      ) AS targets_with_ageing_evidence
+      ) AS targets_with_ageing_evidence,
+      -- Gate 0 (Part 0). Counted here rather than in a second query so every
+      -- number in the line is consistent with the others across a concurrent write.
+      (SELECT count(*) FROM outreach_discoveries
+        WHERE reviewed_at IS NULL
+          AND COALESCE(array_length(verified_on, 1), 0) >= 2) AS awaiting_review
 """
 
 
@@ -203,6 +208,10 @@ def format_briefing_line(counts: dict[str, Any], not_ready: int) -> str:
         parts.append(f"{counts['cold_live']}/{counts['cold_ceiling']} live")
     if counts["cards_open"]:
         parts.append(f"{counts['cards_open']} card(s) awaiting a decision")
+    # Gate 0 is a triage queue, not a decision that ages, so it reads after the
+    # Gate 1 cards — which are the ones that actually hold up the pipeline.
+    if counts.get("awaiting_review"):
+        parts.append(f"{counts['awaiting_review']} to review")
     if not_ready:
         parts.append(f"{not_ready} not ready")
     if counts["targets_with_ageing_evidence"]:

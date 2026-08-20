@@ -109,7 +109,7 @@ _COLUMNS = """
     contact_email, email_confidence, company_linkedin_url, contact_linkedin_url,
     verification_note, verified_on, pain_layer, pain_hook, discovered_via,
     discovery_query, discovered_at, surfaced_at, review_message_id, reviewed_at,
-    review_decision, reject_reason, reject_note, promoted_target_id
+    review_decision, reject_reason, reject_note, promoted_target_id, source_url
 """
 
 
@@ -156,6 +156,52 @@ def _eligible(conn: object) -> list[dict[str, Any]]:
             (MIN_VERIFICATION_KINDS,),
         )
         return cur.fetchall()
+
+
+CRITERIA_COLUMNS = ("market_size", "market_growth", "firm_profitability",
+                    "ability_to_pay", "urgency_pain", "offering_fit")
+
+
+def entered_segment_scores(conn: object) -> dict[str, dict[str, int]]:
+    """Operator-entered criteria per segment (R0.20).
+
+    Loaded once per run and passed into `icp`, which stays pure. An empty dict
+    means nothing has been rated yet and every segment falls back to the
+    workbook transcription.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            f"SELECT segment, {', '.join(CRITERIA_COLUMNS)} "
+            f"FROM outreach_segment_scores"
+        )
+        return {
+            row["segment"]: {c: row[c] for c in CRITERIA_COLUMNS}
+            for row in cur.fetchall()
+        }
+
+
+def record_segment_score(conn: object, segment: str, criteria: dict[str, int],
+                         rationale: str | None = None) -> None:
+    """Upsert one segment's rating. The affordance OQ-L asked to stand open.
+
+    Re-rating a segment overwrites rather than versions: the audit trigger
+    already records the before/after with a timestamp and an actor, so history is
+    kept without a second table.
+    """
+    missing = [c for c in CRITERIA_COLUMNS if c not in criteria]
+    if missing:
+        raise ValueError(f"segment rating is missing {', '.join(missing)}")
+    columns = ", ".join(CRITERIA_COLUMNS)
+    placeholders = ", ".join(f"%({c})s" for c in CRITERIA_COLUMNS)
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in CRITERIA_COLUMNS)
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            f"INSERT INTO outreach_segment_scores (segment, {columns}, rationale) "
+            f"VALUES (%(segment)s, {placeholders}, %(rationale)s) "
+            f"ON CONFLICT (segment) DO UPDATE SET {updates}, "
+            f"    rationale = EXCLUDED.rationale, rated_at = now()",
+            {"segment": segment, "rationale": rationale, **criteria},
+        )
 
 
 def segment_label_counts(conn: object) -> dict[str, int]:
@@ -227,6 +273,7 @@ def _unscored_picks(
     candidates: list[dict[str, Any]],
     slots: int,
     taken: set[int],
+    entered: dict[str, dict[str, int]] | None = None,
 ) -> list[dict[str, Any]]:
     """Candidates from segments the operator has never rated (R0.18).
 
@@ -239,8 +286,8 @@ def _unscored_picks(
     for row in candidates:
         if row["id"] in taken:
             continue
-        if row["segment"] in icp.SEGMENT_CRITERIA:
-            continue  # the operator has scored this segment
+        if icp.is_scored(row["segment"], entered):
+            continue  # rated in the workbook or by the operator (R0.20)
         by_segment.setdefault(row["segment"], []).append(row)
 
     picks: list[dict[str, Any]] = []
@@ -301,7 +348,9 @@ def list_for_review(conn: object, limit: int = DAILY_WINDOW) -> list[dict[str, A
     # Trimming at the end sorts by fit and drops the tail - which is precisely
     # the low-ranked bucket pick the bucket exists to protect. On a small pool
     # that silently undid the whole mechanism.
-    take(_unscored_picks(candidates, min(UNSCORED_SEGMENT_SLOTS, limit), chosen_ids))
+    entered = entered_segment_scores(conn)
+    take(_unscored_picks(candidates, min(UNSCORED_SEGMENT_SLOTS, limit),
+                         chosen_ids, entered))
     take(_reserve_picks(
         candidates, segment_label_counts(conn),
         min(EXPLORATION_RESERVE_SLOTS, limit - len(picks)), chosen_ids,

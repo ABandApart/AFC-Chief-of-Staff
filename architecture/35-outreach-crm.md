@@ -855,8 +855,17 @@ morning from current state.
 <telemetry>
 
 - `function_label='outreach_watch'` — Trent Crimm classification. **Ceiling
-  $0.30/day. The only outreach LLM spend.** (`function_label='outreach'` is retired
-  along with the observation call; total drops from $0.80/day.)
+  $0.30/day.** (`function_label='outreach'` is retired along with the observation
+  call.)
+- `function_label='outreach_discovery'` — **added 2026-08-20.** Bounded entity
+  extraction turning news items and award-list entries into candidate company
+  names (`PRD-outreach-company-profile.md` R0.21). Ceiling **$0.25/day**,
+  `agent_name='outreach-discover'`. **This retires the claim that Trent Crimm is
+  "the only outreach LLM spend"** — it was true when written and is not now.
+  Total outreach LLM budget is **$0.55/day**, still below the $0.80 of 0.2.0.
+  The call names a company and guesses a domain; it decides no segment, no fit,
+  and writes no prose. A hallucinated firm fails verification (R0.5) and never
+  reaches the operator.
 - **Ted alerts:** `cold_live > 15` or `reengagement_live > 3` · touch past
   `window_closes` unsent and unskipped · packets `ready=false` >48h · drain blocked
   on a missing `stalled_reason` >7 days · **evidence loop silent >48h** · **>25% of

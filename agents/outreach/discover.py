@@ -38,7 +38,8 @@ SEGMENTS = icp.ALL_SEGMENTS
 DEFAULT_COUNTRY = "US"
 
 
-def build_row(candidate: dict[str, Any], verification: verify.Verification) -> dict[str, Any]:
+def build_row(candidate: dict[str, Any], verification: verify.Verification,
+              entered: dict[str, dict[str, int]] | None = None) -> dict[str, Any]:
     """Assemble one pool row from a raw candidate and its verification."""
     row = {
         "company_name": candidate["company_name"],
@@ -58,8 +59,12 @@ def build_row(candidate: dict[str, Any], verification: verify.Verification) -> d
         "verified_on": verification.kinds,
         "discovered_via": candidate["discovered_via"],
         "discovery_query": candidate.get("discovery_query"),
+        # R0.21: the item an extracted name came from. Shown beside the name so a
+        # wrong entity is visible rather than inferred — the safety property that
+        # makes a bounded, unreliable extraction step acceptable.
+        "source_url": candidate.get("source_url"),
     }
-    row["icp_fit_score"] = icp.score(row)
+    row["icp_fit_score"] = icp.score(row, entered)
     row["icp_model_version"] = icp.MODEL_VERSION
     return row
 
@@ -72,6 +77,7 @@ def run(*, country: str = DEFAULT_COUNTRY, fetch: bool = True,
 
     with db.connection() as conn:
         known = outreach_discovery.known_domains(conn)
+        entered = outreach_discovery.entered_segment_scores(conn)
 
         for segment in SEGMENTS:
             for candidate in discovery.find_all(segment):
@@ -96,7 +102,7 @@ def run(*, country: str = DEFAULT_COUNTRY, fetch: bool = True,
                         outreach_discovery.MIN_VERIFICATION_KINDS, verification.note,
                     )
 
-                row = build_row(candidate, verification)
+                row = build_row(candidate, verification, entered)
                 if dry_run:
                     print(f"  would insert {row['company_name']:<34} "
                           f"{row['segment']:<24} ICP {row['icp_fit_score']:>3}  "

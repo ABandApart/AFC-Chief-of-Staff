@@ -118,12 +118,32 @@ _HEADCOUNT_UNKNOWN = 10
 _HEADCOUNT_TOO_LARGE = 0
 
 
-def segment_score(segment: str) -> float:
-    """The workbook's weighted score for a segment, 1-5."""
-    criteria = SEGMENT_CRITERIA.get(segment)
+def criteria_for(segment: str, entered: dict[str, dict[str, int]] | None = None
+                 ) -> dict[str, int] | None:
+    """The six criteria for a segment: operator-entered first, workbook second.
+
+    R0.20. `entered` is the `outreach_segment_scores` table, passed in rather than
+    read here so this module stays pure and testable without a database - the
+    caller loads it once per run instead of once per candidate.
+    """
+    if entered and segment in entered:
+        return entered[segment]
+    return SEGMENT_CRITERIA.get(segment)
+
+
+def segment_score(segment: str,
+                  entered: dict[str, dict[str, int]] | None = None) -> float:
+    """The weighted score for a segment, 1-5, or the prior if it has none."""
+    criteria = criteria_for(segment, entered)
     if criteria is None:
         return UNSCORED_SEGMENT_PRIOR
     return _weighted(criteria)
+
+
+def is_scored(segment: str,
+              entered: dict[str, dict[str, int]] | None = None) -> bool:
+    """Has this segment been rated at all? Drives the unscored bucket (R0.18)."""
+    return criteria_for(segment, entered) is not None
 
 
 def parse_headcount(band: str | None) -> tuple[int | None, int | None]:
@@ -160,21 +180,23 @@ def _headcount_points(band: str | None) -> tuple[int, str]:
     return (_HEADCOUNT_TOO_LARGE, f"headcount ~{midpoint}, above the ICP band")
 
 
-def explain(candidate: dict[str, Any]) -> list[tuple[str, int, str]]:
+def explain(candidate: dict[str, Any],
+            entered: dict[str, dict[str, int]] | None = None
+            ) -> list[tuple[str, int, str]]:
     """Return the score's components as (factor, points, note).
 
     The points sum to exactly what `score()` returns - asserted by a test, since
     an explanation that does not add up is worse than none.
     """
     segment = candidate.get("segment") or ""
-    weighted = segment_score(segment)
+    weighted = segment_score(segment, entered)
     seg_points = round(weighted / 5 * SEGMENT_POINTS)
-    known = segment in SEGMENT_CRITERIA
-    seg_note = (
-        f"workbook weighted score {weighted:.2f}/5"
-        if known
-        else f"no workbook score; prior {weighted:.2f}/5 (mean of scored segments)"
-    )
+    if entered and segment in entered:
+        seg_note = f"operator-rated {weighted:.2f}/5"
+    elif segment in SEGMENT_CRITERIA:
+        seg_note = f"workbook weighted score {weighted:.2f}/5"
+    else:
+        seg_note = f"unrated; prior {weighted:.2f}/5 (mean of rated segments)"
 
     head_points, head_note = _headcount_points(candidate.get("headcount_band"))
 
@@ -193,9 +215,10 @@ def explain(candidate: dict[str, Any]) -> list[tuple[str, int, str]]:
     ]
 
 
-def score(candidate: dict[str, Any]) -> int:
+def score(candidate: dict[str, Any],
+          entered: dict[str, dict[str, int]] | None = None) -> int:
     """ICP fit, 0-100. Deterministic, and the same inputs always give the same
     number - there is no clock and no randomness here, so a re-score only moves
     when the candidate's own fields move."""
-    total = sum(points for _, points, _ in explain(candidate))
+    total = sum(points for _, points, _ in explain(candidate, entered))
     return max(0, min(100, total))

@@ -197,3 +197,36 @@ def test_an_unready_packet_is_still_saved_and_counted(mocker):
     result = daily.regenerate_packets(conn, today=TODAY)
     assert result == {"due": 1, "built": 1, "ready": 0, "failed": 0}
     save.assert_called_once()
+
+
+def test_the_briefing_counts_gate_zero_after_the_intake_cards():
+    """Part 0. A triage queue is not a decision that ages, so it reads after the
+    Gate 1 cards — the ones that actually hold up the pipeline."""
+    from agents.outreach import daily
+    line = daily.format_briefing_line({
+        "touches_due": 0, "cold_live": 0, "cold_ceiling": 15,
+        "cards_open": 1, "targets_with_ageing_evidence": 0,
+        "awaiting_review": 25,
+    }, not_ready=0)
+    assert "25 to review" in line
+    assert line.index("card(s) awaiting a decision") < line.index("25 to review")
+
+
+def test_an_empty_gate_zero_queue_adds_no_clause():
+    """The line's hard rule: a clause reading 'nothing happened' is worse than
+    absent (eval UX-1's message budget)."""
+    from agents.outreach import daily
+    assert daily.format_briefing_line({
+        "touches_due": 0, "cold_live": 0, "cold_ceiling": 15, "cards_open": 0,
+        "targets_with_ageing_evidence": 0, "awaiting_review": 0,
+    }, not_ready=0) == ""
+
+
+def test_the_briefing_survives_a_counts_dict_without_gate_zero():
+    """Defensive: `.get` rather than `[]`, so an older caller cannot KeyError."""
+    from agents.outreach import daily
+    line = daily.format_briefing_line({
+        "touches_due": 2, "cold_live": 0, "cold_ceiling": 15, "cards_open": 0,
+        "targets_with_ageing_evidence": 0,
+    }, not_ready=0)
+    assert "2 touch(es) due" in line

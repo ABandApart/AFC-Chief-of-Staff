@@ -23,7 +23,10 @@ Three jobs:
    and 14 days past its last window is finished. It moves to `watchlist` **only
    once `stalled_reason` is set**; until then it keeps its capacity slot, which is
    the friction that makes "what stalled it?" get answered.
-3. **Report the counts** the briefing line reads.
+3. **Report the counts** the briefing line reads — including, since Part 0,
+   how many verified candidates are waiting at Gate 0. That clause reads *after*
+   the Gate 1 cards: a triage queue is not a decision that ages, and the intake
+   cards are the ones that actually hold up the pipeline.
 
 **No LLM.** Deterministic queries and substitution, so no `agent_runs` rows, no
 ceiling, and nothing that can fail from a provider outage
