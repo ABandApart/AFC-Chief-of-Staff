@@ -861,7 +861,9 @@ morning from current state.
   `window_closes` unsent and unskipped · packets `ready=false` >48h · drain blocked
   on a missing `stalled_reason` >7 days · **evidence loop silent >48h** · **>25% of
   displayed facts `ageing` or worse** · BCC poller silent >2h · watch loop silent
-  >8 days.
+  >8 days · **re-score sweep silent >8 days** (added 2026-08-20 — the list covered
+  every other loop and not this one; a weekly loop that silently stops is the
+  08-15 failure mode, invisible because nothing surfaces it).
 - **Higgins weekly:** touches on schedule (window-based) · touch-five completion,
   tracked separately · new targets scoring 20+ (target 3–5) · conversations opened ·
   calls held · cold live vs cap · E1 allowance usage · **evidence freshness

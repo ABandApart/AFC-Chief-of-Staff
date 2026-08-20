@@ -40,13 +40,17 @@ from typing import Any
 from psycopg.rows import dict_row
 
 from agents._lib import db, outreach
+from agents.outreach import icp
 
 logger = logging.getLogger(__name__)
 
-# R0.11: the daily window is a ceiling, not a quota. A day producing fewer than
-# this surfaces fewer and says why; padding it with unverified firms would defeat
-# the verification rule that lets the operator trust the queue at all.
-DAILY_WINDOW = 20
+# R0.11 / R0.18: the daily window is a ceiling, not a quota. A day producing fewer
+# than this surfaces fewer and says why; padding it with unverified firms would
+# defeat the verification rule that lets the operator trust the queue at all.
+#
+# Three buckets, filled in order, each excluding rows already picked:
+#   unscored (5) -> exploration reserve (5) -> ranked (15)
+DAILY_WINDOW = 25
 
 DECISIONS = frozenset({"accept", "reject", "defer"})
 
@@ -75,12 +79,20 @@ VERIFICATION_KINDS = frozenset({
 })
 MIN_VERIFICATION_KINDS = 2
 
-# R0.17 / OQ-G: five of the twenty slots are reserved for under-sampled segments;
-# the other fifteen rank by ICP fit. Pure exploitation is self-confirming - a
-# segment with no history ranks last, is never surfaced, never acquires the
-# labels that would prove it, and the loop concludes it is poor by never having
-# looked. Set to 0.0 to disable.
-EXPLORATION_RESERVE_SHARE = 0.25
+# R0.17 / OQ-G: reserved for UNDER-SAMPLED segments - too few labels to report an
+# accept rate. Pure exploitation is self-confirming: a segment with no history
+# ranks last, is never surfaced, never acquires the labels that would prove it,
+# and the loop concludes it is poor by never having looked. Set to 0 to disable.
+EXPLORATION_RESERVE_SLOTS = 5
+
+# R0.18 / OQ-K: reserved for UNSCORED segments - ones the operator has never rated
+# on the six workbook criteria, so every candidate in them inherits a prior rather
+# than a judgement. A DIFFERENT axis from under-sampled, which is why it is a
+# separate bucket: under-sampled is about decisions not yet made, unscored is
+# about a rating never given. A segment can be either, both, or neither.
+#
+# Empty until sourcing exists - all 49 imported rows are in scored segments.
+UNSCORED_SEGMENT_SLOTS = 5
 
 # R4.2: below this many labelled decisions a segment's accept rate is not
 # reportable, so the segment still counts as under-sampled and keeps its claim on
@@ -158,6 +170,7 @@ def _reserve_picks(
     candidates: list[dict[str, Any]],
     labels: dict[str, int],
     slots: int,
+    taken: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Round-robin the reserve across under-sampled segments (R0.17).
 
@@ -172,9 +185,14 @@ def _reserve_picks(
     """
     if slots <= 0:
         return []
+    taken = taken or set()
     by_segment: dict[str, list[dict[str, Any]]] = {}
     for row in candidates:
+        if row["id"] in taken:
+            continue
         by_segment.setdefault(row["segment"], []).append(row)
+    if not by_segment:
+        return []
 
     def best_score(segment: str) -> int:
         return max((r["icp_fit_score"] or 0) for r in by_segment[segment])
@@ -202,38 +220,93 @@ def _reserve_picks(
     return picks
 
 
+def _unscored_picks(
+    candidates: list[dict[str, Any]],
+    slots: int,
+    taken: set[int],
+) -> list[dict[str, Any]]:
+    """Candidates from segments the operator has never rated (R0.18).
+
+    Round-robin across unscored segments, best-ranked first within each, so no
+    single unscored segment can take the whole bucket.
+    """
+    if slots <= 0:
+        return []
+    by_segment: dict[str, list[dict[str, Any]]] = {}
+    for row in candidates:
+        if row["id"] in taken:
+            continue
+        if row["segment"] in icp.SEGMENT_CRITERIA:
+            continue  # the operator has scored this segment
+        by_segment.setdefault(row["segment"], []).append(row)
+
+    picks: list[dict[str, Any]] = []
+    cursors = dict.fromkeys(by_segment, 0)
+    while len(picks) < slots and by_segment:
+        progressed = False
+        for segment in sorted(by_segment):
+            if len(picks) >= slots:
+                break
+            index = cursors[segment]
+            if index < len(by_segment[segment]):
+                picks.append(by_segment[segment][index])
+                cursors[segment] = index + 1
+                progressed = True
+        if not progressed:
+            break
+    return picks
+
+
 def list_for_review(conn: object, limit: int = DAILY_WINDOW) -> list[dict[str, Any]]:
-    """The daily window: unreviewed, verified, ranked by fit, with the reserve.
+    """The daily window: unreviewed, verified, in three buckets (R0.18).
 
     `limit` is a ceiling, not a quota (R0.11) - a day with fewer verified
     candidates surfaces fewer rather than padding the queue with unverified
     firms, which would defeat the verification bar that makes the queue
     trustworthy at all.
 
-    Composition (R0.17): `EXPLORATION_RESERVE_SHARE` of the window is reserved
-    for under-sampled segments, the rest ranks by ICP fit, and **unfillable
-    reserve slots fall back to the ranked list** - returning a short window to
-    honour a reserve would waste the scarcest thing here, which is review
-    attention. The reserve guarantees inclusion, not position: the returned
-    window is ordered by fit so the operator still reads best-first.
+    Buckets fill in order and each excludes rows already picked, so a candidate
+    never occupies two slots:
+
+      1. **Unscored segments** (`UNSCORED_SEGMENT_SLOTS`) - segments the operator
+         has never rated on the six criteria (R0.18).
+      2. **Exploration reserve** (`EXPLORATION_RESERVE_SLOTS`) - segments under
+         R4.2's label minimum (R0.17).
+      3. **Ranked** - whatever remains, by ICP fit.
+
+    **Unfillable slots fall back to the ranked list**: returning a short window to
+    honour a bucket would waste the scarcest thing here, which is review
+    attention. The buckets guarantee inclusion, not position - the returned window
+    is ordered by fit so the operator still reads best-first.
     """
     candidates = _eligible(conn)
     if not candidates:
         return []
 
-    reserve_slots = round(limit * EXPLORATION_RESERVE_SHARE)
-    picks = _reserve_picks(candidates, segment_label_counts(conn), reserve_slots)
+    picks: list[dict[str, Any]] = []
+    chosen_ids: set[int] = set()
 
-    chosen_ids = {row["id"] for row in picks}
-    for row in candidates:
-        if len(chosen_ids) >= limit:
-            break
-        if row["id"] not in chosen_ids:
-            picks.append(row)
-            chosen_ids.add(row["id"])
+    def take(rows: list[dict[str, Any]]) -> None:
+        for row in rows:
+            if len(picks) >= limit:
+                return
+            if row["id"] not in chosen_ids:
+                picks.append(row)
+                chosen_ids.add(row["id"])
+
+    # Buckets are capped against `limit` as they fill, NOT trimmed afterwards.
+    # Trimming at the end sorts by fit and drops the tail - which is precisely
+    # the low-ranked bucket pick the bucket exists to protect. On a small pool
+    # that silently undid the whole mechanism.
+    take(_unscored_picks(candidates, min(UNSCORED_SEGMENT_SLOTS, limit), chosen_ids))
+    take(_reserve_picks(
+        candidates, segment_label_counts(conn),
+        min(EXPLORATION_RESERVE_SLOTS, limit - len(picks)), chosen_ids,
+    ))
+    take(candidates)
 
     picks.sort(key=lambda r: (-(r["icp_fit_score"] or 0), r["discovered_at"]))
-    return picks[:limit]
+    return picks
 
 
 def get(conn: object, discovery_id: int) -> dict[str, Any] | None:

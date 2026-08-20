@@ -247,9 +247,16 @@ def test_promotion_is_idempotent(mocker):
 # --- the window (R0.11) -------------------------------------------------------
 
 
-def test_the_daily_window_is_twenty_and_demands_two_verification_kinds():
-    assert gate0.DAILY_WINDOW == 20
+def test_the_window_demands_two_verification_kinds():
     assert gate0.MIN_VERIFICATION_KINDS == 2
+
+
+def test_a_bucket_pick_survives_a_window_smaller_than_the_buckets():
+    """Regression: buckets used to be filled past `limit` and then trimmed by
+    fit, which dropped the lowest-scored row - exactly the bucket pick the
+    bucket exists to protect. Buckets are now capped as they fill."""
+    import agents._lib.outreach_discovery as m
+    assert m.UNSCORED_SEGMENT_SLOTS + m.EXPLORATION_RESERVE_SLOTS > 4
 
 
 def _candidate(cid, segment, score, surfaced=None):
@@ -257,9 +264,66 @@ def _candidate(cid, segment, score, surfaced=None):
             "discovered_at": cid, "surfaced_at": surfaced}
 
 
-def test_the_reserve_is_a_quarter_of_the_window():
-    assert gate0.EXPLORATION_RESERVE_SHARE == 0.25
-    assert round(gate0.DAILY_WINDOW * gate0.EXPLORATION_RESERVE_SHARE) == 5
+def test_the_window_is_three_buckets_summing_to_the_target():
+    """R0.18: 15 ranked + 5 exploration reserve + 5 unscored = 25."""
+    assert gate0.DAILY_WINDOW == 25
+    assert gate0.EXPLORATION_RESERVE_SLOTS == 5
+    assert gate0.UNSCORED_SEGMENT_SLOTS == 5
+    ranked = gate0.DAILY_WINDOW - (
+        gate0.EXPLORATION_RESERVE_SLOTS + gate0.UNSCORED_SEGMENT_SLOTS
+    )
+    assert ranked == 15
+
+
+def test_unscored_bucket_takes_only_segments_with_no_workbook_score():
+    """Under-sampled and unscored are different axes (R0.18). A segment the
+    operator HAS rated never takes an unscored slot, however few labels it has."""
+    candidates = [
+        _candidate(1, "coaching_leadership", 84),
+        _candidate(2, "engineering_consultancy", 76),
+        _candidate(3, "msp_it_consultancy", 76),
+    ]
+    picks = gate0._unscored_picks(candidates, 3, taken=set())
+    assert {p["segment"] for p in picks} == {
+        "engineering_consultancy", "msp_it_consultancy",
+    }
+
+
+def test_unscored_bucket_round_robins_so_one_segment_cannot_take_it_all():
+    candidates = [
+        _candidate(1, "engineering_consultancy", 76),
+        _candidate(2, "engineering_consultancy", 76),
+        _candidate(3, "product_design_agency", 76),
+    ]
+    picks = gate0._unscored_picks(candidates, 2, taken=set())
+    assert [p["segment"] for p in picks] == [
+        "engineering_consultancy", "product_design_agency",
+    ]
+
+
+def test_unscored_bucket_is_empty_on_the_current_pool():
+    """Every imported row is in a scored segment, so the bucket does nothing
+    until sourcing exists. Stated in R0.18 and pinned here."""
+    candidates = [_candidate(i, "corporate_l_and_d", 83) for i in range(1, 6)]
+    assert gate0._unscored_picks(candidates, 5, taken=set()) == []
+
+
+def test_a_candidate_never_occupies_two_buckets(mocker):
+    candidates = [_candidate(1, "engineering_consultancy", 76)]
+    candidates += [_candidate(i, "coaching_leadership", 84) for i in range(2, 9)]
+    window = gate0.list_for_review(
+        _conn(mocker, candidates), limit=gate0.DAILY_WINDOW
+    )
+    ids = [row["id"] for row in window]
+    assert len(ids) == len(set(ids))
+
+
+def test_an_unscored_candidate_reaches_the_window_despite_ranking_last(mocker):
+    """The point of the bucket: without it, 76 never beats a wall of 84s."""
+    candidates = [_candidate(i, "coaching_leadership", 84) for i in range(1, 40)]
+    candidates.append(_candidate(99, "product_design_agency", 76))
+    window = gate0.list_for_review(_conn(mocker, candidates))
+    assert 99 in {row["id"] for row in window}
 
 
 def test_reserve_round_robins_across_under_sampled_segments():
@@ -296,10 +360,15 @@ def test_reserve_stops_when_every_segment_is_exhausted():
     assert len(picks) == 1
 
 
-def _window(mocker, candidates, labels=None):
+def _conn(mocker, candidates, labels=None):
+    """Patch the two DB reads `list_for_review` makes and hand back a dummy conn."""
     mocker.patch.object(gate0, "_eligible", return_value=candidates)
     mocker.patch.object(gate0, "segment_label_counts", return_value=labels or {})
-    return gate0.list_for_review(mocker.MagicMock(), limit=4)
+    return mocker.MagicMock()
+
+
+def _window(mocker, candidates, labels=None):
+    return gate0.list_for_review(_conn(mocker, candidates, labels), limit=4)
 
 
 def test_unfillable_reserve_slots_fall_back_to_the_ranked_list(mocker):

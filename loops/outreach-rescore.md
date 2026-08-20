@@ -9,7 +9,8 @@ description: Weekly band-change record and 30-day stale-signal re-check cards (T
 
 # Outreach re-score sweep (Track O)
 
-> **Status: SPEC ONLY — written 2026-08-17, not yet built.** The manifest ships
+> **Status: SPEC ONLY — written 2026-08-17; all four open decisions settled
+> 2026-08-20. Not yet built.** The manifest ships
 > `enabled: false` and the command module does not exist yet; the scheduler reads
 > only `enabled_loops()`, so this file is inert until the build lands. Written
 > before the build per `70-build-order.md` §Working convention, which the operator
@@ -85,9 +86,11 @@ When this is done, all of the following are true and checkable by someone else:
   **This loop is the thing that would be tempted to band. It must not.**
 - **No S1 recomputation or materialisation** — see above.
 - **Not a card per band change.** Recording is cheap; a card costs operator
-  attention. Which crossings deserve one is O4 below, deliberately open.
-- **Does not re-post or withdraw the Gate 1 intake card.** Posting belongs to the
-  120s poll. Withdrawal is O3, open.
+  attention. Settled at O4: only upward crossings into `work` card; everything
+  else is recorded and reported as a count.
+- **Never withdraws a Gate 1 intake card.** Posting belongs to the 120s poll, and
+  O3 settles that a card outlives the band that raised it — the decision stays
+  available and the history stays reviewable.
 - **Does not judge S4/S5.** §4 is explicit that evidence *informs* and does not
   *set* them, and that the two-tab diagnostic is five minutes of human judgement.
   The card asks; `cli/outreach_score` records.
@@ -130,53 +133,73 @@ SELECT count(*) FROM agent_runs WHERE started_at > CURRENT_DATE;
 SELECT md5(string_agg(t::text, '|' ORDER BY id)) FROM outreach_targets t;
 ```
 
-## S4 — Settled vs open
+## S4 — Settled
 
-**Settled** (binding): Sunday 18:00 · no banding · no LLM · records to
+All four open decisions were settled by the operator on **2026-08-20**. The
+original wording of each is preserved in git history (`9270dba`).
+
+**Binding, unchanged:** Sunday 18:00 · no banding · no LLM · records to
 `outreach_events` · never mutates `outreach_targets` · stale-signal detection uses
 the existing `signals_stale`.
 
-**Open — surfaced, not chosen.** Each of these is load-bearing and the spec is
-silent, so per the working convention they are the operator's to settle:
+**O1 — the previous band is RECOMPUTED, not stored.**
+`outreach_s1(trigger_date, CURRENT_DATE - 7)` recombined with the stored S2–S5.
+Stateless, no migration, and no `v_outreach_scored` drop-and-recreate (the 0016
+trap). **Known and accepted cost:** last week's band is reconstructed using *this*
+week's S2–S5, so an operator who re-judges S4 mid-week sees that edit reported as
+an S1 band change. It is cosmetic in a record nothing bands on. The event payload
+must therefore record **both as-of dates** so a reader can tell what was compared,
+rather than implying the difference was purely S1.
 
-**O1 — where does the previous band come from?** Nothing stores it.
-Two workable answers, and they are not equivalent:
+**O2 — the stale-signal card is a BESPOKE MODAL**, not a nudge.
+It captures S2–S5 (and optionally `function_state`) in one submit. **This is now
+cheaper than when the question was first written:** confirming Discord's modal
+rules for Gate 0 (R0.15 in `PRD-outreach-company-profile.md`) established that
+modals support `Label` + `RadioGroup`, so four 1/3/5 judgements plus a
+function-state selector fit inside the five-child limit. The card no longer has to
+wait for build item 5 to establish the pattern, and it no longer has to degrade
+into a pointer at `cli/outreach_score.py`.
 
-- *Recompute as-of.* `outreach_s1(trigger_date, CURRENT_DATE - 7)` recombined with
-  the stored S2–S5. Stateless, needs no migration, and exact for S1 drift — but it
-  reconstructs last week's band using *this* week's S2–S5, so an operator who
-  re-judged S4 mid-week has that edit attributed to the sweep as an S1 band change.
-- *Store the last swept band.* Exact and attributable, but adds a column to
-  `outreach_targets` — which means a migration that must **drop and recreate**
-  `v_outreach_scored`, since the view is `SELECT t.*` and its column list is frozen
-  at creation (the trap 0016 hit).
+**O3 — a Gate 1 card OUTLIVES the band that raised it.** No withdrawal, ever.
+The operator's reasoning, which is broader than this one card and is recorded
+because it governs more than the rescore loop:
 
-Recompute-as-of is the smaller change and the misattribution is cosmetic in a
-record nobody bands on. It is still a choice with a real trade-off, not an
-obvious default.
+> A rejected or deferred record must stay reviewable as history, and a firm can
+> change later in ways that make it newly viable.
 
-**O2 — what surface carries a stale-signal card?** The judgement it collects is
-four values (S2–S5) plus optionally `function_state`. Task Tinder's generic
-`task_candidates` path offers Accept / Reject / Defer, which **cannot express a
-four-value judgement** — so the card can only be a nudge that points at
-`uv run python -m cli.outreach_score --target N`, or it needs a bespoke modal like
-the stalled-reason card (build item 5). Cheapest honest option is the nudge; the
-modal is better once item 5 has built the pattern. Sequencing question for the
-operator.
+So the current behaviour — `decide()` gating only on `status = 'candidate'` and
+never re-checking `treatment` — becomes **deliberate rather than accidental**, and
+a test should pin it so nobody "fixes" it later. This is the same principle
+already built elsewhere and now stated once: Gate 1 drop sets `status='dropped'`
+and never deletes (evidence history cannot be rebuilt), and Gate 0 rejection
+records a reason and keeps the row. **Nothing in this subsystem deletes a
+decision.** Live example as of 2026-08-20: AIIR Consulting sits at score 19,
+band `watch`, with its Gate 1 card still posted and still clickable.
 
-**O3 — does a Gate 1 card outlive the band that raised it?** `decide()` gates only
-on `status = 'candidate'` and never re-checks `treatment`, so AIIR's card stays
-live and clickable at 19 after tomorrow. Leaving it is defensible — the decision is
-still worth making and the evidence has not changed. Withdrawing it is defensible —
-the band was the stated reason for spending the operator's attention. Doing nothing
-is the current behaviour by accident, not by decision.
+**O4 — card only UPWARD crossings into `work`; record everything else.**
+A downward crossing writes its `outreach_events` row and raises no card. This
+kills the flood: the 8 simultaneous changes this cohort produced are 1 upward and
+7 downward, so the first sweep would card **nothing**. Downward movement is
+visible in the record and in the briefing count, which is where a trend belongs
+rather than in a Sunday-evening decision queue.
 
-**O4 — which crossings earn a card, and is there a flood cap?** The first sweep on
-this cohort produces eight events at once (above). Eight is fine to *record* and
-too many to *card* on a Sunday evening. Options: record all, card none; card only
-upward crossings into `work`; or collapse a multi-target sweep into one summary
-line on the briefing. Related: `35-` §14's Ted alert list has no entry for this
-loop going silent, unlike the evidence loop's 48h.
+**Plus a Ted alert when this loop goes silent** — `35-` §14 previously had entries
+for the evidence loop (48h), the BCC poller (2h), and the watch loop (8 days), and
+none for this one. Added there. A weekly loop should alert after **8 days**, on
+the same reasoning as `outreach-watch`: one missed firing is the signal, and the
+08-15 incident showed a silently-not-running loop is this system's worst failure
+mode because nothing surfaces it.
+
+> **⚠️ One clause of O4 is not yet actionable and is NOT assumed.** The operator's
+> answer read "card only upward crossings into work, **that includes gate 0**".
+> Gate 0 has no bands — a discovery carries an `icp_fit_score`, not a
+> `treatment` — so the clause has at least two materially different readings:
+> (a) the rescore loop also watches `outreach_discoveries` and cards a discovery
+> whose score rises into range, which is a whole second branch reading a second
+> table; or (b) the card-only-on-upward-movement *principle* governs Gate 0's
+> surfacing too, which is a statement about the existing daily window and needs no
+> code here. **Returned to the operator rather than guessed.** Nothing else in O4
+> depends on it.
 
 ## S5 — Forward references
 

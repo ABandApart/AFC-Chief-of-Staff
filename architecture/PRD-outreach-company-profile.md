@@ -94,7 +94,46 @@ each is also applied where it belongs in the text below.
 
 | # | Question | **Decision** |
 |---|---|---|
-| **OQ-G** | Exploration reserve share | **25% — 5 of the daily 20** (2026-08-20), stepping down as each segment reaches R4.2's 30-label minimum. Implemented in Part 0's window rather than deferred to Part 4 (R0.17), or the answer would sit unused until Part 4 is built. |
+| **OQ-G** | Exploration reserve share | **25% — 5 of the daily 20** (2026-08-20), stepping down as each segment reaches R4.2's 30-label minimum. Implemented in Part 0's window rather than deferred to Part 4 (R0.17). |
+| **OQ-K** | What ICP v1 scores an unscored segment | **Neither prior nor midpoint — surface them instead** (2026-08-20). Five further slots are added for candidates from unscored segments, taking the daily target to **25** (R0.18), and each unscored candidate gets a surface on which the operator can score. |
+
+**Open, raised by the operator's own OQ-K answer:**
+
+| # | Question | State |
+|---|---|---|
+| **OQ-L** | The scoring workflow downstream of the Task Tinder card | **Open — the operator will decide** (stated 2026-08-20). See §0.11 for the specific question it has to settle first. |
+
+## 0.11 OQ-L — the scoring workflow, and the question it must settle first
+
+The operator's OQ-K answer establishes two things as **settled**: unscored
+segments get five slots a day (R0.18), and **every unscored candidate must have a
+surface on which it can be scored**, raised as a Task Tinder task. What happens
+after that card is answered is explicitly his to decide, downstream of Task
+Tinder.
+
+**Before that workflow can be designed, one question has to be answered, and it
+is not a detail.** The six criteria are **segment-level**, not firm-level:
+
+> Market Size · Market Growth · Firm Profitability · Ability to Pay ·
+> Urgency / Pain · Offering Fit
+
+Four of those six describe a *market*, not a company. Nobody rates one
+engineering consultancy's "market size". So the scoring card is one of two
+different things, and they lead to different workflows:
+
+| Grain | What the card asks | Cardinality | Consequence |
+|---|---|---|---|
+| **Per segment** | Rate *engineering consultancies* on the six criteria, with today's five candidates shown as evidence | **Three cards, ever** — one per unscored segment, then done | Unlocks ICP v1 for that whole segment at once. The five daily slots exist to accumulate examples until the operator feels able to rate the category. |
+| **Per candidate** | Judge *this firm* directly, overriding the inherited prior | **One card per candidate, forever** | Never unlocks the segment; every firm in it stays hand-judged. Closer to the S2–S5 judgement Gate 1 already asks for. |
+
+**Recommendation: per segment.** It matches what the criteria actually measure,
+it terminates (three cards rather than an unbounded stream), and it is the only
+one of the two that removes the prior rather than working around it. The five
+daily slots then read naturally as *evidence gathering* — you see real
+engineering consultancies for a week or two, then rate the segment once.
+
+Neither option is implemented. This section exists so the decision is made
+against the real trade-off rather than discovered at build time.
 
 ## TL;DR
 
@@ -489,6 +528,39 @@ would otherwise rank below every established one; on the imported backlog the
 effect is real but small, and the backlog drains in about three days at 20/day
 regardless.
 
+**R0.18 — The daily window is 25 slots in three buckets** (OQ-K, 2026-08-20).
+
+| Bucket | Slots | Filled from |
+|---|---|---|
+| Ranked | 15 | Highest ICP fit, any segment |
+| Exploration reserve | 5 | Segments under R4.2's 30-label minimum (R0.17) |
+| **Unscored segments** | **5** | Segments with **no workbook criteria score** |
+
+**Under-sampled and unscored are different axes**, which is why they get separate
+buckets rather than one larger reserve. Under-sampled is about *decisions not yet
+made* — the loop has too few labels to report an accept rate. Unscored is about
+*a rating the operator has never given* — the segment has no six-criteria score,
+so every candidate in it inherits a prior rather than a judgement. A segment can
+be one, the other, or both; today all six are under-sampled and three are
+unscored.
+
+Buckets fill in order — unscored, then reserve, then ranked — and each excludes
+rows already picked, so a candidate never occupies two slots. **Unfillable slots
+fall back to the ranked list** for the same reason as R0.17: a short window wastes
+review attention.
+
+*Two consequences, stated rather than discovered later.*
+
+- **The unscored bucket is empty today**, and will be until sourcing exists. All
+  49 pool rows are corporate L&D, coaching, or instructional design — every one a
+  scored segment. The bucket does nothing until `agents/outreach/discovery/` can
+  find an engineering consultancy, so the first firms that fill it arrive with the
+  sourcing channels, not before.
+- **Daily review load rises from 20 to 25**, which is a 25% increase against
+  risk D2 (review fatigue), the risk this design already rates High. The operator
+  set the number deliberately; it is flagged here so that if label quality
+  degrades, the window size is a known suspect rather than a surprise.
+
 **R0.15 — The review surface is Components V2 sheet rows, and the row button opens
 a detail modal** (OQ-E, 2026-08-20). Both uncertainties flagged at wireframe time
 are now resolved against Discord's component reference and the installed
@@ -585,16 +657,12 @@ mandatory.**
 
 ## 0.7 Open decisions (S4)
 
-The ten questions raised at rev 2 are all settled (§0.9). One new one was raised
-by the build itself and is recorded here rather than left in a code comment.
+All eleven questions raised so far are settled (§0.9). One remains, and it was
+raised by an operator answer rather than by the build:
 
-| # | Question | Recommendation | Blocks |
+| # | Question | State | Blocks |
 |---|---|---|---|
-| **OQ-K** | **What should ICP v1 score a segment the operator has never scored?** Three of the six segments carry no workbook score, and the spec said only that they "start with no weight and no history". `icp.py` currently uses the **mean of the three scored segments** (4.03 of 5), which puts a new segment at 76 — above instructional design, below corporate L&D — so it can actually reach the daily window. The alternative considered and rejected was the 1–5 midpoint (3.0), which would rank every new segment last and mean none ever surfaced. | **Score the three new segments directly.** The operator built the six-criteria model and can rate engineering consultancies, product design agencies, and MSP/IT consultancies on it in his own workbook — eighteen numbers — and `icp.py` transcribes them like the other three. That removes the prior rather than tuning it, and it is the only option that produces a score grounded in judgement rather than in an average. | **No.** v1 runs on the documented default; changing it is one constant and a model-version bump. |
-
-Recorded because a prior chosen by the build, not by the operator, is exactly the
-kind of quiet assumption the working convention exists to surface — and because
-this one silently decides whether the three new segments are reachable at all.
+| **OQ-L** | **What happens after the daily-scoring Task Tinder card is answered?** The operator has stated the card exists and that its downstream workflow is his to decide. §0.11 sets out the one thing that decision has to settle first — the *grain* of the scoring. | **Open** | The scoring workflow only. The 25-slot window (R0.18) and the card's slot allocation do not wait on it. |
 
 ## 0.8 Risks
 
