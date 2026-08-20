@@ -97,43 +97,33 @@ each is also applied where it belongs in the text below.
 | **OQ-G** | Exploration reserve share | **25% — 5 of the daily 20** (2026-08-20), stepping down as each segment reaches R4.2's 30-label minimum. Implemented in Part 0's window rather than deferred to Part 4 (R0.17). |
 | **OQ-K** | What ICP v1 scores an unscored segment | **Neither prior nor midpoint — surface them instead** (2026-08-20). Five further slots are added for candidates from unscored segments, taking the daily target to **25** (R0.18), and each unscored candidate gets a surface on which the operator can score. |
 
-**Open, raised by the operator's own OQ-K answer:**
+| **OQ-L** | The scoring workflow downstream of the card | **Per segment, on demand** (2026-08-20). The five daily slots are evidence-gathering, and a standing affordance lets the operator enter category ratings whenever he is ready — not gated on a threshold. R0.20. |
 
-| # | Question | State |
-|---|---|---|
-| **OQ-L** | The scoring workflow downstream of the Task Tinder card | **Open — the operator will decide** (stated 2026-08-20). See §0.11 for the specific question it has to settle first. |
+**All open decisions are settled.**
 
-## 0.11 OQ-L — the scoring workflow, and the question it must settle first
+## 0.11 OQ-L — settled: per segment, on demand
 
-The operator's OQ-K answer establishes two things as **settled**: unscored
-segments get five slots a day (R0.18), and **every unscored candidate must have a
-surface on which it can be scored**, raised as a Task Tinder task. What happens
-after that card is answered is explicitly his to decide, downstream of Task
-Tinder.
+The grain question is answered: **per segment**, matching what the six criteria
+actually measure. Four of the six describe a market rather than a company, so
+nobody rates one engineering consultancy's "market size".
 
-**Before that workflow can be designed, one question has to be answered, and it
-is not a detail.** The six criteria are **segment-level**, not firm-level:
+The operator's framing, which settles the trigger as well as the grain:
 
-> Market Size · Market Growth · Firm Profitability · Ability to Pay ·
-> Urgency / Pain · Offering Fit
+> The intent is evidence-gathering until I'm able to rate the category, but also
+> an affordance for me to input category ratings when I can provide them.
 
-Four of those six describe a *market*, not a company. Nobody rates one
-engineering consultancy's "market size". So the scoring card is one of two
-different things, and they lead to different workflows:
+Two consequences, and the second is what makes this different from what I had
+recommended:
 
-| Grain | What the card asks | Cardinality | Consequence |
-|---|---|---|---|
-| **Per segment** | Rate *engineering consultancies* on the six criteria, with today's five candidates shown as evidence | **Three cards, ever** — one per unscored segment, then done | Unlocks ICP v1 for that whole segment at once. The five daily slots exist to accumulate examples until the operator feels able to rate the category. |
-| **Per candidate** | Judge *this firm* directly, overriding the inherited prior | **One card per candidate, forever** | Never unlocks the segment; every firm in it stays hand-judged. Closer to the S2–S5 judgement Gate 1 already asks for. |
-
-**Recommendation: per segment.** It matches what the criteria actually measure,
-it terminates (three cards rather than an unbounded stream), and it is the only
-one of the two that removes the prior rather than working around it. The five
-daily slots then read naturally as *evidence gathering* — you see real
-engineering consultancies for a week or two, then rate the segment once.
-
-Neither option is implemented. This section exists so the decision is made
-against the real trade-off rather than discovered at build time.
+- **Not threshold-gated.** I proposed accumulating examples until some count
+  unlocked the rating. The answer is *on demand* — the affordance stands open and
+  he uses it when he feels able. So there is no "enough evidence" rule to design,
+  argue about, or get wrong, and the five daily slots keep doing their job whether
+  or not he has rated anything yet.
+- **Segment scores stop being a constant.** Today the six criteria per segment are
+  hardcoded in `agents/outreach/icp.py` as a transcription of the workbook. An
+  operator-enterable rating means they must be read from the database, with the
+  hardcoded workbook values as the fallback. R0.20 states the shape.
 
 ## TL;DR
 
@@ -561,6 +551,51 @@ review attention.
   set the number deliberately; it is flagged here so that if label quality
   degrades, the window size is a known suspect rather than a surprise.
 
+**R0.19 — Upward-only governs Gate 0's window too** (O4 clarified, 2026-08-20).
+The rule the rescore loop follows — *card upward crossings, record everything
+else* — is a principle that carries across gates, not a second code branch. The
+rescore loop does **not** read `outreach_discoveries`.
+
+At Gate 0 it binds **re-surfacing**, which is what makes the never-delete rule
+operable rather than merely archival:
+
+- A **new** candidate surfaces on its own merit. It has never been seen, so there
+  is no movement to be upward or downward.
+- A candidate already **decided** — rejected, or accepted and not promoted — may
+  re-enter the window **only when its ICP fit has risen** since the decision was
+  taken. This is the mechanism behind the operator's O3 reasoning: *"the firm may
+  change at some point down the road, making it newly able to survive the band."*
+- **Downward movement never surfaces and never cards.** It is recorded and
+  countable, nothing more.
+
+*Not implementable yet, and deliberately not pre-built.* Nothing re-scores a
+discovery today — v2 arrives with Part 4, and enrichment that could move a score
+arrives with Part 3. **No migration is needed when it does:** `outreach_events`
+already captures every `icp_fit_score` change on this table with a timestamp and
+an actor, so the score as at the review is reconstructable from the audit log
+rather than needing a denormalised column. A column can be added later for query
+convenience; it is not needed for correctness, and adding it now would be
+speculative schema for a comparison nothing can yet make.
+
+**R0.20 — Segment criteria become operator-enterable, database-first**
+(OQ-L, 2026-08-20). The scoring affordance stands open rather than unlocking at a
+threshold, so the six criteria per segment can no longer be a Python constant.
+
+| Layer | Role |
+|---|---|
+| `outreach_segment_scores` (new table) | What the operator has entered, per segment, with `rated_at` and the six criteria |
+| `icp.SEGMENT_CRITERIA` | Fallback — the workbook transcription, unchanged, still the source for the three segments already rated |
+| The workbook | Remains the system of record for the market model (R4.6); Part 4 reports proposed weights back to it for approval, never writes (OQ-J) |
+
+A segment counts as **scored** once a row exists for it, which is also what
+removes it from the unscored bucket (R0.18) — so rating a category has a visible,
+immediate effect on the next day's window. That feedback is what makes the
+affordance worth using, and it is the reason the bucket and the affordance are
+the same mechanism rather than two features.
+
+**Not built.** Next increment, alongside the sourcing channels. Stated here so it
+is designed rather than discovered.
+
 **R0.15 — The review surface is Components V2 sheet rows, and the row button opens
 a detail modal** (OQ-E, 2026-08-20). Both uncertainties flagged at wireframe time
 are now resolved against Discord's component reference and the installed
@@ -657,12 +692,7 @@ mandatory.**
 
 ## 0.7 Open decisions (S4)
 
-All eleven questions raised so far are settled (§0.9). One remains, and it was
-raised by an operator answer rather than by the build:
-
-| # | Question | State | Blocks |
-|---|---|---|---|
-| **OQ-L** | **What happens after the daily-scoring Task Tinder card is answered?** The operator has stated the card exists and that its downstream workflow is his to decide. §0.11 sets out the one thing that decision has to settle first — the *grain* of the scoring. | **Open** | The scoring workflow only. The 25-slot window (R0.18) and the card's slot allocation do not wait on it. |
+**None.** All twelve are settled (§0.9), the last two on 2026-08-20.
 
 ## 0.8 Risks
 

@@ -190,16 +190,11 @@ the same reasoning as `outreach-watch`: one missed firing is the signal, and the
 08-15 incident showed a silently-not-running loop is this system's worst failure
 mode because nothing surfaces it.
 
-> **⚠️ One clause of O4 is not yet actionable and is NOT assumed.** The operator's
-> answer read "card only upward crossings into work, **that includes gate 0**".
-> Gate 0 has no bands — a discovery carries an `icp_fit_score`, not a
-> `treatment` — so the clause has at least two materially different readings:
-> (a) the rescore loop also watches `outreach_discoveries` and cards a discovery
-> whose score rises into range, which is a whole second branch reading a second
-> table; or (b) the card-only-on-upward-movement *principle* governs Gate 0's
-> surfacing too, which is a statement about the existing daily window and needs no
-> code here. **Returned to the operator rather than guessed.** Nothing else in O4
-> depends on it.
+**The "that includes gate 0" clause, clarified 2026-08-20:** it is the
+*principle* that carries across, not a second branch. This loop does **not**
+read `outreach_discoveries` and does not card discoveries. Gate 0 applies
+upward-only to its own window, which is recorded as R0.19 in
+`PRD-outreach-company-profile.md`. Nothing in this loop changes as a result.
 
 ## S5 — Forward references
 
