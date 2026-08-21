@@ -361,6 +361,28 @@ def list_for_review(conn: object, limit: int = DAILY_WINDOW) -> list[dict[str, A
     return picks
 
 
+def page_rows(conn: object, message_id: str) -> list[dict[str, Any]]:
+    """Every row carried by one posted message, decided or not.
+
+    Distinct from `surfaced_pages` on purpose. That one is bounded — it drops
+    fully-decided messages so the startup re-attach does not grow forever. This
+    one must NOT filter: refreshing a card after the last undecided row on it is
+    decided is exactly when the page disappears from `surfaced_pages`, and
+    skipping the edit there would leave that final row showing an enabled
+    "Review" button for a decision already recorded.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            f"""
+            SELECT {_COLUMNS} FROM outreach_discoveries
+            WHERE review_message_id = %s
+            ORDER BY icp_fit_score DESC NULLS LAST, discovered_at
+            """,
+            (message_id,),
+        )
+        return cur.fetchall()
+
+
 def surfaced_pages(conn: object) -> dict[str, list[dict[str, Any]]]:
     """Rows grouped by the message carrying them, for still-actionable messages.
 

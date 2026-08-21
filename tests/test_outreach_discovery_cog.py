@@ -222,6 +222,9 @@ def _submit(mocker, decision, reason=None, note=None):
     from unittest.mock import AsyncMock, MagicMock
 
     modal = cog.ReviewModal(MagicMock(), ROW)
+    # Refreshing the posted sheet is a separate concern with its own tests; here
+    # it must simply not swallow the submit path.
+    modal.cog.refresh_sheet = AsyncMock()
     modal.decision.component._value = decision
     if reason is not None:
         modal.reason.component._value = reason
@@ -365,3 +368,104 @@ def test_a_read_failure_does_not_stop_the_bot_starting(mocker):
                         side_effect=RuntimeError("db down"))
     asyncio.run(instance._reattach_views())  # must not raise
     bot.add_view.assert_not_called()
+
+
+# --- the sheet must show what the database holds -------------------------------
+
+
+def test_an_undecided_row_shows_an_enabled_review_button():
+    from unittest.mock import MagicMock
+    button = cog._ReviewButton(MagicMock(), ROW)
+    assert button.label == "Review" and button.disabled is False
+
+
+def test_an_accepted_row_shows_a_disabled_accepted_button():
+    from unittest.mock import MagicMock
+    button = cog._ReviewButton(MagicMock(), {**ROW, "review_decision": "accept"})
+    assert button.label == "Accepted" and button.disabled is True
+
+
+def test_a_rejected_row_shows_a_disabled_rejected_button():
+    from unittest.mock import MagicMock
+    button = cog._ReviewButton(MagicMock(), {**ROW, "review_decision": "reject"})
+    assert button.label == "Rejected" and button.disabled is True
+
+
+def test_a_decided_row_is_marked_in_the_text_too():
+    """The greyed button alone is too subtle to scan down a 12-row list."""
+    assert cog.row_summary({**ROW, "review_decision": "accept"}).startswith("✅")
+    rejected = cog.row_summary({**ROW, "review_decision": "reject",
+                                "reject_reason": "too_small"})
+    assert rejected.startswith("❌") and "too small" in rejected
+
+
+def test_a_deferred_row_still_reads_as_pending():
+    """OQ-H: a deferral records nothing, so the sheet cannot mark it without
+    inventing state. Pending is the honest rendering — it IS still pending."""
+    from unittest.mock import MagicMock
+    row = {**ROW, "review_decision": None}
+    assert cog.row_summary(row).startswith("**")
+    assert cog._ReviewButton(MagicMock(), row).disabled is False
+
+
+def test_a_decided_row_keeps_its_component_cost():
+    """A disabled button is still three components, so a refreshed page cannot
+    overflow a budget the original post satisfied."""
+    from unittest.mock import MagicMock
+    rows = [{**ROW, "id": i, "review_decision": "accept"}
+            for i in range(1, cog.ROWS_PER_MESSAGE + 1)]
+    view = cog.SheetView(MagicMock(), rows, page=1, pages=1, total=len(rows))
+    assert len(view.children) == 1
+
+
+def test_refresh_edits_the_posted_message(mocker):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    bot = MagicMock()
+    channel = MagicMock()
+    partial = MagicMock()
+    partial.edit = AsyncMock()
+    channel.get_partial_message.return_value = partial
+    bot.get_channel.return_value = channel
+    instance = cog.OutreachDiscoveryCog(bot)
+    mocker.patch.object(cog.OutreachDiscoveryCog, "_fetch_page",
+                        return_value=[{**ROW, "review_decision": "accept"}])
+    asyncio.run(instance.refresh_sheet("1540154418404794418"))
+    channel.get_partial_message.assert_called_once_with(1540154418404794418)
+    partial.edit.assert_awaited_once()
+
+
+def test_refresh_redraws_a_page_whose_last_row_was_just_decided(mocker):
+    """The page drops out of `surfaced_pages` at that moment, so the refresh must
+    read the UNFILTERED page or the final row keeps an enabled Review button for
+    a decision already recorded."""
+    import inspect
+    source = inspect.getsource(cog.OutreachDiscoveryCog._fetch_page)
+    assert "page_rows" in source
+    assert "surfaced_pages" not in source
+
+
+def test_a_refresh_failure_never_looks_like_a_failed_decision(mocker):
+    """The write has already committed by the time this runs."""
+    import asyncio
+    from unittest.mock import MagicMock
+    bot = MagicMock()
+    bot.get_channel.side_effect = RuntimeError("discord down")
+    instance = cog.OutreachDiscoveryCog(bot)
+    mocker.patch.object(cog.OutreachDiscoveryCog, "_fetch_page", return_value=[ROW])
+    asyncio.run(instance.refresh_sheet("1540154418404794418"))  # must not raise
+
+
+def test_refresh_is_a_no_op_without_a_message_id(mocker):
+    import asyncio
+    from unittest.mock import MagicMock
+    bot = MagicMock()
+    instance = cog.OutreachDiscoveryCog(bot)
+    fetch = mocker.patch.object(cog.OutreachDiscoveryCog, "_fetch_page")
+    asyncio.run(instance.refresh_sheet(None))
+    fetch.assert_not_called()
+
+
+def test_a_submit_refreshes_the_sheet_it_came_from(mocker):
+    decide, _ = _submit(mocker, "accept")
+    decide.assert_called_once()

@@ -92,14 +92,30 @@ def assert_component_budget(rows: int) -> None:
         )
 
 
+# The visual state of a row MIRRORS the data model rather than decorating it.
+# `defer` deliberately records nothing (OQ-H), so a deferred row is indistinguish-
+# able from an untouched one — which is correct: it IS still pending, and marking
+# it would mean inventing state the feedback loop has agreed not to keep.
+_DECIDED_MARK = {"accept": "✅", "reject": "❌"}
+_DECIDED_LABEL = {"accept": "Accepted", "reject": "Rejected"}
+
+
 def row_summary(row: dict) -> str:
     """The five fields that fit a row. The other eight live behind Review.
 
     Columns will not visually align — Discord renders proportional text and its
     only monospace context is a code block, which cannot contain components. This
     is a readable line, not a table, and that trade was made knowingly.
+
+    A decided row is prefixed with its outcome so the sheet is scannable at a
+    glance. The greyed-out button alone is too subtle to read down a 12-row list,
+    which is the whole point of a sheet.
     """
-    parts = [f"**{row['company_name']}**"]
+    decision = row.get("review_decision")
+    parts = []
+    if mark := _DECIDED_MARK.get(decision or ""):
+        parts.append(mark)
+    parts.append(f"**{row['company_name']}**")
     parts.append(row["segment"].replace("_", " "))
     if row.get("headcount_band"):
         parts.append(str(row["headcount_band"]))
@@ -109,6 +125,8 @@ def row_summary(row: dict) -> str:
         parts.append(f"ICP {row['icp_fit_score']}")
     if row.get("email_confidence"):
         parts.append(row["email_confidence"].replace("_", " "))
+    if decision == "reject" and row.get("reject_reason"):
+        parts.append(f"_{row['reject_reason'].replace('_', ' ')}_")
     return " · ".join(parts)
 
 
@@ -148,6 +166,10 @@ class ReviewModal(discord.ui.Modal):
         super().__init__(title=f"Review — {row['company_name']}"[:45])
         self.cog = cog
         self.discovery_id = row["id"]
+        # Stored rather than read from `interaction.message`: a modal-submit
+        # interaction does not reliably carry the message it came from, and we
+        # already persist the id the card was posted under.
+        self.message_id = row.get("review_message_id")
 
         self.detail = discord.ui.TextDisplay(detail_block(row))
         self.decision = discord.ui.Label(
@@ -206,6 +228,11 @@ class ReviewModal(discord.ui.Modal):
             f"{f' — {reason}' if reason else ''}",
             ephemeral=True)
 
+        # The ephemeral reply confirms to the operator; the sheet is what he
+        # reads next time. Refresh it so the decision is visible without
+        # remembering which rows were done.
+        await self.cog.refresh_sheet(self.message_id)
+
 
 def _selected(label: discord.ui.Label) -> str | None:
     """The chosen value of a Label-wrapped input, or None if nothing was picked.
@@ -260,8 +287,18 @@ class _ReviewButton(discord.ui.Button):
     """
 
     def __init__(self, cog: OutreachDiscoveryCog, discovery: dict) -> None:
-        super().__init__(label="Review", style=discord.ButtonStyle.secondary,
-                         custom_id=f"{_REVIEW}{discovery['id']}")
+        decision = discovery.get("review_decision")
+        super().__init__(
+            label=_DECIDED_LABEL.get(decision or "", "Review"),
+            style=(discord.ButtonStyle.success if decision == "accept"
+                   else discord.ButtonStyle.secondary),
+            # A decided row keeps its button, disabled, rather than losing it.
+            # Removing it would change the component count between the posted
+            # message and any later rebuild, and the row is the record of what
+            # was decided.
+            disabled=decision in _DECIDED_LABEL,
+            custom_id=f"{_REVIEW}{discovery['id']}",
+        )
         self.cog = cog
         self.discovery = discovery
 
@@ -339,6 +376,40 @@ class OutreachDiscoveryCog(commands.Cog):
                 logger.exception("gate 0: failed to post review page %d", index)
                 return
             await asyncio.to_thread(self._mark, page, str(message.id))
+
+    @staticmethod
+    def _fetch_page(message_id: str) -> list[dict]:
+        with db.connection() as conn:
+            return outreach_discovery.page_rows(conn, message_id)
+
+    async def refresh_sheet(self, message_id: str | None) -> None:
+        """Re-render one posted sheet so decided rows show as decided.
+
+        Discord has no partial component update — the whole view is re-sent — so
+        this rebuilds the page from current database state and edits the message.
+        Rebuilding from the database rather than mutating the in-memory view means
+        the sheet always reflects what was actually stored, including a decision
+        made from another session or corrected directly in the table.
+
+        Failure here is cosmetic and must never surface as a failed decision: the
+        write has already committed by the time this runs.
+        """
+        if not message_id:
+            return
+        try:
+            rows = await asyncio.to_thread(self._fetch_page, message_id)
+            if not rows:
+                return  # unknown message id; nothing to redraw
+            channel = self.bot.get_channel(TASK_TINDER_CHANNEL_ID)
+            if channel is None:
+                return
+            view = SheetView(self, rows, page=1, pages=1, total=len(rows))
+            await channel.get_partial_message(int(message_id)).edit(view=view)
+        except Exception:
+            logger.exception(
+                "gate 0: could not refresh sheet %s — the decision IS recorded; "
+                "only the card is stale", message_id,
+            )
 
     @staticmethod
     def _fetch_surfaced_pages() -> dict[str, list[dict]]:
