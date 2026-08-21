@@ -208,9 +208,21 @@ class ReviewModal(discord.ui.Modal):
 
 
 def _selected(label: discord.ui.Label) -> str | None:
-    """First selected value of a Label-wrapped RadioGroup, or None."""
-    values = getattr(label.component, "values", None) or []
-    return values[0] if values else None
+    """The chosen value of a Label-wrapped input, or None if nothing was picked.
+
+    **`RadioGroup` exposes `value` (singular), not `values`.** Reading only
+    `.values` returned None for every submit, so every decision failed validation
+    with "unknown Gate 0 action: None" and **nothing was ever written** — the
+    review sheet rendered perfectly and recorded nothing. The plural fallback is
+    kept because select-style components do expose `.values`, and a future field
+    may use one.
+    """
+    component = label.component
+    value = getattr(component, "value", None)
+    if value:
+        return str(value)
+    values = getattr(component, "values", None) or []
+    return str(values[0]) if values else None
 
 
 class SheetView(discord.ui.LayoutView):

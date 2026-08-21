@@ -180,3 +180,97 @@ def test_a_sparse_row_still_builds_a_page():
     sparse = [{"id": 1, "company_name": "Bare Co", "segment": "msp_it_consultancy"}]
     view = cog.SheetView(MagicMock(), sparse, page=1, pages=1, total=1)
     assert len(view.children) == 1
+
+
+# --- regression: the submit path must actually WRITE ---------------------------
+#
+# Second bug of the same class as the `row` collision: the object constructed
+# correctly and did the wrong thing when used. The modal built with four children
+# and rendered perfectly, and every submit silently recorded nothing because the
+# decision was read from an attribute RadioGroup does not have.
+
+
+def _label_with(value: str | None):
+    import discord
+    import discord.ui as ui
+    group = ui.RadioGroup(options=[discord.SelectOption(label="X", value="x")])
+    if value is not None:
+        group._value = value
+    return ui.Label(text="Decision", component=group)
+
+
+def test_selected_reads_radiogroup_value_not_values():
+    """`RadioGroup` exposes `value` (singular). Reading `.values` returned None
+    for every submit, so every decision failed validation with 'unknown Gate 0
+    action: None' and nothing was ever written."""
+    assert cog._selected(_label_with(None)) is None
+    assert cog._selected(_label_with("reject")) == "reject"
+
+
+def test_radiogroup_genuinely_has_no_values_attribute():
+    """Pins the fact the bug rested on, so a 'tidy-up' cannot reintroduce it."""
+    import discord
+    import discord.ui as ui
+    group = ui.RadioGroup(options=[discord.SelectOption(label="X", value="x")])
+    assert not hasattr(group, "values")
+    assert hasattr(group, "value")
+
+
+def _submit(mocker, decision, reason=None, note=None):
+    """Drive ReviewModal.on_submit the way Discord does, and report the call."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    modal = cog.ReviewModal(MagicMock(), ROW)
+    modal.decision.component._value = decision
+    if reason is not None:
+        modal.reason.component._value = reason
+    if note is not None:
+        modal.note.component._value = note
+
+    decide = mocker.patch.object(
+        cog.outreach_discovery, "decide",
+        return_value={"company_name": ROW["company_name"], "labelled": True},
+    )
+    interaction = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    asyncio.run(modal.on_submit(interaction))
+    return decide, interaction
+
+
+def test_an_accept_reaches_the_decision_core(mocker):
+    decide, interaction = _submit(mocker, "accept")
+    decide.assert_called_once()
+    args, kwargs = decide.call_args
+    assert args[0] == ROW["id"] and args[1] == "accept"
+    assert kwargs["reason"] is None
+    interaction.response.send_message.assert_awaited_once()
+
+
+def test_a_reject_carries_its_reason_through(mocker):
+    """The reason is the training label — a reject that loses it is worse than
+    no reject at all."""
+    decide, _ = _submit(mocker, "reject", reason="too_small")
+    args, kwargs = decide.call_args
+    assert args[1] == "reject" and kwargs["reason"] == "too_small"
+
+
+def test_a_reject_without_a_reason_never_reaches_the_database(mocker):
+    decide, interaction = _submit(mocker, "reject")
+    decide.assert_not_called()
+    message = interaction.response.send_message.call_args[0][0]
+    assert "reason" in message.lower()
+
+
+def test_other_without_a_note_never_reaches_the_database(mocker):
+    """The one rule the modal UI cannot express — Discord has no conditional
+    requirement — so it must hold on submit."""
+    decide, interaction = _submit(mocker, "reject", reason="other")
+    decide.assert_not_called()
+    assert "note" in interaction.response.send_message.call_args[0][0].lower()
+
+
+def test_a_deferral_reaches_the_core_and_records_no_label(mocker):
+    decide, _ = _submit(mocker, "defer")
+    decide.assert_called_once()
+    assert decide.call_args[0][1] == "defer"
