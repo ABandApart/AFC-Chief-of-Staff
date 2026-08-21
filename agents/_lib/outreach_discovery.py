@@ -361,6 +361,40 @@ def list_for_review(conn: object, limit: int = DAILY_WINDOW) -> list[dict[str, A
     return picks
 
 
+def surfaced_pages(conn: object) -> dict[str, list[dict[str, Any]]]:
+    """Rows grouped by the message carrying them, for still-actionable messages.
+
+    Feeds the cog's startup re-attach. A persistent view is only live in the
+    process that registered it, so after any restart the posted cards' buttons
+    route nowhere and a click times out with "didn't respond in time".
+
+    **Every row of a qualifying message is returned, including already-decided
+    ones.** Registering only the undecided rows would leave the decided buttons
+    with no handler, so clicking one would time out rather than answering
+    "Already decided" - a worse outcome than the state it reports.
+
+    A message whose rows are ALL decided is left out, which is what keeps this
+    bounded as messages accumulate day after day.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            f"""
+            SELECT {_COLUMNS} FROM outreach_discoveries
+            WHERE review_message_id IS NOT NULL
+              AND review_message_id IN (
+                  SELECT review_message_id FROM outreach_discoveries
+                  WHERE review_message_id IS NOT NULL AND reviewed_at IS NULL
+              )
+            ORDER BY review_message_id,
+                     icp_fit_score DESC NULLS LAST, discovered_at
+            """
+        )
+        pages: dict[str, list[dict[str, Any]]] = {}
+        for row in cur.fetchall():
+            pages.setdefault(row["review_message_id"], []).append(row)
+        return pages
+
+
 def get(conn: object, discovery_id: int) -> dict[str, Any] | None:
     with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
         cur.execute(

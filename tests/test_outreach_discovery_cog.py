@@ -274,3 +274,94 @@ def test_a_deferral_reaches_the_core_and_records_no_label(mocker):
     decide, _ = _submit(mocker, "defer")
     decide.assert_called_once()
     assert decide.call_args[0][1] == "defer"
+
+
+# --- regression: the buttons must survive a restart ----------------------------
+#
+# Third bug of the same family. The view constructed, the submit path worked, and
+# every card posted before a restart had dead buttons — a persistent view is only
+# live in the process that registered it. The click routed to no handler and
+# Discord timed out after three seconds with nothing in the log.
+
+
+def test_the_sheet_view_is_persistent_and_re_attachable():
+    """`add_view` refuses a view with a timeout or a component lacking a
+    custom_id. If either regressed, re-attach would silently do nothing."""
+    from unittest.mock import MagicMock
+
+    import discord
+    rows = [{**ROW, "id": i, "company_name": f"Firm {i}"} for i in range(1, 13)]
+    view = cog.SheetView(MagicMock(), rows, page=1, pages=3, total=25)
+    assert view.timeout is None
+    assert view.is_persistent() is True
+    client = discord.Client(intents=discord.Intents.none())
+    client.add_view(view, message_id=1540154416026488902)  # must not raise
+
+
+def test_reattach_registers_one_view_per_message(mocker):
+    import asyncio
+    from unittest.mock import MagicMock
+    bot = MagicMock()
+    instance = cog.OutreachDiscoveryCog(bot)
+    mocker.patch.object(cog.OutreachDiscoveryCog, "_fetch_surfaced_pages",
+                        return_value={
+                            "111": [{**ROW, "id": 1}, {**ROW, "id": 2}],
+                            "222": [{**ROW, "id": 3}],
+                        })
+    asyncio.run(instance._reattach_views())
+    assert bot.add_view.call_count == 2
+    assert {kw["message_id"] for _, kw in bot.add_view.call_args_list} == {111, 222}
+
+
+def test_reattach_survives_one_bad_message(mocker):
+    """One unrebuildable page must not cost the others their live buttons."""
+    import asyncio
+    from unittest.mock import MagicMock
+    bot = MagicMock()
+    instance = cog.OutreachDiscoveryCog(bot)
+    mocker.patch.object(cog.OutreachDiscoveryCog, "_fetch_surfaced_pages",
+                        return_value={
+                            # Real message ids are numeric snowflake strings.
+                            "1540154416026488902": [{**ROW, "id": i}
+                                                    for i in range(20)],  # over budget
+                            "1540154417356079154": [{**ROW, "id": 99}],
+                        })
+    asyncio.run(instance._reattach_views())
+    assert bot.add_view.call_count == 1
+    assert bot.add_view.call_args[1]["message_id"] == 1540154417356079154
+
+
+def test_a_non_numeric_message_id_is_skipped_not_fatal(mocker):
+    """Snowflakes are numeric strings; anything else is corrupt data and must
+    cost only its own page."""
+    import asyncio
+    from unittest.mock import MagicMock
+    bot = MagicMock()
+    instance = cog.OutreachDiscoveryCog(bot)
+    mocker.patch.object(cog.OutreachDiscoveryCog, "_fetch_surfaced_pages",
+                        return_value={"not-a-snowflake": [{**ROW, "id": 1}]})
+    asyncio.run(instance._reattach_views())
+    bot.add_view.assert_not_called()
+
+
+def test_reattach_happens_once_per_process(mocker):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    bot = MagicMock()
+    bot.wait_until_ready = AsyncMock()
+    instance = cog.OutreachDiscoveryCog(bot)
+    reattach = mocker.patch.object(instance, "_reattach_views", AsyncMock())
+    asyncio.run(instance._before_poll())
+    asyncio.run(instance._before_poll())
+    reattach.assert_awaited_once()
+
+
+def test_a_read_failure_does_not_stop_the_bot_starting(mocker):
+    import asyncio
+    from unittest.mock import MagicMock
+    bot = MagicMock()
+    instance = cog.OutreachDiscoveryCog(bot)
+    mocker.patch.object(cog.OutreachDiscoveryCog, "_fetch_surfaced_pages",
+                        side_effect=RuntimeError("db down"))
+    asyncio.run(instance._reattach_views())  # must not raise
+    bot.add_view.assert_not_called()

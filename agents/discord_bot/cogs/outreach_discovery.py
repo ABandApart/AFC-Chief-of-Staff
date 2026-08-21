@@ -283,6 +283,7 @@ class OutreachDiscoveryCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self._reattached = False
 
     async def cog_load(self) -> None:
         self._poll.start()
@@ -339,9 +340,46 @@ class OutreachDiscoveryCog(commands.Cog):
                 return
             await asyncio.to_thread(self._mark, page, str(message.id))
 
+    @staticmethod
+    def _fetch_surfaced_pages() -> dict[str, list[dict]]:
+        with db.connection() as conn:
+            return outreach_discovery.surfaced_pages(conn)
+
+    async def _reattach_views(self) -> None:
+        """Re-register the posted sheets so their buttons survive a restart.
+
+        A persistent view is only live in the process that registered it. Without
+        this, every card posted before a restart has dead buttons: the click
+        routes to no handler and Discord shows "didn't respond in time" after
+        three seconds, with nothing in the log because no callback ever ran.
+
+        The rebuilt view exists only to register handlers by `custom_id` —
+        Discord keeps the original message content, so the header arguments below
+        are never rendered and their values do not matter.
+        """
+        try:
+            pages = await asyncio.to_thread(self._fetch_surfaced_pages)
+        except Exception:
+            logger.exception("gate 0: failed to list surfaced pages for re-attach")
+            return
+
+        attached = 0
+        for message_id, rows in pages.items():
+            try:
+                view = SheetView(self, rows, page=1, pages=1, total=len(rows))
+                self.bot.add_view(view, message_id=int(message_id))
+                attached += 1
+            except Exception:
+                logger.exception("gate 0: could not re-attach message %s", message_id)
+        logger.info("gate 0: re-attached %d persistent view(s) covering %d row(s)",
+                    attached, sum(len(r) for r in pages.values()))
+
     @_poll.before_loop
     async def _before_poll(self) -> None:
         await self.bot.wait_until_ready()
+        if not self._reattached:
+            await self._reattach_views()
+            self._reattached = True
 
 
 async def setup(bot: commands.Bot) -> None:
