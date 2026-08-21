@@ -236,18 +236,29 @@ class SheetView(discord.ui.LayoutView):
 
 
 class _ReviewButton(discord.ui.Button):
-    def __init__(self, cog: OutreachDiscoveryCog, row: dict) -> None:
+    """The one accessory a `Section` allows.
+
+    **Never name an attribute `row` on a discord.py Item.** `Item.row` is a
+    property for action-row layout whose setter runs `5 > value >= 0`, so
+    assigning a dict to it raises `TypeError: '>' not supported between instances
+    of 'int' and 'dict'` at construction — before the component is attached to a
+    Container, so the v2 early-return in that setter has not kicked in yet. This
+    crashed every poll and posted nothing until it was fixed; the discovery dict
+    is now `self.discovery`.
+    """
+
+    def __init__(self, cog: OutreachDiscoveryCog, discovery: dict) -> None:
         super().__init__(label="Review", style=discord.ButtonStyle.secondary,
-                         custom_id=f"{_REVIEW}{row['id']}")
+                         custom_id=f"{_REVIEW}{discovery['id']}")
         self.cog = cog
-        self.row = row
+        self.discovery = discovery
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != OPERATOR_ID:
             await interaction.response.send_message(
                 "Not your decision to make.", ephemeral=True)
             return
-        fresh = await asyncio.to_thread(self.cog.fetch_one, self.row["id"])
+        fresh = await asyncio.to_thread(self.cog.fetch_one, self.discovery["id"])
         if fresh is None or fresh.get("reviewed_at") is not None:
             await interaction.response.send_message(
                 "Already decided.", ephemeral=True)

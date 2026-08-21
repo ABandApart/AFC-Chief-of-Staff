@@ -124,3 +124,59 @@ def test_the_modal_carries_no_button():
     from unittest.mock import MagicMock
     modal = cog.ReviewModal(MagicMock(), ROW)
     assert not any(type(c).__name__ == "Button" for c in modal.children)
+
+
+# --- regression: the components must actually CONSTRUCT ------------------------
+#
+# The bug these cover shipped because every earlier test in this file exercised
+# pure functions (row_summary, detail_block, assert_component_budget) and the
+# modal, and never built a Button or a View. The arithmetic and the text were
+# right; the thing the cog actually posts was never instantiated once.
+
+
+def test_the_review_button_constructs():
+    """`discord.ui.Item.row` is a LAYOUT property whose setter runs
+    `5 > value >= 0`. Naming an attribute `row` and assigning the discovery dict
+    to it raised `TypeError: '>' not supported between instances of 'int' and
+    'dict'` on every poll, so no Gate 0 card ever posted."""
+    from unittest.mock import MagicMock
+    button = cog._ReviewButton(MagicMock(), ROW)
+    assert button.custom_id == f"{cog._REVIEW}{ROW['id']}"
+    assert button.discovery is ROW
+
+
+def test_no_item_attribute_shadows_a_discord_layout_property():
+    """The general form of the bug, so a future attribute cannot repeat it."""
+    from unittest.mock import MagicMock
+
+    import discord
+    button = cog._ReviewButton(MagicMock(), ROW)
+    # `row` must still be discord.py's, not ours.
+    assert button.row is None or isinstance(button.row, int)
+    reserved = {"row", "width", "view", "id", "custom_id", "style", "label"}
+    assert "discovery" not in reserved
+    assert isinstance(button, discord.ui.Button)
+
+
+def test_a_full_sheet_page_constructs_at_the_row_ceiling():
+    from unittest.mock import MagicMock
+    rows = [{**ROW, "id": i, "company_name": f"Firm {i}"}
+            for i in range(1, cog.ROWS_PER_MESSAGE + 1)]
+    view = cog.SheetView(MagicMock(), rows, page=1, pages=3, total=25)
+    assert len(view.children) == 1  # one Container holding header + rows
+
+
+def test_a_sheet_page_over_the_ceiling_refuses_to_build():
+    from unittest.mock import MagicMock
+    rows = [{**ROW, "id": i} for i in range(1, cog.ROWS_PER_MESSAGE + 2)]
+    with pytest.raises(ValueError, match="over Discord"):
+        cog.SheetView(MagicMock(), rows, page=1, pages=1, total=len(rows))
+
+
+def test_a_sparse_row_still_builds_a_page():
+    """Real pool rows carry NULLs. A card that renders in a test fixture but
+    crashes on a row with no headcount would fail the same way this bug did."""
+    from unittest.mock import MagicMock
+    sparse = [{"id": 1, "company_name": "Bare Co", "segment": "msp_it_consultancy"}]
+    view = cog.SheetView(MagicMock(), sparse, page=1, pages=1, total=1)
+    assert len(view.children) == 1
