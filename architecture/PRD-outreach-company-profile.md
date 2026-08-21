@@ -72,6 +72,25 @@ segment ratings, and the briefing. Suite 664 → 698. Live line reads
 for itself: **the pool only grows as fast as its channels find firms.**
 `seed_list` is empty and `news_query` needs the loop enabled.
 
+**✅ Part 0 verified in production, 2026-08-20.** The operator confirmed the
+sheets and modals render as designed, and the database agrees: **25 candidates
+posted across three messages** (12 / 12 / 1), `surfaced_at` and
+`review_message_id` set on all 25, composition coaching 16 · corporate L&D 7 ·
+instructional design 2 — those 2 being the exploration reserve reaching a segment
+pure ranking excluded (R0.17).
+
+**The read path is proven; the write path is not.** `decided = 0`. Nothing has
+exercised `decide()` in production — the modal submit, the reason CHECK, and the
+double-submit guard are covered by tests and by a live INSERT attempt, but not yet
+by a real click. **The first accept and the first reject are the remaining
+end-to-end verification**, and the reject matters more: it is the one that has to
+satisfy the reason constraint under a real interaction.
+
+One correction recorded because it nearly produced a false failure report: the
+handoff first told barry-agent to expect **47** posted rows. 47 are *eligible*;
+the window is **25** (R0.18). Checking against the wrong number would have read
+the design working as a bug — the same shape as the 2026-08-16 FALSE FAIL.
+
 **Verified against §0.6 on the live database:**
 
 - **V0-1** provenance — 0 rows with a NULL `discovered_via`.
