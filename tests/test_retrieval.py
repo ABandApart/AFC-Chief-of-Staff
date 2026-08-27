@@ -206,6 +206,119 @@ def test_node_field_reads_dicts_and_objects():
     assert retrieval._node_field({"name": None, "title": "t"}, "name", "title") == "t"
 
 
+# --- the (id, props) tuple shape (barry-agent's 2026-08-27 V5 finding) ---------
+#
+# cognee's get_neighborhood hands nodes back as (uuid_str, props_dict) 2-tuples.
+# _node_field handled a dict and an attribute object but not a tuple, so every
+# lookup missed and the packet rendered `(unnamed)` for every node — SQL fine,
+# graph fine, edges fine, display broken. These lock the shape in; the shared
+# function is used by recall() and the packet path alike, so the fix is
+# system-wide and so is its coverage.
+
+# The exact shape captured from a live traversal: name is EMPTY, the real value
+# is under title, the id is the tuple's first element.
+_TUPLE_NODE = (
+    "46070574-2b1a-4c3d-aaaa-000000000001",
+    {"name": "", "type": "ContentItem",
+     "url": "https://news.google.com/rss/articles/CBMiabc",
+     "title": "AIIR Consulting Names Dr. Joy Nissen as Managing Partner"},
+)
+
+
+def test_node_field_reads_the_id_from_the_tuple_not_the_props():
+    assert retrieval._node_field(_TUPLE_NODE, "id", "uuid", "node_id") == \
+        "46070574-2b1a-4c3d-aaaa-000000000001"
+
+
+def test_node_field_reads_other_fields_from_the_tuple_props():
+    assert retrieval._node_field(_TUPLE_NODE, "type", "node_type") == "ContentItem"
+    assert retrieval._node_field(_TUPLE_NODE, "source_ref", "source_url", "url") \
+        == "https://news.google.com/rss/articles/CBMiabc"
+
+
+def test_node_field_treats_an_empty_string_as_absent():
+    """A ContentItem's name is '' with the real value under title. Without the
+    empty-string fall-through the packet renders a blank line for a titled node."""
+    assert retrieval._node_field(_TUPLE_NODE, "name", "title") == \
+        "AIIR Consulting Names Dr. Joy Nissen as Managing Partner"
+    assert retrieval._node_field({"name": "", "title": "t"}, "name", "title") == "t"
+
+
+def test_a_genuine_two_tuple_of_dicts_is_not_mis_split():
+    """Only (scalar_id, props_dict) is a node tuple. A (dict, dict) pair is not,
+    so the guard cannot swallow legitimate two-element data."""
+    node = ({"name": "first"}, {"name": "second"})
+    # Treated as a plain object, not an (id, props) tuple → attribute lookup
+    # finds nothing, returns None, rather than reading 'second'.
+    assert retrieval._node_field(node, "name") is None
+
+
+def test_normalize_nodes_renders_the_tuple_shape_end_to_end():
+    """The V5 acceptance check in miniature: a real tuple node yields a real
+    title and URL, not `(unnamed)`."""
+    nodes, sources = retrieval.normalize_nodes(
+        [_TUPLE_NODE], ("outreach_public", "content"))
+    assert len(nodes) == 1
+    entry = nodes[0]
+    assert entry["id"] == "46070574-2b1a-4c3d-aaaa-000000000001"
+    assert entry["name"].startswith("AIIR Consulting Names")
+    assert entry["source_ref"] == "https://news.google.com/rss/articles/CBMiabc"
+    assert sources == ("https://news.google.com/rss/articles/CBMiabc",)
+    rendered = retrieval.render_nodes(nodes)
+    assert "AIIR Consulting Names" in rendered
+    assert "(unnamed)" not in rendered
+    assert "https://news.google.com/rss/articles/CBMiabc" in rendered
+
+
+def test_normalize_nodes_handles_mixed_shapes_in_one_traversal():
+    """A real traversal can return tuples, dicts and objects together; every one
+    must render, or a consumer loses whichever shape it did not expect."""
+    class Obj:
+        id = "obj-1"
+        title = "Object node"
+        url = "https://o/1"
+        dataset = "content"
+
+    raw = [
+        _TUPLE_NODE,
+        {"id": "dict-1", "name": "Dict node", "source_url": "https://d/1",
+         "dataset": "content"},
+        Obj(),
+    ]
+    nodes, _ = retrieval.normalize_nodes(raw, ("outreach_public", "content"))
+    names = {n["name"] for n in nodes}
+    assert len(nodes) == 3
+    assert {"Object node", "Dict node"} <= names
+    assert any(n["name"].startswith("AIIR Consulting") for n in nodes)
+
+
+def test_h3_dataset_containment_still_holds_for_the_tuple_shape():
+    """The fix must not weaken H3: a tuple node whose dataset is not permitted is
+    still dropped, and one whose dataset is unknown is still kept (fail-open)."""
+    permitted = ("content",)
+    denied = ("x", {"name": "", "title": "secret", "dataset": "client_acme",
+                    "url": "https://s/1"})
+    unknown = ("y", {"name": "", "title": "keep me", "url": "https://k/1"})
+    allowed = ("z", {"name": "", "title": "allowed", "dataset": "content",
+                     "url": "https://a/1"})
+    nodes, _ = retrieval.normalize_nodes([denied, unknown, allowed], permitted)
+    titles = {n["name"] for n in nodes}
+    assert "secret" not in titles          # denied dataset dropped
+    assert "keep me" in titles             # unknown dataset kept (fail-open)
+    assert "allowed" in titles
+
+
+def test_an_empty_dataset_string_is_treated_as_unknown_not_denied():
+    """A behaviour change from the fix, made explicit: an empty-string dataset is
+    absent, so the node is kept (unknown), not dropped as 'dataset "" not
+    permitted'. Fail-open matches the documented H3 posture."""
+    node = ("w", {"name": "", "title": "blank dataset", "dataset": "",
+                  "url": "https://w/1"})
+    nodes, _ = retrieval.normalize_nodes([node], ("content",))
+    assert len(nodes) == 1 and nodes[0]["name"] == "blank dataset"
+    assert nodes[0]["dataset_known"] is False
+
+
 def test_normalize_nodes_dedups_source_refs():
     raw = [
         {"id": "a", "source_url": "https://x/1", "dataset": "granola"},

@@ -99,20 +99,59 @@ def normalize_answer(results: object) -> str:
     return text or NO_RESULT
 
 
-def _node_field(node: object, *names: str) -> object:
-    """First present value among `names`, whether `node` is a dict or an object.
+# The node id lives outside the props for the tuple shape, so id lookups resolve
+# to the tuple's first element rather than the props dict.
+_ID_NAMES = frozenset({"id", "uuid", "node_id"})
 
-    cognee's graph adapters hand back node shapes that vary by provider, so the
-    packet's rendering must not depend on one of them. Pure — unit-tested.
+
+def _split_node(node: object) -> tuple[object, object]:
+    """Return `(node_id, props)` for the node shapes cognee's adapters return.
+
+    Three shapes reach here, and the packet's rendering must not depend on which:
+
+      * `(uuid, props_dict)` 2-tuple — cognee's `get_neighborhood`. The id is the
+        first element, every other field is in the props dict. This is the shape
+        that shipped rendering `(unnamed)`: `_node_field` handled a dict and an
+        attribute object but not a tuple, so every lookup missed.
+      * a plain dict — other search paths.
+      * an attribute object.
+
+    A 2-tuple only counts as `(id, props)` when its second element is a dict and
+    its first is a scalar id, so a genuine `(dict, dict)` pair is never mis-split.
     """
+    if (
+        isinstance(node, tuple)
+        and len(node) == 2
+        and isinstance(node[1], dict)
+        and not isinstance(node[0], (dict, list, tuple))
+    ):
+        return (node[0], node[1])
+    return (None, node)
+
+
+def _lookup(props: object, name: str) -> object:
+    if isinstance(props, dict):
+        return props.get(name)
+    return getattr(props, name, None)
+
+
+def _node_field(node: object, *names: str) -> object:
+    """First present value among `names`, across every node shape cognee returns.
+
+    **An empty string counts as absent, not as a hit**, so a candidate that is
+    present-but-blank falls through to the next name. cognee gives a `ContentItem`
+    an empty `name` with the real value under `title`; without this,
+    `_node_field(node, "name", "title")` returns `''` and the packet renders a
+    blank line for a node that has a perfectly good title. Pure — unit-tested,
+    including the tuple shape that shipped this bug.
+    """
+    node_id, props = _split_node(node)
     for name in names:
-        if isinstance(node, dict):
-            if name in node and node[name] is not None:
-                return node[name]
-        else:
-            value = getattr(node, name, None)
-            if value is not None:
-                return value
+        if name in _ID_NAMES and node_id is not None:
+            return node_id
+        value = _lookup(props, name)
+        if value is not None and value != "":
+            return value
     return None
 
 

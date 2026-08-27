@@ -882,10 +882,16 @@ mandatory.**
 
 When Part 1 is done, all of the following are observably true:
 
-1. **Every active target has a typed `Organization` node in the graph, and
-   `outreach_targets.cognee_node_id` holds that node's id.** Verifiable:
-   `SELECT count(*) FILTER (WHERE cognee_node_id IS NULL) FROM outreach_targets
-   WHERE status NOT IN ('archived','dropped')` returns `0`.
+1. **Every active target THAT HAS NEWS has a typed `Organization` node in the
+   graph, and `cognee_node_id` holds that node's id.** The node is created on the
+   first observed news item (`profile.py`), so a firm whose feed returns nothing
+   has no node — and needs none, since the packet traversal would have nothing to
+   show for it. Corrected 2026-08-21 after barry-agent's V1 run: 31 of 34 firms
+   pinned, the 3 unpinned being targets with empty feeds. The honest invariant is
+   *pinned iff observed*, not *all pinned*: `SELECT count(*) FROM outreach_targets
+   t WHERE status NOT IN ('archived','dropped') AND cognee_node_id IS NULL AND
+   EXISTS (SELECT 1 FROM outreach_watch_signals s WHERE s.target_id = t.id)`
+   returns `0`.
 2. **A bounded traversal from any target's `cognee_node_id` returns that
    company's observed news items, rendered with a title, a source URL, and a
    date** — through the existing `Scope.TARGET` path, with no LLM and no
