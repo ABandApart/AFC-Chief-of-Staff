@@ -215,6 +215,62 @@ def explain(candidate: dict[str, Any],
     ]
 
 
+def score_with_model(candidate: dict[str, Any], model: dict[str, Any] | None,
+                     entered: dict[str, dict[str, int]] | None = None) -> int:
+    """Score under a learned model (Part 4), falling back to v1 where it is silent.
+
+    `model` is an `outreach_icp_models.factors` dict — `base_accept_rate` plus
+    per-factor `adjustments` for the cells that cleared the minimum sample. A
+    factor value with no learned adjustment contributes nothing, so an
+    under-sampled segment scores exactly as v1 (R4.2's fallback). The adjustment
+    nudges the v1 score toward the observed accept rate, bounded so a single
+    factor cannot dominate the operator's hand-set weights (R4.1 — the model
+    stays legible, it does not take over).
+
+    `model=None` is plain v1, so every caller can pass the active model and get v1
+    behaviour until one is activated.
+    """
+    base = score(candidate, entered)
+    if not model:
+        return base
+    adjustments = model.get("adjustments") or {}
+    prior = model.get("base_accept_rate", 0.5)
+    # Each learned factor shifts the score by up to +/-MODEL_MAX_SHIFT points,
+    # proportional to how far its accept rate sits from the base rate.
+    shift = 0.0
+    for factor, values in adjustments.items():
+        raw = candidate.get(factor)
+        key = _model_key(factor, raw)
+        if key is not None and key in values:
+            shift += (values[key] - prior) * MODEL_MAX_SHIFT
+    return max(0, min(100, round(base + shift)))
+
+
+def _model_key(factor: str, value: object) -> str | None:
+    """Match a candidate's field to the learned adjustment keys. Headcount is
+    bucketed the same way `learn._bucket_value` bucketed it when learning."""
+    if value is None:
+        return None
+    if factor != "headcount_band":
+        return str(value)
+    low, high = parse_headcount(str(value))
+    if low is None and high is None:
+        return "unknown"
+    midpoint = low if high is None else (low + high) // 2
+    if midpoint < 10:
+        return "<10"
+    if midpoint <= 100:
+        return "10-100"
+    if midpoint <= 250:
+        return "101-250"
+    return ">250"
+
+
+# How many points a single fully-confident factor may move a score. Small on
+# purpose: v2 nudges v1, it does not replace the operator's weights (R4.1).
+MODEL_MAX_SHIFT = 20.0
+
+
 def score(candidate: dict[str, Any],
           entered: dict[str, dict[str, int]] | None = None) -> int:
     """ICP fit, 0-100. Deterministic, and the same inputs always give the same

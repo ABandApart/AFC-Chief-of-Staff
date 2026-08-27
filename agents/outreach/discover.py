@@ -27,7 +27,7 @@ import sys
 from typing import Any
 
 from agents._lib import db, outreach, outreach_discovery
-from agents.outreach import discovery, icp, verify
+from agents.outreach import discovery, icp, learn, verify
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,8 @@ DEFAULT_COUNTRY = "US"
 
 
 def build_row(candidate: dict[str, Any], verification: verify.Verification,
-              entered: dict[str, dict[str, int]] | None = None) -> dict[str, Any]:
+              entered: dict[str, dict[str, int]] | None = None,
+              model: tuple[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Assemble one pool row from a raw candidate and its verification."""
     row = {
         "company_name": candidate["company_name"],
@@ -64,8 +65,13 @@ def build_row(candidate: dict[str, Any], verification: verify.Verification,
         # makes a bounded, unreliable extraction step acceptable.
         "source_url": candidate.get("source_url"),
     }
-    row["icp_fit_score"] = icp.score(row, entered)
-    row["icp_model_version"] = icp.MODEL_VERSION
+    if model is not None:
+        version, factors = model
+        row["icp_fit_score"] = icp.score_with_model(row, factors, entered)
+        row["icp_model_version"] = version
+    else:
+        row["icp_fit_score"] = icp.score(row, entered)
+        row["icp_model_version"] = icp.MODEL_VERSION
     return row
 
 
@@ -78,6 +84,7 @@ def run(*, country: str = DEFAULT_COUNTRY, fetch: bool = True,
     with db.connection() as conn:
         known = outreach_discovery.known_domains(conn)
         entered = outreach_discovery.entered_segment_scores(conn)
+        model = learn.active_model(conn)
 
         for segment in SEGMENTS:
             for candidate in discovery.find_all(segment):
@@ -102,7 +109,7 @@ def run(*, country: str = DEFAULT_COUNTRY, fetch: bool = True,
                         outreach_discovery.MIN_VERIFICATION_KINDS, verification.note,
                     )
 
-                row = build_row(candidate, verification, entered)
+                row = build_row(candidate, verification, entered, model)
                 if dry_run:
                     print(f"  would insert {row['company_name']:<34} "
                           f"{row['segment']:<24} ICP {row['icp_fit_score']:>3}  "

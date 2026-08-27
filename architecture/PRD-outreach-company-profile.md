@@ -5,7 +5,7 @@
   <doc:theme>Cast a wide net, learn from the operator's own accept/reject decisions which industries, firms, and problem spaces convert, and profile the survivors</doc:theme>
   <doc:duration>Part 0 ~4–5 days · Part 1 ~2 days · Part 2 ~2–3 days · Part 3 gated, ~2 days once accounts exist · Part 4 ~2 days</doc:duration>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>rev 2.5, 2026-08-21 — nine of ten decisions settled (§0.9); OQ-G open, gates Part 4 only. **PART 0 IS BUILT** (§0.10): schema, ICP v1, the decision core, the workbook importer, verification, two sourcing channels including bounded entity extraction, the daily loop, the Gate 0 review sheet, the segment-rating affordance, and the briefing line. Parts 1-4 remain. Rev 1 (2026-08-17) specified profiling of an existing 14-target list. Rev 2 makes discovery the primary job on operator revision, adds the daily-20 review surface and its field contract, widens the segment taxonomy from three to six, and un-defers the ICP feedback loop.</doc:status>
+  <doc:status>rev 2.6, 2026-08-27 — nine of ten decisions settled (§0.9); OQ-G open, gates Part 4 only. **PART 0 IS BUILT** (§0.10): schema, ICP v1, the decision core, the workbook importer, verification, two sourcing channels including bounded entity extraction, the daily loop, the Gate 0 review sheet, the segment-rating affordance, and the briefing line. Parts 1-4 remain. Rev 1 (2026-08-17) specified profiling of an existing 14-target list. Rev 2 makes discovery the primary job on operator revision, adds the daily-20 review surface and its field contract, widens the segment taxonomy from three to six, and un-defers the ICP feedback loop.</doc:status>
   <doc:depends_on>`35-outreach-crm.md` §2 (schema), §3 (staleness), §5 (intake), §7 (packet), §8 (capacity), §9 (surfaces), §10 (Trent Crimm), §11 (H1–H7); migration 0013 (`outreach_evidence`, `outreach_watch_signals`); `agents/_lib/retrieval.py` `Scope.TARGET`; `agents/tartt/`; `agents/_lib/ontology.py`; the operator CRM workbook `Education_LD_Leads_CRM_(current).xlsx`</doc:depends_on>
   <doc:blocks>nothing today. Part 0 becomes the top of the funnel that `35-` §5 intake assumes already exists.</doc:blocks>
 </doc:meta>
@@ -1481,7 +1481,9 @@ exploitation is self-fulfilling: the three new segments start with no history, r
 last, are never surfaced, and never acquire the labels that would prove their
 worth. **A fixed share of each day's window is reserved for under-sampled segments
 and channels**, and stays reserved until every segment reaches R4.2's minimum
-sample. The share is OQ-G, still open. This rule is the difference between market
+sample. The share is 25% (OQ-G, settled 2026-08-20) and is **already built in Part
+0** (R0.17 reserve + R0.18 unscored bucket), so Part 4 verifies outcome 5 rather
+than building it. This rule is the difference between market
 intelligence and a machine that confirms the operator's starting assumptions — so if
 the reserve is dropped, §4.6's caveat about optimising toward current taste becomes
 the governing risk rather than a footnote.
@@ -1506,16 +1508,39 @@ with like against the sheet he already trusts.
 
 ## 4.4 What gets built
 
+> **Migration renumber (2026-08-27): the ICP-models table is 0022, not 0019 —
+> 0019 shipped as `outreach_segment_scores` (R0.20). The exploration reserve
+> (R4.3, outcome 5) is already built in Part 0, so it is not rebuilt here.**
+
 | Artifact | Content |
 |---|---|
-| **Migration 0019** | `outreach_icp_models` — `version`, `active BOOL`, `factors JSONB`, `created_at`, `activated_at`, `activated_by`, `notes`. Partial unique index enforcing at most one `active`. Audit trigger attached. Owner `barry_agent`. |
+| **Migration 0022** | `outreach_icp_models` — `version`, `active BOOL`, `factors JSONB`, `created_at`, `activated_at`, `activated_by`, `notes`. Partial unique index enforcing at most one `active`. Audit trigger attached. Owner `barry_agent`. |
 | `agents/outreach/icp.py` | v2 scorer beside v1; `explain(candidate) -> list[(factor, contribution)]`. |
 | `agents/outreach/learn.py` | Rate computation with smoothing, minimum-sample gating, recency weighting, and proposed-version writing. |
 | `cli/icp_model.py` | `--report` (rates with sample sizes), `--propose`, `--diff`, `--activate`. Activation is a deliberate operator command, per outcome 4. |
 | `loops/outreach-rescore.md` | Extended, not duplicated — the weekly Sunday sweep already exists as a spec and is the natural home for recomputing rates. |
 | Tests | Minimum-sample gating refuses to report; smoothing pulls a 3-sample cell toward the prior; recency weighting; the exploration reserve surfaces an under-sampled segment; explanation components sum to the score; activation is required for a proposal to take effect. |
 
-## 4.5 Verification (S3)
+## 4.4a Build status — Part 4, as of 2026-08-27
+
+**Built and verified on the build box** (no LLM, no cognee — pure arithmetic over
+labels). Suite 760 → 774.
+
+| Artifact | State |
+|---|---|
+| **Migration 0022** | **Applied.** `outreach_icp_models` (versioned, one-active partial-unique, audited, owner `barry_agent`), v1 baseline seeded active. Also repaired a latent 0019 bug: `outreach_log_event()` hardcoded `NEW.id` and failed on TEXT-keyed tables (`outreach_segment_scores`, this one); `entity_id` is now nullable and read from the row JSON. |
+| `agents/outreach/learn.py` | **Built + verified live.** Recency-weighted, reason-routed accept rates with Laplace smoothing and `MIN_SAMPLE` gating; headcount buckets to ICP bands; pain_layer report-only (R0.14). |
+| `agents/outreach/icp.py` | **`score_with_model` added.** v2 nudges v1 by at most `MODEL_MAX_SHIFT`; `model=None` and an unlearned value are exactly v1. |
+| `cli/icp_model.py` | **Built + verified.** `--report / --propose / --diff / --activate`; propose refuses when no cell clears the minimum; activate is one-active and audited. |
+| `agents/outreach/discover.py` | **Wired.** New scores read the active model, so an activated v2 takes effect with no code change; v1 baseline = no change. |
+
+**Measured on the 24 live labels:** nothing is reportable — every cell is below
+the 30-label minimum, so `--propose` correctly refuses. The loop is inert until
+the labels accrue, which is R4.2 working, not a gap. **V4-1** (the held-out check
+that v2 beats v1 before it can win) waits on real reportable rates, i.e. more
+labels — the one piece that cannot be closed until the funnel runs.
+
+## 4.5 Verification (S3)## 4.5 Verification (S3)
 
 ```
 # rates with sample sizes, and nothing reported below the minimum
