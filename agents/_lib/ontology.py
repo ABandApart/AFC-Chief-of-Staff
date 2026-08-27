@@ -109,6 +109,7 @@ class ContentItem(DataPoint):
     title: str
     summary: str | None = None
     mentions_signals: list[ICPSignal] = []  # edges → ICPSignal
+    about_orgs: list[Organization] = []     # edges → Organization (Track O Part 1)
     metadata: dict = {"index_fields": ["title", "summary"]}
 
 

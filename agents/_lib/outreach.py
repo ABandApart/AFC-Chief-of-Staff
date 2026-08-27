@@ -413,6 +413,113 @@ def backfill_function(conn: object, target_id: int, role_titles: list[str]) -> s
     return None
 
 
+def profilable_firms(conn: object) -> list[dict[str, Any]]:
+    """Firms Part 1 should observe news for: active targets AND accepted
+    discoveries (R1.9). Each row carries a `parent` tag so the caller knows which
+    id column a signal hangs off, and the fields the poller needs.
+
+    A target is active unless archived/dropped. A discovery qualifies once the
+    operator has accepted it — an accepted firm with no trigger is exactly the row
+    a news observation can promote (R0.3), which is why the pool is profiled at
+    all.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            """
+            SELECT 'target' AS parent, id, company_name, company_domain,
+                   sector AS segment, news_query, news_feed_url, cognee_node_id
+            FROM outreach_targets
+            WHERE status NOT IN ('archived', 'dropped')
+            UNION ALL
+            SELECT 'discovery' AS parent, id, company_name, company_domain,
+                   segment, news_query, news_feed_url, cognee_node_id
+            FROM outreach_discoveries
+            WHERE review_decision = 'accept' AND promoted_target_id IS NULL
+            ORDER BY company_name
+            """
+        )
+        return cur.fetchall()
+
+
+def insert_watch_signal(conn: object, row: dict[str, Any]) -> bool:
+    """Insert one news signal, or DO NOTHING if already seen (R1.5).
+
+    Deliberately NOT `upsert_evidence`: that advances `last_seen_at`, which is
+    right for a persistent state (an open req) and wrong for a point-in-time event
+    (a news item). Advancing it would make a six-month-old article read as
+    `fresh` forever — R19's failure through a side door. A news item is written
+    once and never re-dated, so this is insert-or-skip on the per-parent unique.
+    """
+    parent = row["parent"]
+    parent_col = "target_id" if parent == "target" else "discovery_id"
+    # Target the partial unique INDEX by its columns and predicate, not by name:
+    # ON CONFLICT ON CONSTRAINT needs a real constraint, and these are indexes
+    # (a partial unique can only be an index, not a table constraint).
+    conflict = f"({parent_col}, dedup_key) WHERE {parent_col} IS NOT NULL"
+    payload = {
+        parent_col: row["parent_id"],
+        "source_kind": row["source_kind"],
+        "source_url": row.get("source_url"),
+        "excerpt": clean_field(row.get("excerpt"), max_chars=500),
+        "dedup_key": row["dedup_key"],
+    }
+    cols = [c for c in payload if payload[c] is not None]
+    placeholders = ", ".join(f"%({c})s" for c in cols)
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            f"INSERT INTO outreach_watch_signals ({', '.join(cols)}) "
+            f"VALUES ({placeholders}) "
+            f"ON CONFLICT {conflict} DO NOTHING RETURNING id",
+            payload,
+        )
+        return cur.fetchone() is not None
+
+
+def set_cognee_node_id(conn: object, parent: str, parent_id: int, node_id: str) -> None:
+    """Pin a firm to its Organization node. Idempotent — set once, and a re-run
+    with the same deterministic id is a harmless no-op write."""
+    table = "outreach_targets" if parent == "target" else "outreach_discoveries"
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            f"UPDATE {table} SET cognee_node_id = %s WHERE id = %s",
+            (node_id, parent_id),
+        )
+
+
+def mark_news_polled(conn: object, parent: str, parent_id: int) -> None:
+    table = "outreach_targets" if parent == "target" else "outreach_discoveries"
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            f"UPDATE {table} SET news_polled_at = now() WHERE id = %s",
+            (parent_id,),
+        )
+
+
+def reparent_watch_signals(conn: object, discovery_id: int, target_id: int) -> int:
+    """Move a promoted firm's signals from its discovery to its new target (R1.9).
+
+    Called inside promotion's transaction. Without it, news observed while a firm
+    sat in the pool would be orphaned the moment it becomes a target, and the
+    target's own queries would not see its pre-promotion history. Skips any signal
+    whose dedup_key already exists on the target, so a re-run cannot violate the
+    per-target unique.
+    """
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            """
+            UPDATE outreach_watch_signals s
+            SET target_id = %(target)s, discovery_id = NULL
+            WHERE s.discovery_id = %(discovery)s
+              AND NOT EXISTS (
+                  SELECT 1 FROM outreach_watch_signals t
+                  WHERE t.target_id = %(target)s AND t.dedup_key = s.dedup_key
+              )
+            """,
+            {"target": target_id, "discovery": discovery_id},
+        )
+        return cur.rowcount
+
+
 def pollable_targets(conn: object) -> list[dict[str, Any]]:
     """Targets with a careers page still worth polling.
 

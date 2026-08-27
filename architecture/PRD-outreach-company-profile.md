@@ -5,7 +5,7 @@
   <doc:theme>Cast a wide net, learn from the operator's own accept/reject decisions which industries, firms, and problem spaces convert, and profile the survivors</doc:theme>
   <doc:duration>Part 0 ~4–5 days · Part 1 ~2 days · Part 2 ~2–3 days · Part 3 gated, ~2 days once accounts exist · Part 4 ~2 days</doc:duration>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>rev 2.4, 2026-08-20 — nine of ten decisions settled (§0.9); OQ-G open, gates Part 4 only. **PART 0 IS BUILT** (§0.10): schema, ICP v1, the decision core, the workbook importer, verification, two sourcing channels including bounded entity extraction, the daily loop, the Gate 0 review sheet, the segment-rating affordance, and the briefing line. Parts 1-4 remain. Rev 1 (2026-08-17) specified profiling of an existing 14-target list. Rev 2 makes discovery the primary job on operator revision, adds the daily-20 review surface and its field contract, widens the segment taxonomy from three to six, and un-defers the ICP feedback loop.</doc:status>
+  <doc:status>rev 2.5, 2026-08-21 — nine of ten decisions settled (§0.9); OQ-G open, gates Part 4 only. **PART 0 IS BUILT** (§0.10): schema, ICP v1, the decision core, the workbook importer, verification, two sourcing channels including bounded entity extraction, the daily loop, the Gate 0 review sheet, the segment-rating affordance, and the briefing line. Parts 1-4 remain. Rev 1 (2026-08-17) specified profiling of an existing 14-target list. Rev 2 makes discovery the primary job on operator revision, adds the daily-20 review surface and its field contract, widens the segment taxonomy from three to six, and un-defers the ICP feedback loop.</doc:status>
   <doc:depends_on>`35-outreach-crm.md` §2 (schema), §3 (staleness), §5 (intake), §7 (packet), §8 (capacity), §9 (surfaces), §10 (Trent Crimm), §11 (H1–H7); migration 0013 (`outreach_evidence`, `outreach_watch_signals`); `agents/_lib/retrieval.py` `Scope.TARGET`; `agents/tartt/`; `agents/_lib/ontology.py`; the operator CRM workbook `Education_LD_Leads_CRM_(current).xlsx`</doc:depends_on>
   <doc:blocks>nothing today. Part 0 becomes the top of the funnel that `35-` §5 intake assumes already exists.</doc:blocks>
 </doc:meta>
@@ -1020,6 +1020,44 @@ targets.
 
 </settled>
 
+## 1.3a Spec-vs-reality corrections (recorded 2026-08-21, before build)
+
+Part 1 was written when migrations stopped at 0016 and the discovery pool did not
+exist. Three facts are now different, and one is load-bearing.
+
+**C1 — the migration is 0021, not 0017.** 0017 was never used; 0018–0020 shipped
+(pool, segment scores, operator-verified contacts). No behaviour change.
+
+**C2 — `outreach_watch_signals` cannot hold a pool-row signal, and must.** The
+table is `target_id NOT NULL REFERENCES outreach_targets`. Rev 2 widened Part 1 to
+profile accepted discoveries, and that is not a nice-to-have: an accepted
+discovery has no trigger, the ONLY way it gets one is Part 2 classifying a signal
+about it (R0.3), and Part 2 reads this table. So a pool firm's signals must land
+here or the firm can never be promoted — which is the operator's stated reason for
+building Part 1 at all.
+
+**Resolution (R1.9): make the parent polymorphic.** `target_id` becomes nullable,
+a nullable `discovery_id` is added, and a CHECK requires **exactly one**. The old
+`UNIQUE (target_id, dedup_key)` becomes two partial unique indexes, one per
+parent, so dedup holds on both sides. The table is empty, so this is a reshape
+with no data migration. This is the standard polymorphic-parent pattern, it is
+reversible, and it fabricates nothing — the alternative (profile targets only)
+would strand the 20 accepted firms this part exists to unblock, so it is not a
+real option rather than a preference.
+
+*Promotion carries the signals across.* When a discovery becomes a target,
+`decide`/`promote` re-points its signals from `discovery_id` to the new
+`target_id` in the same transaction, so the promoted target sees the history
+observed while it was still in the pool, and nothing is orphaned.
+
+**C3 — the graph half runs on barry-agent only.** cognee is not importable on the
+build box (no `cognee` module, matching the original increment 1 split). So
+outcomes 1 and 2, V1 and V5, `profile_graph.py`'s cognify path, and the
+`ContentItem.about_orgs` edge are **code-complete and unit-tested for determinism
+here, but their runtime verification is barry-agent's**, exactly as the evidence
+poller's cognee path was. The SQL half — the watch-signal queue, the pure feed
+functions, dedup, and idempotency — is fully built and verified on the build box.
+
 ## 1.4 What gets built
 
 | Artifact | Content |
@@ -1072,6 +1110,33 @@ company. **Below roughly 70% for a target, that target needs a `news_query`
 override** (adding a sector word, a founder name, or the domain). This is a named
 acceptance check with a human in it, not a unit test, and it is the reason
 `news_query` exists as a column rather than being derived unconditionally.
+
+## 1.5a Build status — Part 1, as of 2026-08-21
+
+**SQL half built and verified on the build box; graph half code-complete, awaiting
+barry-agent** (C3). Suite 737 → 750.
+
+| Artifact | State |
+|---|---|
+| **Migration 0021** | **Applied.** News columns on both tables, `cognee_node_id` on discoveries, polymorphic `outreach_watch_signals` (R1.9), view rebuilt, no drift. |
+| `agents/outreach/news.py` | **Built + verified.** Pure feed/URL/dedup/date logic. |
+| `agents/outreach/profile_graph.py` | **Built.** Org/ContentItem builders, id determinism and the edge unit-tested; `add_*` need cognee. |
+| `agents/_lib/ontology.py` | **`ContentItem.about_orgs` added.** |
+| `agents/_lib/outreach.py` | **Built + verified.** `profilable_firms` (34: 14 targets + 20 accepted discoveries), `insert_watch_signal`, `reparent_watch_signals`, `set_cognee_node_id`, `mark_news_polled`. |
+| `agents/outreach/profile.py` + `loops/outreach-profile.md` | **Built**, ships disabled. `--no-graph` runs the SQL half on the build box. |
+| `agents/_lib/outreach_discovery.py` | **Promotion now reparents signals** (R1.9). |
+
+**Verified live on the build box** (`--no-graph`, one firm, then cleaned to zero):
+AIIR's Google News feed returned **10 real items**, all 10 written as new
+unclassified signals; **re-run wrote 0 and `detected_at` did not move** (outcomes
+3, 4). One item was a namesake — the V6 precision case, in the flesh. The signals
+were deleted afterwards so barry-agent verifies from a true zero with a consistent
+SQL+graph state.
+
+**Barry-agent still owns** (C3, needs cognee): V1 (`cognee_node_id` set on every
+active firm), V5 (the `Scope.TARGET` traversal returns a rendered news title +
+URL), and the full both-homes run. The `--no-graph` path is what the build box
+can prove; the graph is not.
 
 ## 1.6 Open decisions (S4)
 

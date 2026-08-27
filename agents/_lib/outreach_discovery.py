@@ -742,6 +742,10 @@ def promote(discovery_id: int, trigger: dict[str, Any]) -> dict[str, Any]:
                     "WHERE id = %s AND promoted_target_id IS NULL",
                     (target["id"], discovery_id),
                 )
+            # Carry any news observed while the firm was in the pool across to the
+            # new target, so its history is not orphaned (R1.9). No-op until Part
+            # 1 has run; harmless before then.
+            outreach.reparent_watch_signals(conn, discovery_id, target["id"])
 
     logger.info(
         "gate 0: promoted %s to target %s on trigger %s",
