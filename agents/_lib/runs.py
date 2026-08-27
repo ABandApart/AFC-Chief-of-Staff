@@ -87,6 +87,7 @@ DAILY_CEILINGS: dict[str, float] = {
     "recall":            0.50,   # Phase 3.3 — query embeddings only (gemini, cheap)
     "granola":           3.00,   # Track C — meeting-note ingest (cognify per note)
     "outreach-discover": 0.25,   # Track O Part 0 — bounded entity extraction (R0.21)
+    "trent-crimm":        0.30,   # Track O Part 2 — news classification (35- §10)
 }
 
 # System-wide kill switch: total spend across ALL agents per day.

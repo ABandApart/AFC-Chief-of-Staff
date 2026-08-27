@@ -1303,12 +1303,39 @@ H5 quarantine test (outcome 5) as unit/integration tests, not eyeball checks.
 
 ## 2.5 Open decisions (S4)
 
-| # | Question | Blocking? |
+Settled at build, 2026-08-27:
+
+| # | Question | Decision |
 |---|---|---|
-| 1 | Per-run item cap — how many classifications per weekly run before the $0.30/day ceiling is the binding constraint? Needs a real queue depth from Part 1 to size. | Yes, at build |
-| 2 | Does an unclassifiable signal ever get retried, or is `classified_as='none'` terminal? | Yes, at build |
-| 3 | Leadership roster source — the company's own team/about page has no feed. Manual entry, or a bounded one-page fetch? A page fetch reintroduces the stable-id problem R1.2 avoids. | Yes, for outcome 6 |
-| 4 | **Dedup identity vs canonical URL** (R2.5). Keep the observed Google News URL as the dedup key and store canonical as a record field (recommended — identity fixed at observation), or re-key on canonical post-fetch to collapse duplicate redirects? | Yes, at build |
+| 1 | Per-run cap | **200/run.** Part 1's first run produced ~887 signals; at Haiku's ~$0.0002/call that is ~$0.18 for the whole queue, under the $0.30 ceiling — so the cap is generous and the ceiling breaker is the real backstop. |
+| 2 | Retry policy | **`classified_as='none'` is terminal.** A not-a-trigger verdict stamps `classified_at` and is never re-asked; re-classifying would spend again on a settled item. |
+| 3 | Leadership roster (outcome 6) | **Deferred.** The company team page has no feed and a bounded fetch reintroduces the stable-id problem R1.2 avoids; outcome 6 is not built in this slice. Revisit with Part 3's contact enrichment, where a page fetch is already on the table. |
+| 4 | Dedup identity vs canonical URL (R2.5) | Keep the observed URL as the dedup key; canonical is a record field. |
+
+## 2.5a Build status — Part 2, as of 2026-08-27
+
+**Deterministic half built and verified on the build box; the Haiku call awaits
+barry-agent** (needs anthropic credentials — same split as Part 1's graph half).
+Suite 773 → 787.
+
+| Artifact | State |
+|---|---|
+| `agents/outreach/classify.py` | **Built.** Queue reader, verdict recorder (idempotent, `none`-terminal), promotion (evidence + pool→target on the acceptance date), H5 quarantine — all verified. The `classify_excerpt` Haiku call and the `run()` loop are code-complete but need anthropic (barry-agent). |
+| `agents/_lib/runs.py` | **`trent-crimm` ceiling added** ($0.30/day) — it was missing, so `agent_run` would have `ValueError`'d on the first call. |
+| `loops/outreach-classify.md` | **Built**, ships disabled (needs the anthropic key + queue depth; it spends money). |
+| Migration | **None** — outcome 6 (leadership roster) deferred, so no schema change. |
+
+**Verified live** (deterministic path, one accepted discovery, rolled back):
+Factor 8 → classified `funding_announced` → promoted to a target with
+`trigger_kind='funding_announced'` and **`trigger_date` = its acceptance date**
+(0023), evidence written `first_seen_at` = the event date (R1.4), re-handle is a
+no-op (outcome 4). **Outcome 3 verified:** the fact is `news_event`, not
+`open_role`, so `close_absent_evidence` never touches it.
+
+**Barry-agent owns** the real run: V2/V3-style checks (queue drains, promotions
+carry the event date), the H5 quarantine test with a synthetic instruction-bearing
+excerpt (outcome 5, needs a real run to confirm zero `agent_runs`), and the spend
+staying under the ceiling.
 
 </part_2>
 
