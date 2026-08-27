@@ -2,7 +2,7 @@
 name: outreach-profile
 schedule: "30 6 * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.outreach.profile
 description: Observe company news into the unclassified queue and the graph (Track O, Part 1).
 ---
@@ -26,10 +26,11 @@ this loop exists ahead of a first send.
 **No LLM.** Deterministic GET + dedup + typed-node writes: no `agent_runs`, no
 ceiling, no provider-outage failure mode.
 
-**Ships DISABLED.** Two reasons beyond convention: it needs cognee (barry-agent
-only — the build box writes the SQL queue but not the graph), and it should be
-flipped once the operator has accepted a meaningful number of pool rows so there
-is something to watch. Health check by hand:
+**ACTIVATED 2026-08-27** (operator go-ahead; `enabled: false → true`). It shipped
+disabled through the build and V5 verification — a loop needing cognee and a
+populated pool should not fire before either exists. Both hold now: V5 passed
+runtime-verified end to end, and 20 pool rows are accepted plus 14 active targets.
+Health check by hand:
 
 ```
 uv run python -m agents.outreach.profile --dry-run              # firms + feeds, writes nothing

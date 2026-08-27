@@ -1248,7 +1248,33 @@ of OQ1.** Press releases announce *arrivals* reliably and *departures* selective
 Part 2 improves the signal; it does not close the open question, and the spec must
 not later be read as if it did.
 
-## 2.4 Verification (S3)
+**R2.5 — The canonical publisher URL is the URL of record** (operator decision,
+2026-08-27). Part 1 stores what the feed hands it, which for Google News is a
+redirect link (`news.google.com/rss/articles/…`), not the publisher's own URL.
+That is correct for Part 1 — it reads feed metadata only and never fetches, so it
+cannot know the destination without following the redirect. **Part 2 already
+fetches the article** (R2.1, trafilatura), and the fetch resolves the redirect to
+the publisher's canonical URL. So Part 2 is where the canonical URL becomes known,
+and it must record it:
+
+- The `ContentItem` node's `url` is **updated to the canonical publisher URL** on
+  classification. Its id is `uuid5` of the *original observed* URL and does not
+  change, so the update is an in-place field write, not a new node.
+- A promoted `outreach_evidence` row carries the canonical URL as its
+  `source_url`, so the packet cites the publisher, not a Google redirect.
+
+**One open decision this forces, and it is load-bearing** — added as open #4
+below. The dedup key. Part 1 dedups on the observed (Google News) URL, which is
+stable and fetch-free. If two different Google News links resolve to the same
+publisher article, Part 1 sees two signals; only Part 2, post-fetch, can tell they
+are one. Re-keying dedup on the canonical URL would collapse them but means the
+identity of a signal changes after it is stored, which the whole first-seen
+discipline is wary of. Recommendation: **keep the observed URL as the dedup key
+(identity is fixed at observation) and treat the canonical URL as a display/record
+field**, accepting the rare double as the honest cost — the same trade R1.3 already
+made for the two-feed overlap. Decide at Part 2 build.
+
+## 2.4 Verification (S3)## 2.4 Verification (S3)
 
 Runtime, barry-agent, after one scheduled run:
 
@@ -1273,6 +1299,7 @@ H5 quarantine test (outcome 5) as unit/integration tests, not eyeball checks.
 | 1 | Per-run item cap — how many classifications per weekly run before the $0.30/day ceiling is the binding constraint? Needs a real queue depth from Part 1 to size. | Yes, at build |
 | 2 | Does an unclassifiable signal ever get retried, or is `classified_as='none'` terminal? | Yes, at build |
 | 3 | Leadership roster source — the company's own team/about page has no feed. Manual entry, or a bounded one-page fetch? A page fetch reintroduces the stable-id problem R1.2 avoids. | Yes, for outcome 6 |
+| 4 | **Dedup identity vs canonical URL** (R2.5). Keep the observed Google News URL as the dedup key and store canonical as a record field (recommended — identity fixed at observation), or re-key on canonical post-fetch to collapse duplicate redirects? | Yes, at build |
 
 </part_2>
 
