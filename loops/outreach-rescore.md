@@ -9,12 +9,12 @@ description: Weekly band-change record and 30-day stale-signal re-check cards (T
 
 # Outreach re-score sweep (Track O)
 
-> **Status: SPEC ONLY — written 2026-08-17; all four open decisions settled
-> 2026-08-20. Not yet built.** The manifest ships
-> `enabled: false` and the command module does not exist yet; the scheduler reads
-> only `enabled_loops()`, so this file is inert until the build lands. Written
-> before the build per `70-build-order.md` §Working convention, which the operator
-> asked to be held to.
+> **Status: BUILT 2026-08-27, ships disabled.** `agents/outreach/rescore.py`
+> exists and its deterministic core is verified on the build box — band-change
+> recording and stale-signal raising. The **stale-signal MODAL surface (O2) is not
+> built**: the sweep raises a `task_candidates` re-check pointing at
+> `cli/outreach_score`; the bespoke S2–S5 modal is the next slice. Flip
+> `enabled: true` once that surface is chosen and the first sweep is confirmed.
 
 Runs **Sunday 18:00**, an hour before `outreach-watch` (Trent Crimm), so a band
 that moved this week is recorded before the watchlist pass reads it.
