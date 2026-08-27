@@ -469,3 +469,130 @@ def test_refresh_is_a_no_op_without_a_message_id(mocker):
 def test_a_submit_refreshes_the_sheet_it_came_from(mocker):
     decide, _ = _submit(mocker, "accept")
     decide.assert_called_once()
+
+
+# --- contact correction (interim; NocoDB owns "correct" once it lands) --------
+
+
+RECORD = {
+    "company_name": "AIIR Consulting", "company_domain": "aiirconsulting.com",
+    "contact_name": "Jonathan Kirschner", "contact_title": "Founder & CEO",
+    "contact_email": "jk@aiirconsulting.com", "contact_linkedin_url": None,
+    "email_confidence": None,
+}
+
+
+def test_the_edit_modal_sits_exactly_on_discords_child_limit():
+    """Five fields, five children, nothing spare. A sixth means dropping one or
+    splitting the modal — a ceiling worth failing a test over rather than
+    discovering when Discord rejects the payload."""
+    from unittest.mock import MagicMock
+    modal = cog.EditContactModal(MagicMock(), RECORD)
+    assert len(modal.children) == 5
+
+
+def test_the_edit_modal_prefills_what_is_already_known():
+    from unittest.mock import MagicMock
+    modal = cog.EditContactModal(MagicMock(), RECORD)
+    assert modal.contact_name.component.default == "Jonathan Kirschner"
+    assert modal.contact_email.component.default == "jk@aiirconsulting.com"
+    assert modal.contact_linkedin.component.default is None
+
+
+def test_verified_by_hand_is_offered_and_ranks_above_a_pattern_guess():
+    values = [o.value for o in cog._CONFIDENCE]
+    assert "operator_verified" in values
+    assert values.index("operator_verified") < values.index("inferred_pattern")
+
+
+def test_the_confidence_options_match_the_database_vocabulary():
+    from agents._lib import outreach_discovery as gate0
+    assert {o.value for o in cog._CONFIDENCE} == set(gate0.EMAIL_CONFIDENCE)
+
+
+def test_the_decision_reply_carries_an_edit_button():
+    """A button cannot live in a modal and a modal cannot open a modal, so the
+    ephemeral reply is the only place in the review flow that can carry one."""
+    from unittest.mock import MagicMock
+    view = cog.EditPromptView(MagicMock(), "aiirconsulting.com")
+    assert len(view.children) == 1
+    assert isinstance(view.children[0], discord_button_type())
+
+
+def discord_button_type():
+    import discord
+    return discord.ui.Button
+
+
+def test_the_slash_command_exists_and_autocompletes_on_domain():
+    """Names read, domains carry — the domain is the identity both tables key
+    on (R0.10), and two firms can share a name."""
+    assert cog.OutreachDiscoveryCog.gate0_edit.name == "gate0-edit"
+
+
+def _blank_modal(mocker):
+    from unittest.mock import MagicMock
+    modal = cog.EditContactModal(MagicMock(), RECORD)
+    modal.cog.refresh_for_domain = mocker.AsyncMock()
+    return modal
+
+
+def test_an_untouched_form_writes_nothing(mocker):
+    """`TextInput.value` falls back to its prefilled default, so an untouched
+    field submits its CURRENT value. Without a diff every edit would rewrite all
+    five fields and the audit log — which is the history — would record four
+    changes that never happened."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    modal = _blank_modal(mocker)
+    update = mocker.patch.object(cog.outreach_discovery, "update_contact",
+                                 return_value={"changed": []})
+    interaction = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    asyncio.run(modal.on_submit(interaction))
+    assert "Nothing changed" in interaction.response.send_message.call_args[0][0]
+    update.assert_not_called()
+
+
+def test_only_the_edited_field_is_written(mocker):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    modal = _blank_modal(mocker)
+    modal.contact_email.component._value = "corrected@aiirconsulting.com"
+    update = mocker.patch.object(cog.outreach_discovery, "update_contact",
+                                 return_value={"changed": ["contact_email"],
+                                               "company_name": "AIIR Consulting",
+                                               "discovery": True, "target": True})
+    interaction = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    asyncio.run(modal.on_submit(interaction))
+    assert update.call_args[0][1] == {"contact_email": "corrected@aiirconsulting.com"}
+
+
+def test_an_edit_reports_which_records_it_reached(mocker):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    modal = _blank_modal(mocker)
+    modal.contact_email.component._value = "new@aiirconsulting.com"
+    mocker.patch.object(cog.outreach_discovery, "update_contact", return_value={
+        "changed": ["contact_email"], "company_name": "AIIR Consulting",
+        "discovery": False, "target": True,
+    })
+    interaction = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    asyncio.run(modal.on_submit(interaction))
+    message = interaction.response.send_message.call_args[0][0]
+    assert "contact_email" in message and "the target" in message
+
+
+def test_a_failed_edit_says_nothing_changed_rather_than_pretending(mocker):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    modal = _blank_modal(mocker)
+    modal.contact_name.component._value = "New Name"
+    mocker.patch.object(cog.outreach_discovery, "update_contact",
+                        side_effect=RuntimeError("db down"))
+    interaction = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    asyncio.run(modal.on_submit(interaction))
+    assert "nothing changed" in interaction.response.send_message.call_args[0][0].lower()

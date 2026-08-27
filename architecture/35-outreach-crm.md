@@ -605,7 +605,7 @@ binding constraint and attention belongs there instead.
 |---------|------|
 | Task Tinder | **Decisions.** Intake · reactive · re-engagement · stale-signal re-check · stalled-reason prompt |
 | Morning briefing | **One line and a link.** "5 touches due · 13/15 live · 1 not ready · 2 facts ageing" |
-| NocoDB filtered view | **The work surface.** Read packets, write the observation, mark sent, log replies, skip with reason, import, correct |
+| NocoDB filtered view | **The work surface.** Read packets, write the observation, mark sent, log replies, skip with reason, import, correct. *(Correcting CONTACT fields has an interim Discord path until NocoDB lands — `PRD-outreach-company-profile.md` R0.22. Deliberately narrow so it does not become a competing editor.)* |
 | Calendar | **Dumb reminder.** Five dates at sequence start, explicitly non-authoritative |
 | Apple Shortcut | **Fast write from a phone** (requires B3) |
 

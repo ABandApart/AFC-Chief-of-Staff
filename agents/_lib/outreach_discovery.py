@@ -383,6 +383,155 @@ def page_rows(conn: object, message_id: str) -> list[dict[str, Any]]:
         return cur.fetchall()
 
 
+# --- contact correction (interim; NocoDB owns "correct" once it lands) --------
+#
+# `35-` §9 assigns correcting records to NocoDB, which is increment 3 and gated on
+# install, a dedicated role and Tailscale Serve. This is the INTERIM path, kept
+# deliberately narrow — contact fields only — so it does not grow into a second
+# editor competing with that surface (operator decision, 2026-08-21).
+
+# The discovery column -> the target column. Mostly identical; `contact_title`
+# and `contact_role` are the same thing under two names, which is exactly the
+# kind of mismatch that silently drops an edit if it is not written down.
+CONTACT_FIELD_MAP = {
+    "contact_name": "contact_name",
+    "contact_title": "contact_role",
+    "contact_email": "contact_email",
+    "contact_linkedin_url": "contact_linkedin_url",
+    "email_confidence": "email_confidence",
+}
+CONTACT_FIELDS = tuple(CONTACT_FIELD_MAP)
+
+EMAIL_CONFIDENCE = ("public", "operator_verified", "inferred_pattern",
+                    "general_inbox")
+
+
+def contact_record(conn: object, domain: str) -> dict[str, Any] | None:
+    """Current contact fields for a company, from whichever table(s) hold it.
+
+    **One surface, both record types** (operator decision, 2026-08-21). Keyed on
+    `company_domain` because both tables are unique on it and it is the identity
+    R0.10 already relies on.
+
+    This is not hypothetical tidiness: all 14 current targets came from the CSV
+    import and have **no** discovery row, so a pool-only editor would reach none
+    of the firms closest to actually being contacted.
+
+    Where both exist, the TARGET's values are returned — it is what packet
+    assembly reads, so it is the one whose staleness would reach a recipient.
+    """
+    normalized = outreach.normalize_domain(domain)
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            """
+            SELECT d.id AS discovery_id, t.id AS target_id,
+                   COALESCE(t.company_name, d.company_name) AS company_name,
+                   COALESCE(t.company_name, d.company_name) IS NOT NULL AS found,
+                   COALESCE(t.contact_name, d.contact_name)                 AS contact_name,
+                   COALESCE(t.contact_role, d.contact_title)                AS contact_title,
+                   COALESCE(t.contact_email, d.contact_email)               AS contact_email,
+                   COALESCE(t.contact_linkedin_url, d.contact_linkedin_url) AS contact_linkedin_url,
+                   COALESCE(t.email_confidence, d.email_confidence)         AS email_confidence
+            FROM (SELECT %(domain)s::text AS company_domain) k
+            LEFT JOIN outreach_discoveries d ON d.company_domain = k.company_domain
+            LEFT JOIN outreach_targets     t ON t.company_domain = k.company_domain
+            """,
+            {"domain": normalized},
+        )
+        row = cur.fetchone()
+    if row is None or not row["found"]:
+        return None
+    row["company_domain"] = normalized
+    return row
+
+
+def search_contacts(conn: object, term: str, limit: int = 25) -> list[dict[str, Any]]:
+    """Company name/domain matches across both tables, for autocomplete."""
+    like = f"%{(term or '').strip().lower()}%"
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            """
+            SELECT company_name, company_domain FROM (
+                SELECT company_name, company_domain FROM outreach_discoveries
+                UNION
+                SELECT company_name, company_domain FROM outreach_targets
+            ) matches                 -- NOT `both`: a Postgres reserved word
+            WHERE lower(company_name) LIKE %(like)s
+               OR lower(company_domain) LIKE %(like)s
+            ORDER BY company_name
+            LIMIT %(limit)s
+            """,
+            {"like": like, "limit": limit},
+        )
+        return cur.fetchall()
+
+
+def update_contact(domain: str, fields: dict[str, Any]) -> dict[str, Any]:
+    """Write corrected contact fields to every record for this company.
+
+    Both tables in ONE transaction, so a promoted firm can never end up with a
+    corrected pool row and a stale target — the target being the one packet
+    assembly reads, and therefore the one whose staleness reaches a recipient.
+
+    `contact_first_name` is re-derived when the name changes: it is what the
+    templates substitute into a greeting, so leaving it stale would put the wrong
+    first name at the top of an email.
+
+    Blank input clears nothing. Every field is optional and only a non-empty
+    value overwrites, so a half-filled modal cannot wipe what it did not carry.
+    """
+    unknown = set(fields) - set(CONTACT_FIELDS)
+    if unknown:
+        raise ValueError(f"not editable contact fields: {', '.join(sorted(unknown))}")
+    confidence = fields.get("email_confidence")
+    if confidence and confidence not in EMAIL_CONFIDENCE:
+        raise ValueError(f"unknown email confidence: {confidence!r}")
+
+    clean = {
+        key: outreach.clean_field(value, max_chars=300)
+        for key, value in fields.items()
+    }
+    clean = {k: v for k, v in clean.items() if v is not None}
+    if not clean:
+        return {"changed": [], "discovery": False, "target": False}
+
+    with db.connection() as conn:
+        record = contact_record(conn, domain)
+        if record is None:
+            raise KeyError(f"no discovery or target for {domain!r}")
+
+        with conn.transaction():
+            if record["discovery_id"]:
+                sets = ", ".join(f"{c} = %({c})s" for c in clean)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"UPDATE outreach_discoveries SET {sets} WHERE id = %(id)s",
+                        {**clean, "id": record["discovery_id"]},
+                    )
+            if record["target_id"]:
+                mapped = {CONTACT_FIELD_MAP[k]: v for k, v in clean.items()}
+                if "contact_name" in clean:
+                    mapped["contact_first_name"] = outreach.suggest_first_name(
+                        clean["contact_name"]
+                    )
+                sets = ", ".join(f"{c} = %({c})s" for c in mapped)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"UPDATE outreach_targets SET {sets} WHERE id = %(id)s",
+                        {**mapped, "id": record["target_id"]},
+                    )
+
+    logger.info("gate 0: corrected %s on %s (discovery=%s target=%s)",
+                ", ".join(sorted(clean)), record["company_name"],
+                bool(record["discovery_id"]), bool(record["target_id"]))
+    return {
+        "changed": sorted(clean),
+        "company_name": record["company_name"],
+        "discovery": bool(record["discovery_id"]),
+        "target": bool(record["target_id"]),
+    }
+
+
 def surfaced_pages(conn: object) -> dict[str, list[dict[str, Any]]]:
     """Rows grouped by the message carrying them, for still-actionable messages.
 

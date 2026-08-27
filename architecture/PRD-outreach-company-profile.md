@@ -61,7 +61,7 @@ Operator revisions, 2026-08-19, taken as given:
 | `agents/outreach/verify.py` | **Built.** Four checks; never fetches LinkedIn. |
 | `agents/outreach/discover.py` + `loops/outreach-discover.md` | **Built**, ships disabled — the seed list is empty and `news_query` costs money, so enabling is deliberate. |
 | **Migration 0019** | **Applied.** `outreach_segment_scores` (R0.20) + `outreach_discoveries.source_url` (R0.21). |
-| `agents/discord_bot/cogs/outreach_discovery.py` | **Built.** Components V2 sheet, 12 rows/message, Review → modal. Registered in `run.py`. |
+| `agents/discord_bot/cogs/outreach_discovery.py` | **Built.** Components V2 sheet, 12 rows/message, Review → modal, decided-state rendering, startup re-attach, and the interim contact editor (R0.22). Registered in `run.py`. |
 | `agents/outreach/daily.py` | **Extended.** The briefing line now carries the Gate 0 queue, after the intake cards. |
 
 **Third slice, 2026-08-20** — extraction sanctioned and built, the review sheet,
@@ -677,6 +677,64 @@ longer true and has been corrected there rather than left to rot.
 decide fit, write a pain hook, or promote anything. It names a company and guesses
 a domain. Everything downstream — verification, scoring, the operator's decision —
 is unchanged and unaware that an LLM was involved.
+
+**R0.22 — Contact correction is an INTERIM surface, deliberately narrow**
+(operator decisions, 2026-08-21). Testing the review sheet showed what any real
+dataset shows: some contact details are wrong or stale.
+
+`35-` §9 assigns correcting records to **NocoDB** — increment 3, gated on
+install, a dedicated role and Tailscale Serve. This is not that. It is the
+interim path, and it is scoped to **contact fields only** so it cannot grow into
+a second editor competing with the surface that is meant to own the job. When
+NocoDB lands, this shrinks or goes; it does not get extended.
+
+*Three Discord facts decided its shape, and the first two killed the obvious
+design.* The operator asked for an Edit button inside the review modal:
+
+- **A button cannot appear in a modal** — Discord confines buttons to messages.
+- **A modal cannot open a modal.** Discord's reference: a modal response is
+  *"Not available for `MODAL_SUBMIT` and `PING` interactions"*.
+- **A modal holds five children**, and the review modal already uses four. Three
+  contact fields do not fit beside them.
+
+So editing lives outside the review modal, reached two ways, both costing the
+sheet nothing:
+
+| Entry point | Reaches |
+|---|---|
+| `/gate0-edit` with autocomplete | **Any record, any time** — including firms decided weeks ago |
+| An Edit button on the ephemeral reply after a decision | The firm just reviewed, without a context switch |
+
+The slash command is the primary. The case that actually matters is noticing a
+bad contact *after* deciding, or days later while writing the email — by then the
+row is on no live sheet at all. It also adds no component to the sheet, which
+matters because every component there is another thing that must survive a
+restart, and re-attach has already broken once.
+
+**One surface, both record types.** All 14 current targets came from the CSV
+import and have **no** discovery row, so a pool-only editor would have reached
+none of the firms closest to being contacted — including AIIR, the one with a
+live Gate 1 card. The editor therefore keys on `company_domain` and writes to
+whichever records exist, in one transaction, so a promoted firm can never end up
+with a corrected pool row and a stale target.
+
+**Only what moved is written.** `TextInput.value` falls back to its prefilled
+default, so an untouched field submits its current value. Without a diff against
+what was shown, every edit would rewrite all five fields and the audit log — which
+is the history — would record four changes that never happened.
+
+**R0.23 — Verifying an address by hand raises its confidence** (operator
+decision, 2026-08-21; migration 0020). `email_confidence` gains a fourth value,
+`operator_verified`, ranking above `inferred_pattern`: an address the operator
+confirmed is stronger evidence than a pattern guess, so correcting one should
+raise its confidence rather than silently keep the old label.
+
+**`outreach_targets` gained the column at the same time**, because it did not
+have one. Without it a raised confidence would have been invisible exactly where
+it matters — the packet reads targets, and the send decision happens there. The
+migration therefore had to drop and recreate `v_outreach_scored`, which is
+`SELECT t.*` with a frozen column list; that is the 0016 trap, and
+`verify_schema.sql` confirms no drift.
 
 **R0.15 — The review surface is Components V2 sheet rows, and the row button opens
 a detail modal** (OQ-E, 2026-08-20). Both uncertainties flagged at wireframe time

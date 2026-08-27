@@ -34,6 +34,7 @@ import asyncio
 import logging
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from agents._lib import db, outreach_discovery
@@ -57,6 +58,14 @@ _COMPONENTS_PER_ROW = 3  # Section + TextDisplay + Button accessory
 ROWS_PER_MESSAGE = (MAX_COMPONENTS_PER_MESSAGE - _CHROME_COMPONENTS) // _COMPONENTS_PER_ROW
 
 _REVIEW = "gate0:review:"
+_EDIT = "gate0:edit:"
+
+_CONFIDENCE = [
+    discord.SelectOption(label="Verified by me", value="operator_verified"),
+    discord.SelectOption(label="Published by the company", value="public"),
+    discord.SelectOption(label="Inferred from a pattern", value="inferred_pattern"),
+    discord.SelectOption(label="General inbox (info@/hello@)", value="general_inbox"),
+]
 
 _DECISIONS = [
     discord.SelectOption(label="Accept — add to the pool", value="accept"),
@@ -170,6 +179,7 @@ class ReviewModal(discord.ui.Modal):
         # interaction does not reliably carry the message it came from, and we
         # already persist the id the card was posted under.
         self.message_id = row.get("review_message_id")
+        self.company_domain = row.get("company_domain")
 
         self.detail = discord.ui.TextDisplay(detail_block(row))
         self.decision = discord.ui.Label(
@@ -226,7 +236,11 @@ class ReviewModal(discord.ui.Modal):
             f"{'✅ Accepted' if action == 'accept' else '❌ Rejected'} "
             f"**{result.get('company_name', '')}**"
             f"{f' — {reason}' if reason else ''}",
-            ephemeral=True)
+            ephemeral=True,
+            # Catches "I noticed the contact was stale while deciding" without a
+            # context switch. The sheet pays nothing for it.
+            view=EditPromptView(self.cog, self.company_domain),
+        )
 
         # The ephemeral reply confirms to the operator; the sheet is what he
         # reads next time. Refresh it so the decision is visible without
@@ -250,6 +264,122 @@ def _selected(label: discord.ui.Label) -> str | None:
         return str(value)
     values = getattr(component, "values", None) or []
     return str(values[0]) if values else None
+
+
+class EditContactModal(discord.ui.Modal):
+    """Correct a firm's contact details (interim; `35-` §9 gives this to NocoDB).
+
+    **Exactly five children — Discord's modal limit, with nothing spare.** Four
+    text fields plus the confidence selector. Any sixth field means dropping one
+    or splitting the modal, so this is a deliberate ceiling rather than an
+    accident waiting to be discovered at runtime.
+
+    Blank leaves a field unchanged. Nothing here can clear a value, so a
+    half-filled form cannot wipe details it never carried.
+    """
+
+    def __init__(self, cog: OutreachDiscoveryCog, record: dict) -> None:
+        super().__init__(title=f"Edit — {record['company_name']}"[:45])
+        self.cog = cog
+        self.domain = record["company_domain"]
+        # Kept so submit can send only what actually MOVED. `TextInput.value`
+        # falls back to its prefilled default, so an untouched field submits its
+        # current value — without this diff every edit would rewrite all five
+        # fields and the audit log, which is the history, would record four
+        # changes that never happened.
+        self.before = record
+
+        def field(label: str, key: str, hint: str) -> discord.ui.Label:
+            return discord.ui.Label(
+                text=label,
+                component=discord.ui.TextInput(
+                    default=record.get(key) or None, required=False,
+                    placeholder=hint, max_length=300),
+            )
+
+        self.contact_name = field("Contact name", "contact_name", "Full name")
+        self.contact_title = field("Title", "contact_title", "Founder & CEO")
+        self.contact_email = field("Email", "contact_email", "name@company.com")
+        self.contact_linkedin = field("Contact LinkedIn", "contact_linkedin_url",
+                                      "https://www.linkedin.com/in/…")
+        self.confidence = discord.ui.Label(
+            text="How well is the email known?",
+            description="Verifying it by hand is stronger than a pattern guess.",
+            component=discord.ui.RadioGroup(options=_CONFIDENCE, required=False),
+        )
+        for item in (self.contact_name, self.contact_title, self.contact_email,
+                     self.contact_linkedin, self.confidence):
+            self.add_item(item)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        submitted = {
+            "contact_name": _selected(self.contact_name),
+            "contact_title": _selected(self.contact_title),
+            "contact_email": _selected(self.contact_email),
+            "contact_linkedin_url": _selected(self.contact_linkedin),
+            "email_confidence": _selected(self.confidence),
+        }
+        fields = {
+            key: value for key, value in submitted.items()
+            if value and value != (self.before.get(key) or None)
+        }
+        if not fields:
+            # No database round-trip for a form nobody edited.
+            await interaction.response.send_message(
+                "Nothing changed — no field was edited.", ephemeral=True)
+            return
+
+        try:
+            result = await asyncio.to_thread(
+                outreach_discovery.update_contact, self.domain, fields)
+        except Exception:
+            logger.exception("gate 0: contact edit failed for %s", self.domain)
+            await interaction.response.send_message(
+                "❌ Could not save that — it is logged; nothing changed.",
+                ephemeral=True)
+            return
+
+        if not result["changed"]:
+            await interaction.response.send_message(
+                "Nothing changed — no field was edited.", ephemeral=True)
+            return
+
+        where = " and ".join(
+            place for place, hit in
+            (("the pool", result["discovery"]), ("the target", result["target"]))
+            if hit
+        )
+        await interaction.response.send_message(
+            f"✏️ Updated {', '.join(result['changed'])} on "
+            f"**{result['company_name']}** in {where}.",
+            ephemeral=True)
+        await self.cog.refresh_for_domain(self.domain)
+
+
+class EditPromptView(discord.ui.View):
+    """An Edit button on the ephemeral confirmation after a decision.
+
+    A button cannot live in a modal and a modal cannot open a modal, so the
+    reply message is the only place in the review flow that can carry one. It
+    catches the common case — noticing a stale contact WHILE reviewing — without
+    a context switch, and costs the sheet nothing.
+    """
+
+    def __init__(self, cog: OutreachDiscoveryCog, domain: str) -> None:
+        super().__init__(timeout=900)  # the interaction token's own lifetime
+        self.cog = cog
+        self.domain = domain
+
+    @discord.ui.button(label="Edit contact", style=discord.ButtonStyle.secondary)
+    async def edit(self, interaction: discord.Interaction,
+                   button: discord.ui.Button) -> None:
+        record = await asyncio.to_thread(self.cog.fetch_contact, self.domain)
+        if record is None:
+            await interaction.response.send_message(
+                "That firm is no longer in the pool or the targets.",
+                ephemeral=True)
+            return
+        await interaction.response.send_modal(EditContactModal(self.cog, record))
 
 
 class SheetView(discord.ui.LayoutView):
@@ -376,6 +506,70 @@ class OutreachDiscoveryCog(commands.Cog):
                 logger.exception("gate 0: failed to post review page %d", index)
                 return
             await asyncio.to_thread(self._mark, page, str(message.id))
+
+    @staticmethod
+    def fetch_contact(domain: str) -> dict | None:
+        with db.connection() as conn:
+            return outreach_discovery.contact_record(conn, domain)
+
+    @staticmethod
+    def _search_contacts(term: str) -> list[dict]:
+        with db.connection() as conn:
+            return outreach_discovery.search_contacts(conn, term)
+
+    @staticmethod
+    def _message_ids_for(domain: str) -> list[str]:
+        with db.connection() as conn:
+            record = outreach_discovery.contact_record(conn, domain)
+            if record is None or not record["discovery_id"]:
+                return []
+            row = outreach_discovery.get(conn, record["discovery_id"])
+            return [row["review_message_id"]] if row and row["review_message_id"] else []
+
+    async def refresh_for_domain(self, domain: str) -> None:
+        """Redraw whichever sheet carries this firm, if any.
+
+        A target-only firm (the CSV imports) has no card to redraw, and that is
+        not a failure — it simply has no sheet.
+        """
+        for message_id in await asyncio.to_thread(self._message_ids_for, domain):
+            await self.refresh_sheet(message_id)
+
+    @app_commands.command(
+        name="gate0-edit",
+        description="Correct a firm's contact details (pool or target).",
+    )
+    @app_commands.describe(company="Start typing a company name or domain")
+    async def gate0_edit(self, interaction: discord.Interaction,
+                         company: str) -> None:
+        if interaction.user.id != OPERATOR_ID:
+            await interaction.response.send_message(
+                "Not your record to edit.", ephemeral=True)
+            return
+        record = await asyncio.to_thread(self.fetch_contact, company)
+        if record is None:
+            await interaction.response.send_message(
+                f"No pool row or target for `{company}`. Pick one from the "
+                f"suggestions so the domain matches exactly.", ephemeral=True)
+            return
+        await interaction.response.send_modal(EditContactModal(self, record))
+
+    @gate0_edit.autocomplete("company")
+    async def _company_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Names to read, domains as the value — the domain is the identity both
+        tables key on (R0.10), and two firms can share a name."""
+        try:
+            matches = await asyncio.to_thread(self._search_contacts, current)
+        except Exception:
+            logger.exception("gate 0: contact autocomplete failed")
+            return []
+        return [
+            app_commands.Choice(name=m["company_name"][:100],
+                                value=m["company_domain"][:100])
+            for m in matches
+        ]
 
     @staticmethod
     def _fetch_page(message_id: str) -> list[dict]:
