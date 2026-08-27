@@ -18,7 +18,7 @@ Pure rules tested directly; the DB path with `db.connection` mocked, matching
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -205,43 +205,76 @@ REAL_TRIGGER = {
     "trigger_source_url": "https://example.com/round",
 }
 
-
-@pytest.mark.parametrize("missing", ["trigger_kind", "trigger_date",
-                                     "trigger_source_url"])
-def test_promotion_refuses_a_partial_trigger(missing):
-    trigger = {k: v for k, v in REAL_TRIGGER.items() if k != missing}
-    with pytest.raises(gate0.NotPromotableError, match=missing):
-        gate0.promote(1, trigger)
-
-
-def test_promotion_refuses_no_trigger_at_all():
-    """The whole point of R0.3: no fabricated trigger, ever."""
-    with pytest.raises(gate0.NotPromotableError):
-        gate0.promote(1, {})
+_ACCEPTED = {
+    "id": 7, "company_name": "Acme", "company_domain": "acme.example",
+    "company_url": None, "careers_url": None, "segment": "coaching_leadership",
+    "contact_name": None, "contact_title": None, "contact_email": None,
+    "contact_linkedin_url": None, "review_decision": "accept",
+    "promoted_target_id": None,
+    "reviewed_at": datetime(2026, 8, 20, 14, 0),
+}
 
 
-def test_promotion_refuses_a_future_trigger_date():
-    with pytest.raises(gate0.NotPromotableError, match="future"):
-        gate0.promote(1, {**REAL_TRIGGER,
-                          "trigger_date": date.today() + timedelta(days=1)})
+def _patch_promote(mocker, found=None):
+    """Mock promote()'s own db path and the target upsert."""
+    conn = mocker.MagicMock()
+    cm = mocker.MagicMock()
+    cm.__enter__.return_value = conn
+    cm.__exit__.return_value = False
+    mocker.patch.object(gate0.db, "connection", return_value=cm)
+    cur = mocker.MagicMock()
+    cur.fetchone.return_value = found if found is not None else dict(_ACCEPTED)
+    conn.cursor.return_value.__enter__.return_value = cur
+    conn.transaction.return_value.__enter__.return_value = None
+    conn.transaction.return_value.__exit__.return_value = False
+    upsert = mocker.patch.object(gate0.outreach, "upsert_target",
+                                 return_value={"id": 99})
+    mocker.patch.object(gate0.outreach, "reparent_watch_signals", return_value=0)
+    return upsert
+
+
+def test_promotion_anchors_trigger_date_on_the_acceptance_date(mocker):
+    """0023: trigger_date is when the operator accepted the firm, not a market
+    event. The five-touch arc anchors here."""
+    upsert = _patch_promote(mocker)
+    gate0.promote(7)
+    written = upsert.call_args[0][1]
+    assert written["trigger_date"] == date(2026, 8, 20)   # the reviewed_at date
+    assert written["trigger_kind"] == gate0.OPERATOR_SELECTED
+
+
+def test_promotion_needs_no_trigger_at_all(mocker):
+    """The R0.3 requirement is gone: acceptance is the anchor."""
+    _patch_promote(mocker)
+    result = gate0.promote(7)
+    assert result["created"] is True
+
+
+def test_a_real_market_trigger_overrides_the_defaults(mocker):
+    upsert = _patch_promote(mocker)
+    gate0.promote(7, REAL_TRIGGER)
+    written = upsert.call_args[0][1]
+    assert written["trigger_kind"] == "funding_announced"
+    assert written["trigger_date"] == date(2026, 8, 1)
+    assert written["trigger_source_url"] == "https://example.com/round"
+
+
+def test_a_future_supplied_date_is_ignored_for_the_acceptance_date(mocker):
+    """The date is never the caller's to fabricate; a future one falls back."""
+    upsert = _patch_promote(mocker)
+    gate0.promote(7, {"trigger_date": date.today() + timedelta(days=10)})
+    assert upsert.call_args[0][1]["trigger_date"] == date(2026, 8, 20)
 
 
 def test_promotion_refuses_an_unaccepted_discovery(mocker):
-    _patch(mocker, updated={
-        "id": 5, "company_name": "Maestro", "review_decision": None,
-        "promoted_target_id": None, "company_domain": "maestro.example",
-    })
+    _patch_promote(mocker, found={**_ACCEPTED, "review_decision": None})
     with pytest.raises(gate0.NotPromotableError, match="unreviewed"):
-        gate0.promote(5, REAL_TRIGGER)
+        gate0.promote(7)
 
 
 def test_promotion_is_idempotent(mocker):
-    _patch(mocker, updated={
-        "id": 6, "company_name": "ELM", "review_decision": "accept",
-        "promoted_target_id": 42, "company_domain": "elm.example",
-    })
-    assert gate0.promote(6, REAL_TRIGGER) == {"id": 6, "target_id": 42,
-                                              "created": False}
+    _patch_promote(mocker, found={**_ACCEPTED, "promoted_target_id": 42})
+    assert gate0.promote(7) == {"id": 7, "target_id": 42, "created": False}
 
 
 # --- the window (R0.11) -------------------------------------------------------

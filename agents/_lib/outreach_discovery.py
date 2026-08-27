@@ -673,35 +673,38 @@ def decide(
     return {**updated, "labelled": True}
 
 
-def promote(discovery_id: int, trigger: dict[str, Any]) -> dict[str, Any]:
+# The trigger_kind for a firm the operator selected without a specific observed
+# market event: the trigger IS the decision to work it (0023). A real market
+# trigger, when supplied, is preferred.
+OPERATOR_SELECTED = "operator_selected"
+
+
+def promote(discovery_id: int, trigger: dict[str, Any] | None = None) -> dict[str, Any]:
     """Turn an accepted discovery into an `outreach_targets` row.
 
-    Requires a REAL trigger (R0.3): a kind from the pinned vocabulary, a date
-    that is not today-by-default, and a source URL. Refuses otherwise, because
-    the alternative is the failure already in the database - a batch date
-    imported into a field meaning "when the trigger happened", which then drove
-    every S1 score in lockstep.
+    **`trigger_date` is when the operator accepted the firm into the pipeline**
+    (0023, operator decision 2026-08-27) - the discovery's `reviewed_at` date -
+    not a separately-observed market-event date. The five-touch arc anchors on
+    trigger_date, so this is what makes the arc run in the real working window;
+    the fake batch date pre-expired every arc.
+
+    This does not reopen R0.3's fabricated-date failure: R0.3 guarded against a
+    stamp on UNOBSERVED data (an import artefact). An acceptance date is a real,
+    dated decision about a specific firm. `trigger_kind` defaults to
+    `operator_selected`; a caller may pass a real market trigger to override it.
+
+    `trigger` is optional: with none, the acceptance date and `operator_selected`
+    are used. A partial `trigger` (kind but no date) still takes the acceptance
+    date - the date is never the caller's to fabricate here.
     """
-    kind = (trigger or {}).get("trigger_kind")
-    when = (trigger or {}).get("trigger_date")
-    source = (trigger or {}).get("trigger_source_url")
-    missing = [
-        name for name, value in
-        (("trigger_kind", kind), ("trigger_date", when), ("trigger_source_url", source))
-        if not value
-    ]
-    if missing:
-        raise NotPromotableError(
-            "a discovery is promoted only on an observed trigger; missing "
-            + ", ".join(missing)
-        )
-    if isinstance(when, date) and when > date.today():
-        raise NotPromotableError(f"trigger_date {when} is in the future")
+    trigger = trigger or {}
+    kind = trigger.get("trigger_kind") or OPERATOR_SELECTED
+    source = trigger.get("trigger_source_url")
 
     with db.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                f"SELECT {_COLUMNS} FROM outreach_discoveries WHERE id = %s",
+                f"SELECT {_COLUMNS}, reviewed_at FROM outreach_discoveries WHERE id = %s",
                 (discovery_id,),
             )
             found = cur.fetchone()
@@ -715,6 +718,14 @@ def promote(discovery_id: int, trigger: dict[str, Any]) -> dict[str, Any]:
         if found["promoted_target_id"]:
             return {"id": discovery_id, "target_id": found["promoted_target_id"],
                     "created": False}
+
+        # The acceptance date IS the trigger date (0023). Never the caller's to
+        # fabricate; a caller-supplied market date is honoured only if it is real
+        # and not in the future.
+        when = found["reviewed_at"].date()
+        supplied = trigger.get("trigger_date")
+        if supplied is not None and not (isinstance(supplied, date) and supplied > date.today()):
+            when = supplied
 
         with conn.transaction():
             target = outreach.upsert_target(conn, {

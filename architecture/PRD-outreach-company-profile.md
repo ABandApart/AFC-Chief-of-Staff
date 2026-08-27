@@ -343,7 +343,16 @@ version that produced it. Second, and decisively, **the uniform `trigger_date` o
 in the database and it silently drove every score. Relaxing two NOT NULLs to admit
 unreviewed rows into the scored table invites exactly that failure again.
 
-**R0.3 — A discovery never gets a fabricated trigger.** Promotion to
+**R0.3 — SUPERSEDED 2026-08-27 by the acceptance-date model (0023).** Originally:
+a discovery could not be promoted without a real observed market trigger, to avoid
+the fabricated batch date. That failure is now prevented differently and better:
+`trigger_date` means **when the operator accepted the firm into the pipeline**,
+which is a real dated decision, never fabricated. Promotion uses the discovery's
+`reviewed_at` date and defaults `trigger_kind` to `operator_selected`; a real
+market trigger, when Part 2 classifies one, overrides. The original rule below is
+kept struck-through in spirit for the record.
+
+**R0.3 (original) — A discovery never gets a fabricated trigger.** Promotion to
 `outreach_targets` requires a real `trigger_kind` and a real `trigger_date` with a
 `trigger_source_url`. An accepted firm with no observed trigger stays in the pool
 as `accepted`, is polled by Part 1 for news, and is promoted the moment Part 2
