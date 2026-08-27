@@ -23,6 +23,7 @@ box's tests exercise — and the full run writes both.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from typing import Any
@@ -126,7 +127,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n--dry-run: {len(firms)} firm(s), writing nothing")
         return 0
 
-    import asyncio
+    # The graph writes embed locally (fastembed/ONNX, no key) — but ONLY if
+    # cognee is configured first. Without this call cognee boots its default
+    # LiteLLM→OpenAI embedder, which we do not configure, so every embed 422s and
+    # the retry ladder makes the run crawl. Every cognee-touching sibling
+    # (cli/recall.py, seed_interests, publish_playbooks, the run.py entrypoints)
+    # calls this; this one did not, which is barry-agent's 2026-08-27 finding.
+    # Guarded by --no-graph so the build box, which has no cognee, never imports
+    # it.
+    if not args.no_graph:
+        from agents._lib import cognee_setup
+        cognee_setup.configure_cognee()
+
     totals = asyncio.run(profile(write_graph=not args.no_graph))
     print(f"profiled {totals['firms']} firm(s): {totals['items']} item(s), "
           f"{totals['new']} new signal(s), {totals['graphed']} graphed")

@@ -112,3 +112,36 @@ def test_a_signal_row_carries_its_parent_and_the_title_as_excerpt():
     row = _signal_row(firm, item)
     assert row["parent"] == "discovery" and row["parent_id"] == 7
     assert row["excerpt"] == "AIIR raises a round"
+
+
+
+# --- the cognee-configuration guard (barry-agent's 2026-08-27 finding) ---------
+
+
+def test_a_graph_run_configures_cognee_before_profiling(mocker):
+    """profile.py shipped without calling configure_cognee(), so cognee fell back
+    to its OpenAI embedder and 422'd on every firm. The graph run must configure
+    the local embedder first."""
+    import agents.outreach.profile as profile_mod
+    from agents._lib import cognee_setup
+    configure = mocker.patch.object(cognee_setup, "configure_cognee")
+    totals = {"firms": 0, "items": 0, "new": 0, "graphed": 0}
+    coro = mocker.patch.object(profile_mod, "profile")
+    mocker.patch.object(profile_mod.asyncio, "run",
+                        side_effect=lambda c: (c.close(), totals)[1])
+    profile_mod.main([])
+    configure.assert_called_once()
+    coro.assert_called_once()
+
+
+def test_no_graph_does_not_import_or_configure_cognee(mocker):
+    """The build box has no cognee; --no-graph must never touch it."""
+    import agents.outreach.profile as profile_mod
+    from agents._lib import cognee_setup
+    configure = mocker.patch.object(cognee_setup, "configure_cognee")
+    totals = {"firms": 0, "items": 0, "new": 0, "graphed": 0}
+    mocker.patch.object(profile_mod, "profile")
+    mocker.patch.object(profile_mod.asyncio, "run",
+                        side_effect=lambda c: (c.close(), totals)[1])
+    profile_mod.main(["--no-graph"])
+    configure.assert_not_called()
