@@ -1,0 +1,68 @@
+# ICP refinement for the Apollo `organizations/search` discovery channel (Track O
+# Part 0). Control plane: authored in git, therefore trusted (B4). Tuning the tags
+# or industry allowlists here needs NO code change.
+#
+# The problem this solves: a raw keyword-tag search is noisy. A live taxonomy probe
+# (2026-08-28, US + 10–250 employees pushed into the query) showed geo/headcount
+# noise vanishes when those gates are IN the query, and the remaining noise is
+# INDUSTRY mismatch — recruiters ("staffing & recruiting") and generic IT
+# ("information technology & services") that use our keywords. Apollo's controlled
+# `industry` field is the precision lever, so each segment carries an industry
+# allowlist, and `staffing & recruiting` is dropped globally.
+#
+# Every candidate this channel yields is still only a CLAIM: verify.py must find
+# two evidence kinds (R0.5), then the operator decides at Gate 0. Nothing here
+# surfaces a firm by itself.
+
+# Gates pushed into every query and re-checked on every returned row.
+gates:
+  country: "United States"        # OQ-C US-only scope; the probe confirmed this kills geo noise
+  headcount_min: 10               # ICP band (icp._HEADCOUNT_BANDS): 10–250, sweet spot 10–100
+  headcount_max: 250
+  exclude_industries:             # dominant noise: recruiters using our keywords
+    - "staffing & recruiting"
+
+# Per segment: the keyword tags to search, and the Apollo `industry` values that
+# count as ON-ICP for that segment. A returned firm whose industry is not in the
+# list is dropped (precision over recall — verify.py + Gate 0 are downstream).
+# Industry strings are verbatim from Apollo's taxonomy (the probe's output).
+segments:
+  coaching_leadership:
+    keyword_tags: ["executive coaching", "leadership development"]
+    industries:
+      - "professional training & coaching"
+      - "management consulting"
+      - "human resources"
+  corporate_l_and_d:
+    keyword_tags: ["corporate training", "sales training"]
+    industries:
+      - "professional training & coaching"
+      - "e-learning"
+      - "education management"
+      - "human resources"
+  instructional_design:
+    keyword_tags: ["instructional design", "elearning"]
+    industries:
+      - "e-learning"
+      - "education management"
+      - "higher education"
+  # --- The three NEW/unscored segments. The probe showed Apollo lumps these into
+  # generic "information technology & services", so this channel is WEAK for them
+  # (little maps cleanly). Kept for completeness; the operator may prefer to source
+  # them another way. See the handoff note.
+  engineering_consultancy:
+    keyword_tags: ["engineering consulting"]
+    industries:
+      - "management consulting"
+      - "research"
+      - "mechanical or industrial engineering"
+  product_design_agency:
+    keyword_tags: ["product design", "design agency"]
+    industries:
+      - "design"
+      - "graphic design"
+      - "marketing & advertising"
+  msp_it_consultancy:
+    keyword_tags: ["managed service provider", "it consulting"]
+    industries:
+      - "information technology & services"    # inherently broad — low precision here
