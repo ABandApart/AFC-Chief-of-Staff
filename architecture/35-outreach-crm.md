@@ -505,7 +505,7 @@ does not depend on cognee's completion path.
 | **Background** | Scoped graph traversal from `cognee_node_id` — **read-only, human-read** |
 | Failure mode | Template index, verbatim |
 | Last touch sent, verbatim | `outreach_touches.sent_body` (BCC-captured) |
-| The BCC address for this touch | `outreach+<bcc_token>@…` |
+| The BCC address for this touch | `outreach-bcc+<bcc_token>@aiadaptive.co` (dedicated mailbox, §8) |
 
 ### Substitution classes
 
@@ -563,15 +563,30 @@ failure mode · the BCC address. Target: scannable in thirty seconds.
 
 Both unchanged from 0.2.0; restated in brief.
 
-**BCC to brain.** Each touch carries `outreach+<bcc_token>@aiadaptive.co`. A
+**BCC to brain.** Each touch carries `outreach-bcc+<bcc_token>@aiadaptive.co`. A
 scheduled IMAP poller matches the token from `Delivered-To` to exactly one touch
 and writes `sent_at`, `sent_body`, `sent_via='bcc'`. Token-exact, because
 heuristic matching corrupts touch-of-first-reply silently.
 
+> **The BCC target is a DEDICATED, SEPARATE mailbox — not plus-addressing the
+> sending account (corrected 2026-08-28, operator).** `outreach-bcc@aiadaptive.co`
+> is its own Google Workspace user, distinct from the sending identity
+> `barry@aiadaptive.co`; the `<bcc_token>` rides as a plus-address ON that dedicated
+> mailbox (`outreach-bcc+<token>@…`), so token-exact `Delivered-To` matching is
+> unchanged. This resolves `§16` #2 in favour of a dedicated mailbox and supersedes
+> the earlier `outreach+<token>@aiadaptive.co` reading. **Why dedicated, not
+> plus-addressing barry@:** the Gmail channel (`PRD-outreach-gmail-channel.md` G2)
+> reads mail with `gmail.metadata` and deliberately cannot read the sending
+> mailbox's bodies — plus-addressing barry@ would land every BCC body in exactly
+> the mailbox G2 refuses to read. A separate account has no blast radius into client
+> mail, which is the property being protected. The poller reads this one mailbox in
+> full over IMAP; that is where `sent_body` comes from (Gmail metadata scope cannot).
+
 **It is a pull channel: it needs neither B3 nor the full Track C email channel.**
-Prerequisites are a plus-addressing mailbox, IMAP credentials in Keychain, and a
-poller — about a day. Verify on day one that the token survives in a header before
-writing any code; the fallback is matching the stored `subject_line`.
+Prerequisites are the dedicated Workspace mailbox above, IMAP credentials in
+Keychain, and a poller — about a day. Verify on day one that the token survives in
+`Delivered-To` before writing any code; the fallback is matching the stored
+`subject_line`.
 
 **Fallbacks:** Apple Shortcut (phone, LinkedIn, post-call) · NocoDB (desktop, bulk
 correction, skip-with-reason). LinkedIn sends can never be BCC-captured —
@@ -928,7 +943,7 @@ is two weeks of posting-age data you cannot buy retroactively.
 | # | Decision | Blocking |
 |---|----------|----------|
 | 1 | **Departure detection** — Sales Navigator or PredictLeads News Events trial, or accept the quarterly sweep permanently? See **OQ1**. | No — careers-page proxy ships regardless |
-| 2 | **BCC mailbox provider** — dedicated third-party mailbox (recommended) or Google Workspace with an app password? | Step 11 |
+| 2 | ~~**BCC mailbox provider**~~ **RESOLVED (2026-08-28):** a dedicated Google Workspace user `outreach-bcc@aiadaptive.co`, separate from the sending identity, token via plus-addressing on it. See §8 and `PRD-outreach-gmail-channel.md` §3. | Settled |
 | 3 | **Enrichment stack** — Apollo vs a cheaper contacts API; TheirStack free tier vs paid for import backfill | Step 16 |
 | 4 | **R21** — provider retention terms and a deletion workflow for contact data | Step 16 |
 | 5 | **E1 re-engagement allowance of 3** — running with stated falsification conditions | No |
