@@ -30,6 +30,10 @@ from typing import Any
 
 APOLLO_ENRICH_URL = "https://api.apollo.io/api/v1/organizations/enrich"
 APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match"
+# The FREE company-search endpoint (verified free by barry-agent 2026-08-28). Note
+# the docs' "Organization Search" page documents mixed_companies/search, which is
+# PAID (403 on Free) — this plural-organizations path is the one Free allows.
+APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/organizations/search"
 
 
 class ApolloPlanError(RuntimeError):
@@ -43,17 +47,35 @@ class ApolloPlanError(RuntimeError):
         super().__init__(f"Apollo endpoint not available on this plan: {endpoint}")
 
 
+class ApolloRateLimitError(RuntimeError):
+    """Apollo returned 429 — the request rate cap was hit. Carries the endpoint and
+    a best-effort `retry_after` (seconds). Finding this cap is the search probe's
+    whole point, so it is a measurement outcome, not an error to hide."""
+
+    def __init__(self, endpoint: str, retry_after: str | None = None):
+        self.endpoint = endpoint
+        self.retry_after = retry_after
+        super().__init__(
+            f"Apollo rate limit hit on {endpoint}"
+            + (f" (retry after {retry_after}s)" if retry_after else "")
+        )
+
+
 def _fetch_guarding_plan(call: Callable[[], bytes], endpoint: str) -> bytes:
-    """Run an Apollo fetch, translating a 403 API_INACCESSIBLE into ApolloPlanError
-    so callers can report the plan gate instead of leaking a stack trace."""
+    """Run an Apollo fetch, translating 403 API_INACCESSIBLE → ApolloPlanError and
+    429 → ApolloRateLimitError so callers report the gate/cap instead of a stack trace."""
     try:
         return call()
     except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            raise ApolloRateLimitError(endpoint, exc.headers.get("Retry-After")) from exc
         if exc.code == 403:
             body = exc.read().decode(errors="replace")
             if "API_INACCESSIBLE" in body:
                 raise ApolloPlanError(endpoint) from exc
         raise
+
+
 APOLLO_KEY_ITEM = "apollo-api-key"
 
 # The nine §3.1 spine fields, in card order. `sector` predates Part 3 (0013) but
@@ -272,4 +294,41 @@ def person_coverage(mapped_rows: list[dict[str, Any]]) -> dict[str, Any]:
         "linkedin": linkedin,
         "email_kinds": email_kinds,
         "email_status": statuses,
+    }
+
+
+# --- Organization search (discovery lane, Free) -------------------------------
+# barry-agent found organizations/search is on Free and returns firms by ICP
+# filter — a candidate-sourcing channel for Part 0. The open question is not
+# whether firms MATCH (~33k did) but how many are RETRIEVABLE on Free: per_page,
+# the page-depth ceiling, and the rate limit. `search_organizations` is the one
+# request; the pagination WALK that measures those caps lives in the probe CLI.
+
+
+def search_organizations(
+    filters: dict[str, Any], *, page: int, per_page: int, api_key: str,
+    fetch: PostFetcher = _urllib_post,
+) -> dict:
+    """One page of company search. Returns the full parsed response (both the
+    `organizations` list and the `pagination` block). Raises ApolloPlanError if the
+    endpoint is plan-gated and ApolloRateLimitError on a 429 — both are probe findings."""
+    body = json.dumps({**filters, "page": page, "per_page": per_page}).encode()
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+    raw = _fetch_guarding_plan(
+        lambda: fetch(APOLLO_SEARCH_URL, headers, body), APOLLO_SEARCH_URL
+    )
+    return json.loads(raw)
+
+
+def search_page_summary(response: dict) -> dict[str, Any]:
+    """Pure: reduce one search response to what the pagination walk records — the
+    org count, how many carry a usable `primary_domain` (a domainless row cannot be
+    enriched or deduped), those domains, and the raw `pagination` block."""
+    orgs = response.get("organizations") or []
+    domains = [o.get("primary_domain") for o in orgs if o.get("primary_domain")]
+    return {
+        "returned": len(orgs),
+        "with_domain": len(domains),
+        "domains": domains,
+        "pagination": response.get("pagination") or {},
     }
