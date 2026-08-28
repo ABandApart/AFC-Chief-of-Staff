@@ -22,6 +22,7 @@ Apollo contract (docs read 2026-08-28):
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -29,6 +30,30 @@ from typing import Any
 
 APOLLO_ENRICH_URL = "https://api.apollo.io/api/v1/organizations/enrich"
 APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match"
+
+
+class ApolloPlanError(RuntimeError):
+    """Apollo returned 403 API_INACCESSIBLE — the endpoint is not on the account's
+    plan (the People endpoints are paid-only; Organization enrich is on Free). The
+    gate sits in front of the endpoint, so nothing was measured. Surfaced as a
+    legible message rather than an unhandled HTTPError traceback."""
+
+    def __init__(self, endpoint: str):
+        self.endpoint = endpoint
+        super().__init__(f"Apollo endpoint not available on this plan: {endpoint}")
+
+
+def _fetch_guarding_plan(call: Callable[[], bytes], endpoint: str) -> bytes:
+    """Run an Apollo fetch, translating a 403 API_INACCESSIBLE into ApolloPlanError
+    so callers can report the plan gate instead of leaking a stack trace."""
+    try:
+        return call()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            body = exc.read().decode(errors="replace")
+            if "API_INACCESSIBLE" in body:
+                raise ApolloPlanError(endpoint) from exc
+        raise
 APOLLO_KEY_ITEM = "apollo-api-key"
 
 # The nine §3.1 spine fields, in card order. `sector` predates Part 3 (0013) but
@@ -145,7 +170,8 @@ def enrich_organization(
     the true key set), or None when Apollo returns no organization for the domain.
     """
     query = urllib.parse.urlencode({"domain": normalize_domain(domain)})
-    raw = fetch(f"{APOLLO_ENRICH_URL}?{query}", {"x-api-key": api_key})
+    url = f"{APOLLO_ENRICH_URL}?{query}"
+    raw = _fetch_guarding_plan(lambda: fetch(url, {"x-api-key": api_key}), APOLLO_ENRICH_URL)
     return json.loads(raw).get("organization")
 
 
@@ -221,7 +247,7 @@ def match_person(
         }
     ).encode()
     headers = {"x-api-key": api_key, "Content-Type": "application/json"}
-    raw = fetch(APOLLO_MATCH_URL, headers, body)
+    raw = _fetch_guarding_plan(lambda: fetch(APOLLO_MATCH_URL, headers, body), APOLLO_MATCH_URL)
     return json.loads(raw).get("person")
 
 

@@ -11,7 +11,11 @@ touched. The probe writes nothing, so there is nothing else to assert about stat
 
 from __future__ import annotations
 
+import io
 import json
+import urllib.error
+
+import pytest
 
 from agents.outreach import apollo
 
@@ -196,6 +200,30 @@ def test_match_person_returns_none_when_unmatched():
         "Nobody", "x.example", "k", fetch=lambda u, h, b: json.dumps({}).encode()
     )
     assert p is None
+
+
+# --- plan gate ----------------------------------------------------------------
+
+
+def _http_403(body: str):
+    def _raise(*_args, **_kwargs):
+        raise urllib.error.HTTPError(
+            "u", 403, "Forbidden", {}, io.BytesIO(body.encode())
+        )
+    return _raise
+
+
+def test_403_api_inaccessible_becomes_a_plan_error_not_a_traceback():
+    fetch = _http_403('{"error":"...","error_code":"API_INACCESSIBLE"}')
+    with pytest.raises(apollo.ApolloPlanError) as exc:
+        apollo.match_person("Jane Doe", "aiir.co", "k", fetch=fetch)
+    assert exc.value.endpoint == apollo.APOLLO_MATCH_URL
+
+
+def test_a_403_that_is_not_a_plan_gate_still_raises_httperror():
+    fetch = _http_403('{"error":"rate limited"}')  # no API_INACCESSIBLE
+    with pytest.raises(urllib.error.HTTPError):
+        apollo.enrich_organization("aiir.co", "k", fetch=fetch)
 
 
 def test_person_coverage_counts_and_histograms_no_raw_values():

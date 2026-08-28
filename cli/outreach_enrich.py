@@ -96,9 +96,14 @@ def run_probe(ids: list[int] | None, limit: int, raw: bool = False) -> int:
         return 1
 
     # One Apollo call per target, up front — both output modes read from this.
-    fetched = [
-        (t, apollo.enrich_organization(t["company_domain"], api_key)) for t in targets
-    ]
+    try:
+        fetched = [
+            (t, apollo.enrich_organization(t["company_domain"], api_key)) for t in targets
+        ]
+    except apollo.ApolloPlanError as exc:
+        print(f"error: {exc} (403 API_INACCESSIBLE). A paid Apollo plan is required.",
+              file=sys.stderr)
+        return 3
 
     if raw:
         dump = [
@@ -179,7 +184,13 @@ def run_people_probe(ids: list[int] | None, limit: int) -> int:
     print(f"Apollo People coverage probe — {len(targets)} contact(s) "
           f"(reveal OFF; no raw values printed)\n")
     for t in targets:
-        person = apollo.match_person(t["contact_name"], t["company_domain"], api_key)
+        try:
+            person = apollo.match_person(t["contact_name"], t["company_domain"], api_key)
+        except apollo.ApolloPlanError as exc:
+            print(f"\nerror: {exc} (403 API_INACCESSIBLE).\n"
+                  f"Apollo's People endpoints are paid-only; the Free plan cannot "
+                  f"measure contact coverage. A paid plan is required.", file=sys.stderr)
+            return 3
         if person is None:
             no_match.append(t["company_name"])
             print(f"  {t['company_name']:<28} → no person matched")

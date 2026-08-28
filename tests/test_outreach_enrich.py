@@ -81,3 +81,18 @@ def test_people_probe_reports_coverage_without_printing_raw_values(mocker, capsy
     # Privacy: the raw email address and LinkedIn URL must NOT appear in output.
     assert "jane@aiir.co" not in out
     assert "linkedin.com/in/janedoe" not in out
+
+
+def test_people_probe_reports_plan_gate_as_exit_3_not_a_traceback(mocker, capsys):
+    mocker.patch.object(outreach_enrich.creds, "keychain_get", return_value="k")
+    mocker.patch.object(outreach_enrich.db, "connection")
+    mocker.patch.object(outreach_enrich, "_select", return_value=_CONTACTS)
+    mocker.patch.object(
+        outreach_enrich.apollo, "match_person",
+        side_effect=outreach_enrich.apollo.ApolloPlanError(
+            outreach_enrich.apollo.APOLLO_MATCH_URL),
+    )
+    rc = outreach_enrich.run_people_probe(ids=None, limit=5)
+    assert rc == 3
+    err = capsys.readouterr().err
+    assert "paid" in err.lower()

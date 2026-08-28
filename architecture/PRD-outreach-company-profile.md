@@ -1473,16 +1473,27 @@ funded — the other four are bootstrapped, so null is honest, not an Apollo gap
 returned no investor string for this cohort. Verdict: Apollo covers the packet's
 firmographic header well enough to justify the account.
 
-**Contact coverage — probe built, run pending.** V2 above hit Organization
-enrichment only; the card gap that motivated Apollo (§3.2a) — contact
-**email/title/LinkedIn** (§0.3 #6/#7/#9) — comes from Apollo **People** enrichment
-(`POST people/match`), a separate endpoint. That probe is now built
-(`cli/outreach_enrich.py --probe --people`) and runs with **reveal flags OFF** —
-it measures coverage without spending a credit or unmasking any personal email,
-and reports statuses/counts only, never raw values (R21 posture). The datum that
-decides whether Apollo closes card field #6 *for free* is `email_kind`: `revealed`
-(a real address) vs `locked` (Apollo has it behind an unlock credit) vs `none`.
-Awaiting barry-agent's run for the contact verdict.
+**Contact coverage — BLOCKED on plan (barry-agent, 2026-08-28).** V2 above hit
+Organization enrichment, which is on Apollo's **Free** tier. The card gap that
+motivated Apollo (§3.2a) — contact **email/title/LinkedIn** (§0.3 #6/#7/#9) — comes
+from Apollo **People** enrichment (`POST people/match`), and that endpoint (and
+`people/search`, `mixed_people/search`) returns **403 `API_INACCESSIBLE` on the
+Free plan** — paid-only. The gate is *in front of* the endpoint, so even the
+value-free coverage counts (`revealed`/`locked`/`none`) are unreachable until the
+account is upgraded. The probe is built and correct (`--probe --people`, reveal
+OFF, counts-only, R21 posture) and now reports the gate legibly (exit 3) instead of
+a traceback; it simply **cannot measure contacts on Free**. **So Part 3's contact
+half is gated on an operator plan-upgrade decision** — no free workaround exists.
+The firmographic half is unaffected (Free covers it) and its storing adapter can
+proceed independently.
+
+**Free also offers a second company capability (not contacts):**
+`POST organizations/search` accepts ICP filters (industry, employee ranges,
+location, funding) and returns firms we don't already hold (~33K `total_entries`
+for the ICP in a probe, 43 fields/record). That is a **free candidate-sourcing
+lever for Part 0 discovery**, distinct from the contact gap — recorded here, but it
+belongs to the sourcing design, and its free-tier pagination/rate caps are
+unmeasured, so "addressable" ≠ "retrievable on Free" yet.
 
 ## 3.4 Glassdoor / Comparably — settled as manual
 
