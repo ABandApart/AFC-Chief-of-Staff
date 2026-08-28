@@ -153,7 +153,8 @@ def find(segment: str, *, max_pages: int = DEFAULT_MAX_PAGES,
             try:
                 resp = apollo.search_organizations(
                     filters, page=page, per_page=PER_PAGE, api_key=api_key)
-            except (apollo.ApolloPlanError, apollo.ApolloRateLimitError) as exc:
+            except (apollo.ApolloPlanError, apollo.ApolloRateLimitError,
+                    apollo.ApolloCreditsError) as exc:
                 logger.warning("discovery: apollo_search tag %r stopped: %s", tag, exc)
                 break
             except OSError as exc:

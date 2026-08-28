@@ -32,6 +32,7 @@ row's `first_seen_at` (R1.4), which is where a market date belongs.
 
 from __future__ import annotations
 
+import argparse
 import logging
 from datetime import date
 from typing import Any
@@ -272,3 +273,27 @@ def run(limit: int = ITEMS_PER_RUN) -> dict[str, int]:
             else:
                 totals["none"] += 1
     return totals
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for `python -m agents.outreach.classify` (the loop command and
+    the by-hand command). Without this the module would import and exit without
+    calling run() — a silent no-op, which is exactly how it shipped (barry-agent's
+    2026-08-28 finding: the build-box tests drove run() directly, so the entry
+    point was never exercised). Mirrors profile.py:main."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--limit", type=int, default=ITEMS_PER_RUN,
+                        help=f"Max queue items to classify this run "
+                             f"(default {ITEMS_PER_RUN}).")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    totals = run(limit=args.limit)
+    print(f"classified {totals['seen']} item(s): {totals['promoted']} promoted, "
+          f"{totals['below_threshold']} below threshold, {totals['none']} none, "
+          f"{totals['quarantined']} quarantined")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

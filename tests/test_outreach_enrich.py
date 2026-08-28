@@ -83,6 +83,32 @@ def test_people_probe_reports_coverage_without_printing_raw_values(mocker, capsy
     assert "linkedin.com/in/janedoe" not in out
 
 
+def test_apply_stops_cleanly_on_credit_exhaustion_with_resumable_summary(mocker, capsys):
+    mocker.patch.object(outreach_enrich.creds, "keychain_get", return_value="k")
+    conn = mocker.MagicMock()
+    mocker.patch.object(outreach_enrich.db, "connection")
+    outreach_enrich.db.connection.return_value.__enter__.return_value = conn
+    mocker.patch.object(outreach_enrich, "_select", return_value=[
+        {"id": 1, "company_name": "First", "company_domain": "a.com", "contact_name": None},
+        {"id": 2, "company_name": "Second", "company_domain": "b.com", "contact_name": None},
+        {"id": 3, "company_name": "Third", "company_domain": "c.com", "contact_name": None},
+    ])
+    # First firm writes; second hits the credit wall.
+    mocker.patch.object(
+        outreach_enrich.enrich, "enrich_target",
+        side_effect=[{"target_id": 1, "org": True, "firmographic_fields": 4,
+                      "funding_new": 0, "contacts": "skipped"},
+                     outreach_enrich.apollo.ApolloCreditsError(
+                         outreach_enrich.apollo.APOLLO_ENRICH_URL)],
+    )
+    rc = outreach_enrich.run_apply(ids=None, limit=None, with_contacts=False)
+    assert rc == 4
+    err = capsys.readouterr().err
+    assert "1 written, 2 remaining" in err
+    assert "Second" in err and "Third" in err   # the resumable list
+    assert "idempotent" in err
+
+
 def test_people_probe_reports_plan_gate_as_exit_3_not_a_traceback(mocker, capsys):
     mocker.patch.object(outreach_enrich.creds, "keychain_get", return_value="k")
     mocker.patch.object(outreach_enrich.db, "connection")

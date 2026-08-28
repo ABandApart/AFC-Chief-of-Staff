@@ -1473,6 +1473,18 @@ funded — the other four are bootstrapped, so null is honest, not an Apollo gap
 returned no investor string for this cohort. Verdict: Apollo covers the packet's
 firmographic header well enough to justify the account.
 
+> **⚠️ Correction (barry-agent, 2026-08-28): Free is CREDIT-metered, not just
+> rate-limited.** A live `--apply` run exhausted the account's credits after ~20
+> enrichments and every subsequent enrich/search returned `422 insufficient
+> credits`. So Free org-enrich is a **hard ~20–25 records/day cap, SHARED across
+> enrich + search**, resetting ~Pacific midnight — separate from and much tighter
+> than the 600/day rate limit. This supersedes the "≈33k retrievable in a day"
+> reading of the pagination probe: the credit cap dominates. Consequences —
+> firmographic `--apply` can only enrich ~20–25 targets/day, and `apollo_search`'s
+> real daily supply is bounded by whatever credits enrich leaves, not the per-run
+> cap. It strengthens the paid-plan case (which lifts credits as well as unlocking
+> People). The adapter now stops cleanly on the 422 instead of crashing.
+
 **Contact coverage — BLOCKED on plan (barry-agent, 2026-08-28).** V2 above hit
 Organization enrichment, which is on Apollo's **Free** tier. The card gap that
 motivated Apollo (§3.2a) — contact **email/title/LinkedIn** (§0.3 #6/#7/#9) — comes

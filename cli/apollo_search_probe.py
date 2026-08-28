@@ -67,6 +67,9 @@ def walk_pages(
             if exc.retry_after:
                 stopped += f" (retry_after={exc.retry_after}s)"
             break
+        except apollo.ApolloCreditsError:
+            stopped = f"credits_exhausted@page{page}"
+            break
 
         summary = apollo.search_page_summary(resp)
         pg = summary["pagination"]

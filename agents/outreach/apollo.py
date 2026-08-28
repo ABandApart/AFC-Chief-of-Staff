@@ -61,18 +61,36 @@ class ApolloRateLimitError(RuntimeError):
         )
 
 
+class ApolloCreditsError(RuntimeError):
+    """Apollo returned 422 "insufficient credits" — the account's daily credit pool
+    is drained. On Free this is a HARD ~20–25/day cap SHARED across enrich + search
+    (barry-agent, 2026-08-28), separate from the 600/day rate limit, and resets at
+    ~Pacific midnight. Distinct from a plan gate: the endpoint is on the plan, the
+    credits are just spent. Callers stop cleanly (N done, M remaining, retry after
+    reset) rather than stack-tracing mid-run."""
+
+    def __init__(self, endpoint: str):
+        self.endpoint = endpoint
+        super().__init__(f"Apollo credits exhausted on {endpoint} "
+                         f"(422; resets ~Pacific midnight)")
+
+
 def _fetch_guarding_plan(call: Callable[[], bytes], endpoint: str) -> bytes:
-    """Run an Apollo fetch, translating 403 API_INACCESSIBLE → ApolloPlanError and
-    429 → ApolloRateLimitError so callers report the gate/cap instead of a stack trace."""
+    """Run an Apollo fetch, translating the failures callers must handle rather than
+    stack-trace on: 429 → ApolloRateLimitError, 403 API_INACCESSIBLE → ApolloPlanError,
+    422 "insufficient credits" → ApolloCreditsError. A 422 that is NOT about credits
+    (e.g. the search deep-page ceiling) is left to propagate as HTTPError."""
     try:
         return call()
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
             raise ApolloRateLimitError(endpoint, exc.headers.get("Retry-After")) from exc
-        if exc.code == 403:
+        if exc.code in (403, 422):
             body = exc.read().decode(errors="replace")
-            if "API_INACCESSIBLE" in body:
+            if exc.code == 403 and "API_INACCESSIBLE" in body:
                 raise ApolloPlanError(endpoint) from exc
+            if exc.code == 422 and "credit" in body.lower():
+                raise ApolloCreditsError(endpoint) from exc
         raise
 
 

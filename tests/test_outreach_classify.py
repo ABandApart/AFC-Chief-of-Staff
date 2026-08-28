@@ -163,3 +163,21 @@ def test_the_eight_triggers_exclude_inbound_and_operator_selected():
     assert "inbound_enquiry" not in classify.TRIGGER_KINDS
     assert "operator_selected" not in classify.TRIGGER_KINDS
     assert len(classify.TRIGGER_KINDS) == 8
+
+
+def test_main_actually_calls_run(mocker):
+    # The bug (barry-agent, 2026-08-28): the module had no main()/__main__, so
+    # `python -m agents.outreach.classify` imported and exited WITHOUT calling run()
+    # — a silent no-op the loop depended on. Pin that main() drives run().
+    run = mocker.patch.object(classify, "run", return_value={
+        "seen": 3, "quarantined": 0, "promoted": 1, "below_threshold": 1, "none": 1})
+    rc = classify.main([])
+    assert rc == 0
+    run.assert_called_once()
+
+
+def test_main_passes_limit_through(mocker):
+    run = mocker.patch.object(classify, "run", return_value={
+        "seen": 0, "quarantined": 0, "promoted": 0, "below_threshold": 0, "none": 0})
+    classify.main(["--limit", "5"])
+    assert run.call_args.kwargs["limit"] == 5

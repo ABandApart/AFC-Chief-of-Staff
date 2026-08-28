@@ -118,6 +118,9 @@ def run_probe(ids: list[int] | None, limit: int, raw: bool = False) -> int:
         print(f"error: {exc} (403 API_INACCESSIBLE). A paid Apollo plan is required.",
               file=sys.stderr)
         return 3
+    except apollo.ApolloCreditsError as exc:
+        print(f"error: {exc} — retry after the daily reset.", file=sys.stderr)
+        return 4
 
     if raw:
         dump = [
@@ -258,7 +261,8 @@ def run_apply(ids: list[int] | None, limit: int | None, with_contacts: bool) -> 
               f"{' + contacts (onramp)' if with_contacts else ''}...\n")
         no_org: list[str] = []
         plan_gated = False
-        for t in targets:
+        done = 0
+        for i, t in enumerate(targets):
             try:
                 with conn.transaction():
                     res = enrich.enrich_target(conn, t, api_key,
@@ -268,12 +272,23 @@ def run_apply(ids: list[int] | None, limit: int | None, with_contacts: bool) -> 
                 print(f"error: {exc} (403). A paid Apollo plan is required.",
                       file=sys.stderr)
                 return 3
+            except apollo.ApolloCreditsError as exc:
+                # The per-firm transaction rolled back this firm; earlier firms are
+                # committed. Stop cleanly with a resumable summary instead of a
+                # stack-trace mid-run (barry-agent's --apply crash, 2026-08-28).
+                remaining = [x["company_name"] for x in targets[i:]]
+                print(f"\n{exc}\n  {done} written, {len(remaining)} remaining: "
+                      f"{', '.join(remaining)}\n  Re-run after the daily reset (or "
+                      f"on the paid plan) to finish — it is idempotent.",
+                      file=sys.stderr)
+                return 4
             if not res["org"]:
                 no_org.append(t["company_name"])
                 print(f"  {t['company_name']:<28} → no organization; skipped")
                 continue
             if res.get("contacts") == "plan_gated":
                 plan_gated = True
+            done += 1
             print(f"  {t['company_name']:<28} → {res['firmographic_fields']}"
                   f"/{len(apollo.SPINE_FIELDS)} firmographic, "
                   f"{res['funding_new']} funding round(s), contacts={res['contacts']}")

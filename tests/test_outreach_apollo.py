@@ -226,6 +226,26 @@ def test_a_403_that_is_not_a_plan_gate_still_raises_httperror():
         apollo.enrich_organization("aiir.co", "k", fetch=fetch)
 
 
+def _http_422(body: str):
+    def _raise(*_args, **_kwargs):
+        raise urllib.error.HTTPError("u", 422, "Unprocessable", {}, io.BytesIO(body.encode()))
+    return _raise
+
+
+def test_422_insufficient_credits_becomes_a_credits_error():
+    fetch = _http_422('{"error":"You have insufficient credits! Upgrade your plan"}')
+    with pytest.raises(apollo.ApolloCreditsError) as exc:
+        apollo.enrich_organization("aiir.co", "k", fetch=fetch)
+    assert exc.value.endpoint == apollo.APOLLO_ENRICH_URL
+
+
+def test_422_that_is_not_credits_still_raises_httperror():
+    # The search deep-page ceiling also returns 422 — it must NOT be swallowed.
+    fetch = _http_422('{"error":"page exceeds the 50000-record display limit"}')
+    with pytest.raises(urllib.error.HTTPError):
+        apollo.enrich_organization("aiir.co", "k", fetch=fetch)
+
+
 def test_person_coverage_counts_and_histograms_no_raw_values():
     rows = [
         apollo.map_person(_PERSON),                                   # title, li, revealed/verified
