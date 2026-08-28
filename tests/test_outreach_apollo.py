@@ -140,3 +140,75 @@ def test_enrich_returns_none_when_apollo_has_no_org():
         "nobody.example", "k", fetch=lambda u, h: json.dumps({}).encode()
     )
     assert org is None
+
+
+# --- People lane --------------------------------------------------------------
+
+_PERSON = {
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "title": "VP People",
+    "email": "jane@aiir.co",
+    "email_status": "verified",
+    "linkedin_url": "https://linkedin.com/in/janedoe",
+}
+
+
+def test_map_person_pulls_the_contact_fields():
+    m = apollo.map_person(_PERSON)
+    assert m == {
+        "contact_title": "VP People",
+        "contact_email": "jane@aiir.co",
+        "email_status": "verified",
+        "contact_linkedin_url": "https://linkedin.com/in/janedoe",
+    }
+
+
+def test_email_kind_classifies_none_locked_revealed():
+    assert apollo.email_kind_of(None) == "none"
+    assert apollo.email_kind_of("") == "none"
+    assert apollo.email_kind_of("email_not_unlocked@domain.com") == "locked"
+    assert apollo.email_kind_of("jane@aiir.co") == "revealed"
+
+
+def test_match_person_posts_name_domain_with_reveal_off_and_unwraps():
+    seen = {}
+
+    def fake_post(url, headers, body):
+        seen["url"] = url
+        seen["headers"] = headers
+        seen["body"] = json.loads(body)
+        return json.dumps({"person": _PERSON}).encode()
+
+    p = apollo.match_person("Jane Doe", "https://www.AIIR.co", "sekret", fetch=fake_post)
+    assert p["title"] == "VP People"
+    assert seen["url"] == apollo.APOLLO_MATCH_URL
+    assert seen["headers"]["x-api-key"] == "sekret"
+    assert seen["body"]["name"] == "Jane Doe"
+    assert seen["body"]["domain"] == "aiir.co"  # normalized
+    # A coverage probe must never spend a credit or unmask a personal email.
+    assert seen["body"]["reveal_personal_emails"] is False
+    assert seen["body"]["reveal_phone_number"] is False
+
+
+def test_match_person_returns_none_when_unmatched():
+    p = apollo.match_person(
+        "Nobody", "x.example", "k", fetch=lambda u, h, b: json.dumps({}).encode()
+    )
+    assert p is None
+
+
+def test_person_coverage_counts_and_histograms_no_raw_values():
+    rows = [
+        apollo.map_person(_PERSON),                                   # title, li, revealed/verified
+        apollo.map_person({"title": "Head of L&D",
+                           "email": "email_not_unlocked@x.com",
+                           "email_status": "likely_to_engage"}),      # title, locked
+        apollo.map_person({}),                                        # nothing
+    ]
+    cov = apollo.person_coverage(rows)
+    assert cov["n"] == 3
+    assert cov["title"] == 2
+    assert cov["linkedin"] == 1
+    assert cov["email_kinds"] == {"revealed": 1, "locked": 1, "none": 1}
+    assert cov["email_status"] == {"verified": 1, "likely_to_engage": 1, "null": 1}

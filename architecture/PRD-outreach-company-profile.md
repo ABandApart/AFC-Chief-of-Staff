@@ -1473,12 +1473,16 @@ funded — the other four are bootstrapped, so null is honest, not an Apollo gap
 returned no investor string for this cohort. Verdict: Apollo covers the packet's
 firmographic header well enough to justify the account.
 
-**Still unmeasured: contact coverage.** This probe hit Organization enrichment
-only. The card gap that motivated Apollo (§3.2a) — contact **email/title/LinkedIn**
-(§0.3 #6/#7/#9) — comes from Apollo **People** enrichment, a separate endpoint not
-yet probed. So the "worth it" verdict is proven for firmographics and open for
-contacts; a People-enrichment coverage check is the next probe before leaning on
-Apollo for the contact fill.
+**Contact coverage — probe built, run pending.** V2 above hit Organization
+enrichment only; the card gap that motivated Apollo (§3.2a) — contact
+**email/title/LinkedIn** (§0.3 #6/#7/#9) — comes from Apollo **People** enrichment
+(`POST people/match`), a separate endpoint. That probe is now built
+(`cli/outreach_enrich.py --probe --people`) and runs with **reveal flags OFF** —
+it measures coverage without spending a credit or unmasking any personal email,
+and reports statuses/counts only, never raw values (R21 posture). The datum that
+decides whether Apollo closes card field #6 *for free* is `email_kind`: `revealed`
+(a real address) vs `locked` (Apollo has it behind an unlock credit) vs `none`.
+Awaiting barry-agent's run for the contact verdict.
 
 ## 3.4 Glassdoor / Comparably — settled as manual
 

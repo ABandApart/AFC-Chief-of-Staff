@@ -28,6 +28,7 @@ from collections.abc import Callable
 from typing import Any
 
 APOLLO_ENRICH_URL = "https://api.apollo.io/api/v1/organizations/enrich"
+APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match"
 APOLLO_KEY_ITEM = "apollo-api-key"
 
 # The nine §3.1 spine fields, in card order. `sector` predates Part 3 (0013) but
@@ -124,6 +125,17 @@ def _urllib_fetch(url: str, headers: dict[str, str]) -> bytes:
         return resp.read()
 
 
+# (url, headers, body) -> raw response bytes. Separate from Fetcher because the
+# People match endpoint is a POST with a JSON body.
+PostFetcher = Callable[[str, dict[str, str], bytes], bytes]
+
+
+def _urllib_post(url: str, headers: dict[str, str], body: bytes) -> bytes:
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (https-only literal)
+        return resp.read()
+
+
 def enrich_organization(
     domain: str, api_key: str, *, fetch: Fetcher = _urllib_fetch
 ) -> dict | None:
@@ -145,3 +157,93 @@ def coverage(mapped_rows: list[dict[str, Any]]) -> dict[str, int]:
             if row.get(field) not in (None, ""):
                 counts[field] += 1
     return counts
+
+
+# --- People enrichment (contact lane) ----------------------------------------
+# The card gap Apollo was chosen for (§3.2a): contact title, email, LinkedIn
+# (§0.3 #5/#6/#9). The probe measures COVERAGE only — it never reveals personal
+# emails or phone numbers (reveal flags stay False), so it neither spends credits
+# nor unmasks a person's contact detail just to count it. The CLI reports statuses
+# and counts, not the raw values.
+
+# Contact fields the People probe measures.
+PERSON_FIELDS: tuple[str, ...] = (
+    "contact_title",
+    "contact_email",
+    "email_status",
+    "contact_linkedin_url",
+)
+
+
+def map_person(person: dict) -> dict[str, Any]:
+    """Pure: map a raw Apollo person object onto the contact fields."""
+    return {
+        "contact_title": person.get("title"),
+        "contact_email": person.get("email"),
+        "email_status": person.get("email_status"),
+        "contact_linkedin_url": person.get("linkedin_url"),
+    }
+
+
+def email_kind_of(email: str | None) -> str:
+    """Classify an Apollo email without revealing it.
+
+    `none`     — Apollo returned no email.
+    `locked`   — Apollo HAS an email but returns a placeholder (`…not_unlocked@…`)
+                 until a credit is spent to reveal it. The datum exists; the value
+                 does not, for free. This is the distinction that decides whether
+                 Apollo actually closes card field #6 at this tier or only tells us
+                 a deliverability status.
+    `revealed` — a real address came back.
+    """
+    if not email:
+        return "none"
+    if "not_unlocked" in email:
+        return "locked"
+    return "revealed"
+
+
+def match_person(
+    name: str, domain: str, api_key: str, *, fetch: PostFetcher = _urllib_post
+) -> dict | None:
+    """Match one person by full name + employer domain. Returns the raw `person`
+    dict, or None when Apollo finds no match.
+
+    Reveal flags are pinned False: a coverage probe must not spend a credit or
+    unmask a personal email merely to measure that one exists.
+    """
+    body = json.dumps(
+        {
+            "name": name,
+            "domain": normalize_domain(domain),
+            "reveal_personal_emails": False,
+            "reveal_phone_number": False,
+        }
+    ).encode()
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+    raw = fetch(APOLLO_MATCH_URL, headers, body)
+    return json.loads(raw).get("person")
+
+
+def person_coverage(mapped_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pure: contact-field coverage over matched people — counts and histograms,
+    never raw values. `title`/`linkedin` are non-null counts; `email_kinds` splits
+    revealed/locked/none; `email_status` is Apollo's deliverability histogram."""
+    email_kinds = {"revealed": 0, "locked": 0, "none": 0}
+    statuses: dict[str, int] = {}
+    title = linkedin = 0
+    for row in mapped_rows:
+        if row.get("contact_title"):
+            title += 1
+        if row.get("contact_linkedin_url"):
+            linkedin += 1
+        email_kinds[email_kind_of(row.get("contact_email"))] += 1
+        status = row.get("email_status") or "null"
+        statuses[status] = statuses.get(status, 0) + 1
+    return {
+        "n": len(mapped_rows),
+        "title": title,
+        "linkedin": linkedin,
+        "email_kinds": email_kinds,
+        "email_status": statuses,
+    }

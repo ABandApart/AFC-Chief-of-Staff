@@ -56,3 +56,28 @@ def test_missing_key_exits_2_not_a_traceback(mocker, capsys):
     rc = outreach_enrich.run_probe(ids=None, limit=5)
     assert rc == 2
     assert "apollo-api-key" in capsys.readouterr().err
+
+
+_CONTACTS = [
+    {"id": 18, "company_name": "AIIR Consulting", "company_domain": "aiir.co",
+     "contact_name": "Jane Doe"},
+]
+_PERSON = {"title": "VP People", "email": "jane@aiir.co", "email_status": "verified",
+           "linkedin_url": "https://linkedin.com/in/janedoe"}
+
+
+def test_people_probe_reports_coverage_without_printing_raw_values(mocker, capsys):
+    mocker.patch.object(outreach_enrich.creds, "keychain_get", return_value="k")
+    mocker.patch.object(outreach_enrich.db, "connection")
+    mocker.patch.object(outreach_enrich, "_select", return_value=_CONTACTS)
+    mocker.patch.object(outreach_enrich.apollo, "match_person", return_value=_PERSON)
+
+    rc = outreach_enrich.run_people_probe(ids=None, limit=5)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Contact coverage across 1 contact(s)" in out
+    assert "title present     1/1" in out
+    assert "revealed 1" in out
+    # Privacy: the raw email address and LinkedIn URL must NOT appear in output.
+    assert "jane@aiir.co" not in out
+    assert "linkedin.com/in/janedoe" not in out
