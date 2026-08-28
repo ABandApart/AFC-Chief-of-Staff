@@ -124,3 +124,23 @@ def test_find_without_a_key_is_a_noop_not_a_raise(mocker):
     mocker.patch.object(apollo_search.creds, "keychain_get",
                         side_effect=RuntimeError("no key"))
     assert apollo_search.find("coaching_leadership", config=_CONFIG) == []
+
+
+# --- the shipped config encodes the operator's 2026-08-28 decisions ------------
+
+
+def test_shipped_config_matches_operator_decisions():
+    cfg = apollo_search.load_config()
+    segments = cfg["segments"]
+    # Only product_design kept of the unscored three; engineering + msp_it dropped.
+    assert set(segments) == {
+        "coaching_leadership", "corporate_l_and_d",
+        "instructional_design", "product_design_agency",
+    }
+    # Scored segments tightened to core — no management consulting / human resources.
+    for seg in ("coaching_leadership", "corporate_l_and_d", "instructional_design"):
+        inds = segments[seg]["industries"]
+        assert "management consulting" not in inds
+        assert "human resources" not in inds
+    # Global noise drop is still in place.
+    assert "staffing & recruiting" in cfg["gates"]["exclude_industries"]

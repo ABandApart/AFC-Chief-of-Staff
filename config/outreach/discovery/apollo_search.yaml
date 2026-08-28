@@ -26,43 +26,39 @@ gates:
 # count as ON-ICP for that segment. A returned firm whose industry is not in the
 # list is dropped (precision over recall — verify.py + Gate 0 are downstream).
 # Industry strings are verbatim from Apollo's taxonomy (the probe's output).
+#
+# Operator decisions (2026-08-28), from the live funnel validation:
+#   * SCORED segments tightened to CORE industries — `management consulting` and
+#     `human resources` dropped (they added recall but let in job-boards and
+#     generic consultancies). Gate 0 review time is the scarce resource, so
+#     precision wins. This trims coaching/L&D yield but raises on-ICP rate.
+#   * UNSCORED segments: only `product_design_agency` is kept — engineering (9%
+#     yield, real firms lumped in the excluded IT-services) and msp_it (mostly
+#     IT-staffing self-tagged as IT-services) source too poorly here and are
+#     dropped from this channel; source them via seed_list/news_query instead.
 segments:
   coaching_leadership:
     keyword_tags: ["executive coaching", "leadership development"]
     industries:
       - "professional training & coaching"
-      - "management consulting"
-      - "human resources"
   corporate_l_and_d:
     keyword_tags: ["corporate training", "sales training"]
     industries:
       - "professional training & coaching"
       - "e-learning"
       - "education management"
-      - "human resources"
   instructional_design:
     keyword_tags: ["instructional design", "elearning"]
     industries:
       - "e-learning"
       - "education management"
       - "higher education"
-  # --- The three NEW/unscored segments. The probe showed Apollo lumps these into
-  # generic "information technology & services", so this channel is WEAK for them
-  # (little maps cleanly). Kept for completeness; the operator may prefer to source
-  # them another way. See the handoff note.
-  engineering_consultancy:
-    keyword_tags: ["engineering consulting"]
-    industries:
-      - "management consulting"
-      - "research"
-      - "mechanical or industrial engineering"
+  # Kept (operator, 2026-08-28) — the one unscored segment with a real Apollo
+  # industry. `marketing & advertising` stays: the probe showed many genuine
+  # design agencies sit there, so dropping it would lose real firms, not just noise.
   product_design_agency:
     keyword_tags: ["product design", "design agency"]
     industries:
       - "design"
       - "graphic design"
       - "marketing & advertising"
-  msp_it_consultancy:
-    keyword_tags: ["managed service provider", "it consulting"]
-    industries:
-      - "information technology & services"    # inherently broad — low precision here
