@@ -1459,6 +1459,27 @@ real account, before any integration code exists:
   observations, **our observation wins** and the value of backfill is only for reqs
   that predate our polling.
 
+### V2 result — Apollo firmographic coverage (barry-agent run, 2026-08-28)
+
+**PASS for the firmographic spine.** 5 real targets through Apollo Organization
+Enrichment (`cli/outreach_enrich.py --probe`), read-only, 0 `agent_runs`. Coverage
+(N/5 non-null): **sector 5/5, headcount 5/5, founded_year 5/5, hq_location 5/5**;
+`total_raised_usd` / `last_round_at` / `last_round_type` **1/5** (only LifeLabs is
+funded — the other four are bootstrapped, so null is honest, not an Apollo gap);
+`headcount_asof` 0/5 (Apollo returns no as-of date — ours to stamp) and
+`ownership_type` 0/5 (only `public` is derivable, and none of the 5 are public).
+`lead_investor` 0/5: **not a mapping bug** — `map_organization` already traverses
+`funding_events[].investors` (a comma-string per Apollo's schema); Apollo simply
+returned no investor string for this cohort. Verdict: Apollo covers the packet's
+firmographic header well enough to justify the account.
+
+**Still unmeasured: contact coverage.** This probe hit Organization enrichment
+only. The card gap that motivated Apollo (§3.2a) — contact **email/title/LinkedIn**
+(§0.3 #6/#7/#9) — comes from Apollo **People** enrichment, a separate endpoint not
+yet probed. So the "worth it" verdict is proven for firmographics and open for
+contacts; a People-enrichment coverage check is the next probe before leaning on
+Apollo for the contact fill.
+
 ## 3.4 Glassdoor / Comparably — settled as manual
 
 No public API (Glassdoor retired theirs), both prohibit scraping, and the data is

@@ -19,6 +19,7 @@ keychain lookup for the Apollo key raises, by design.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from typing import Any
 
@@ -52,8 +53,14 @@ def _fmt(value: Any) -> str:
     return "—" if value in (None, "") else str(value)
 
 
-def run_probe(ids: list[int] | None, limit: int) -> int:
-    """Fetch + map + count. Returns a process exit code."""
+def run_probe(ids: list[int] | None, limit: int, raw: bool = False) -> int:
+    """Fetch + map + count. Returns a process exit code.
+
+    With `raw=True`, emit ONLY a JSON array of `{id, company_name, organization}`
+    (the full Apollo payload per target, `organization` null when none matched) and
+    nothing else — so it can be redirected to a file and used as the ground truth
+    for building the storing adapter. Still read-only.
+    """
     try:
         api_key = creds.keychain_get(apollo.APOLLO_KEY_ITEM)
     except RuntimeError as exc:
@@ -73,13 +80,25 @@ def run_probe(ids: list[int] | None, limit: int) -> int:
         print("No matching targets.", file=sys.stderr)
         return 1
 
+    # One Apollo call per target, up front — both output modes read from this.
+    fetched = [
+        (t, apollo.enrich_organization(t["company_domain"], api_key)) for t in targets
+    ]
+
+    if raw:
+        dump = [
+            {"id": t["id"], "company_name": t["company_name"], "organization": org}
+            for t, org in fetched
+        ]
+        print(json.dumps(dump, indent=2, default=str))
+        return 0
+
     mapped_rows: list[dict[str, Any]] = []
     raw_keys: set[str] = set()
     no_org: list[str] = []
 
     print(f"Apollo V2 coverage probe — {len(targets)} target(s)\n")
-    for t in targets:
-        org = apollo.enrich_organization(t["company_domain"], api_key)
+    for t, org in fetched:
         if org is None:
             no_org.append(t["company_name"])
             print(f"  {t['company_name']:<28} → no organization returned")
@@ -124,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"How many targets to sample (default {DEFAULT_SAMPLE}).")
     parser.add_argument("--ids", type=str, default=None,
                         help="Comma-separated target ids to probe instead of a sample.")
+    parser.add_argument("--raw", action="store_true",
+                        help="Emit only the full Apollo JSON per target (for the adapter); "
+                             "still read-only. Redirect to a file.")
     args = parser.parse_args(argv)
 
     if not args.probe:
@@ -132,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ids = [int(x) for x in args.ids.split(",")] if args.ids else None
     try:
-        return run_probe(ids, args.limit)
+        return run_probe(ids, args.limit, raw=args.raw)
     finally:
         db.close_pool()
 
