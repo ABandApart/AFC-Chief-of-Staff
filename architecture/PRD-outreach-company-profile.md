@@ -1479,7 +1479,7 @@ decision, not a gap.
 | 1 | Provider — Apollo vs a cheaper contacts API (`35-` §16 #3, unchanged) | Yes |
 | 2 | TheirStack free tier vs paid, decided by V3's result | Yes |
 | 3 | Deletion workflow shape — a `cli/forget_contact.py` covering both Postgres and the graph, or contact data confined to Postgres so the graph never holds it? The second is simpler and probably right. | Yes (R21) |
-| 4 | Does `ownership_type` need a CHECK constraint, given NocoDB issues raw UPDATEs? Probably yes, on the 0013 precedent that every invariant is a DB constraint. | At build |
+| 4 | ~~Does `ownership_type` need a CHECK constraint, given NocoDB issues raw UPDATEs?~~ **Resolved YES (2026-08-28, migration 0024).** `ownership_type` carries a CHECK over the five values; `founded_year` gained a `1800..2100` range CHECK on the same reasoning. | Settled |
 
 </part_3>
 
