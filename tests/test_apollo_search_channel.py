@@ -83,12 +83,20 @@ def test_classify_empty_allowlist_keeps_any_non_excluded_industry():
 # --- find: channel wiring -----------------------------------------------------
 
 _CONFIG = {
+    "enabled": True,
     "gates": _GATES,
     "segments": {"coaching_leadership": {
         "keyword_tags": ["executive coaching"],
         "industries": _INDUSTRIES,
     }},
 }
+
+
+def test_find_is_inert_until_enabled(mocker):
+    search = mocker.patch.object(apollo_search.apollo, "search_organizations")
+    disabled = {**_CONFIG, "enabled": False}
+    assert apollo_search.find("coaching_leadership", config=disabled, api_key="k") == []
+    search.assert_not_called()  # the gate short-circuits before any Apollo call
 
 
 def test_find_refines_and_dedupes_by_domain(mocker):
@@ -144,3 +152,11 @@ def test_shipped_config_matches_operator_decisions():
         assert "human resources" not in inds
     # Global noise drop is still in place.
     assert "staffing & recruiting" in cfg["gates"]["exclude_industries"]
+    # Enabled by the operator (2026-08-28).
+    assert cfg.get("enabled") is True
+
+
+def test_channel_is_registered_in_the_discovery_package():
+    from agents.outreach import discovery
+    assert apollo_search.NAME in discovery.CHANNELS
+    assert discovery.CHANNELS[apollo_search.NAME] is apollo_search.find

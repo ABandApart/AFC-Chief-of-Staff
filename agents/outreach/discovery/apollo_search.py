@@ -123,6 +123,12 @@ def find(segment: str, *, max_pages: int = DEFAULT_MAX_PAGES,
     than raising (matching the package's fail-open channel contract).
     """
     cfg = config if config is not None else load_config()
+    # Registered but inert until the operator flips `enabled: true` — enabling a
+    # channel is a deliberate act (it feeds Gate 0 volume and draws the shared
+    # Apollo 600/day budget). Flipping the flag off disables it without touching
+    # the registry.
+    if not cfg.get("enabled"):
+        return []
     seg = (cfg.get("segments") or {}).get(segment)
     if not seg:
         return []

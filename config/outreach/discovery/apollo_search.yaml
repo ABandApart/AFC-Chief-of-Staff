@@ -14,6 +14,12 @@
 # two evidence kinds (R0.5), then the operator decides at Gate 0. Nothing here
 # surfaces a firm by itself.
 
+# Master switch. The channel is registered in the discovery package but stays
+# inert until this is true — enabling it is a deliberate act (it feeds Gate 0
+# volume and draws the shared Apollo 600/day budget). Set true by the operator
+# 2026-08-28 after confirming the segment→industry mapping.
+enabled: true
+
 # Gates pushed into every query and re-checked on every returned row.
 gates:
   country: "United States"        # OQ-C US-only scope; the probe confirmed this kills geo noise

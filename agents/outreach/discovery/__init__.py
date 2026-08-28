@@ -48,7 +48,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from agents.outreach.discovery import news_query, seed_list
+from agents.outreach.discovery import apollo_search, news_query, seed_list
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +60,13 @@ class Channel(Protocol):
         ...
 
 
-# Registry. Order is stable so a run's output is reproducible.
+# Registry. Order is stable so a run's output is reproducible. `apollo_search` is
+# registered but self-gates on its config `enabled` flag, so its presence here is
+# safe — it yields nothing until the operator turns it on and a run reaches it.
 CHANNELS: dict[str, Callable[[str], list[dict[str, Any]]]] = {
     seed_list.NAME: seed_list.find,
     news_query.NAME: news_query.find,
+    apollo_search.NAME: apollo_search.find,
 }
 
 
