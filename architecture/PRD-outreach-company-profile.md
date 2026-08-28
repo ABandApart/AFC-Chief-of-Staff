@@ -1516,6 +1516,7 @@ decision, not a gap.
 | 2 | TheirStack free tier vs paid, decided by V3's result | Yes |
 | 3 | Deletion workflow shape — a `cli/forget_contact.py` covering both Postgres and the graph, or contact data confined to Postgres so the graph never holds it? The second is simpler and probably right. | Yes (R21) |
 | 4 | ~~Does `ownership_type` need a CHECK constraint, given NocoDB issues raw UPDATEs?~~ **Resolved YES (2026-08-28, migration 0024).** `ownership_type` carries a CHECK over the five values; `founded_year` gained a `1800..2100` range CHECK on the same reasoning. | Settled |
+| 5 | `email_confidence` for a **provider-sourced** address. The 0020 enum (public / inferred_pattern / general_inbox / operator_verified) fits an Apollo-verified email none exactly. The contact onramp stores the address and leaves confidence **unset** rather than asserting a level it can't justify. Settle when the paid plan is live — probably a new enum value (e.g. `provider_verified`) via migration, mapped from Apollo's `email_status`. | At contact activation |
 
 </part_3>
 

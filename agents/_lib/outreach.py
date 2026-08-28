@@ -291,6 +291,99 @@ def upsert_target(conn: object, target: dict[str, Any]) -> dict[str, Any]:
         return cur.fetchone()
 
 
+# --- firmographic + contact enrichment writes (Part 3) ------------------------
+
+# The firmographic spine (0024), minus `sector` which the import already refreshes
+# (§5). These are the provider-populated current-state columns; every change is
+# recorded by the audit trigger, which is what makes outcome 2 (readable history)
+# free of a snapshot table.
+_FIRMOGRAPHIC_COLUMNS = (
+    "sector",
+    "headcount",
+    "ownership_type",
+    "total_raised_usd",
+    "last_round_at",
+    "last_round_type",
+    "lead_investor",
+    "founded_year",
+    "hq_location",
+)
+
+
+def update_firmographics(
+    conn: object, target_id: int, fields: dict[str, Any], *, today: date
+) -> dict[str, Any]:
+    """Write the firmographic spine onto a target, only where the provider gave a
+    value — a sparse response never blanks an existing column (the same
+    don't-clobber discipline as the D1 import refresh). When a fresh `headcount`
+    is written, stamp `headcount_asof = today`: no provider dates a headcount, so
+    the observation date is ours. Returns the resulting row.
+    """
+    present = {c: fields.get(c) for c in _FIRMOGRAPHIC_COLUMNS if fields.get(c) is not None}
+
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        if not present:
+            # Nothing to write — return the row unchanged rather than a no-op UPDATE
+            # that would still fire the audit trigger with an empty diff.
+            cur.execute("SELECT * FROM outreach_targets WHERE id = %s", (target_id,))
+            return cur.fetchone()
+
+        assignments = [f"{c} = %({c})s" for c in present]
+        params: dict[str, Any] = {**present, "id": target_id}
+        if "headcount" in present:
+            assignments.append("headcount_asof = %(headcount_asof)s")
+            params["headcount_asof"] = today
+        sql = (
+            "UPDATE outreach_targets SET "
+            + ", ".join(assignments)
+            + " WHERE id = %(id)s RETURNING *"
+        )
+        cur.execute(sql, params)
+        return cur.fetchone()
+
+
+# email_confidence for a provider-sourced address is an OPEN DECISION (§3.5): the
+# 0020 enum is public/inferred_pattern/general_inbox/operator_verified, and a
+# provider-verified email fits none exactly. Until the paid plan is live and that
+# is settled (likely a new enum value via migration), the onramp stores the
+# address and leaves confidence unset rather than asserting a level it cannot
+# justify. `operator_verified` is never lowered — the operator's own confirmation
+# outranks any provider (0020).
+def update_contact(conn: object, target_id: int, fields: dict[str, Any]) -> dict[str, Any]:
+    """Write provider-sourced contact fields (title→`contact_role`, email,
+    LinkedIn) onto a target, only where supplied. **The onramp for paid People
+    enrichment** — inert on Free (People is plan-gated), correct the moment a plan
+    makes it reachable. Never overwrites an `operator_verified` email. Returns the
+    resulting row.
+    """
+    writable = {
+        "contact_role": fields.get("contact_title"),
+        "contact_linkedin_url": fields.get("contact_linkedin_url"),
+        "contact_email": fields.get("contact_email"),
+    }
+    present = {k: clean_field(v) for k, v in writable.items() if v}
+
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        if not present:
+            cur.execute("SELECT * FROM outreach_targets WHERE id = %s", (target_id,))
+            return cur.fetchone()
+
+        assignments = [f"{c} = %({c})s" for c in present]
+        # Guard: do not overwrite an operator-verified email with a provider one.
+        if "contact_email" in present:
+            assignments[assignments.index("contact_email = %(contact_email)s")] = (
+                "contact_email = CASE WHEN email_confidence = 'operator_verified' "
+                "THEN contact_email ELSE %(contact_email)s END"
+            )
+        sql = (
+            "UPDATE outreach_targets SET "
+            + ", ".join(assignments)
+            + " WHERE id = %(id)s RETURNING *"
+        )
+        cur.execute(sql, {**present, "id": target_id})
+        return cur.fetchone()
+
+
 # --- evidence -----------------------------------------------------------------
 
 

@@ -282,6 +282,57 @@ def test_upsert_target_hardens_free_text(mocker):
     assert cur.execute.call_args.args[1]["company_name"] == "CadenceHealth"
 
 
+# --- firmographic + contact enrichment writes (Part 3) ------------------------
+
+
+def test_update_firmographics_writes_only_present_columns(mocker):
+    conn, cur = _conn(mocker)
+    outreach.update_firmographics(
+        conn, 5, {"sector": "coaching", "headcount": 85, "founded_year": 2011},
+        today=date(2026, 8, 28),
+    )
+    sql, params = cur.execute.call_args.args
+    assert "sector = %(sector)s" in sql
+    assert "headcount = %(headcount)s" in sql
+    assert "founded_year = %(founded_year)s" in sql
+    # Absent columns are never assigned — a sparse response cannot blank them.
+    assert "ownership_type" not in sql
+    assert "hq_location" not in sql
+    assert params["id"] == 5
+
+
+def test_update_firmographics_stamps_headcount_asof_when_headcount_written(mocker):
+    conn, cur = _conn(mocker)
+    outreach.update_firmographics(conn, 5, {"headcount": 85}, today=date(2026, 8, 28))
+    sql, params = cur.execute.call_args.args
+    assert "headcount_asof = %(headcount_asof)s" in sql
+    assert params["headcount_asof"] == date(2026, 8, 28)
+
+
+def test_update_firmographics_no_asof_without_headcount(mocker):
+    conn, cur = _conn(mocker)
+    outreach.update_firmographics(conn, 5, {"sector": "coaching"}, today=date(2026, 8, 28))
+    assert "headcount_asof" not in cur.execute.call_args.args[0]
+
+
+def test_update_firmographics_noop_selects_rather_than_empty_update(mocker):
+    # An all-null response must not fire a content-free UPDATE (empty audit diff).
+    conn, cur = _conn(mocker)
+    outreach.update_firmographics(conn, 5, {"headcount": None}, today=date(2026, 8, 28))
+    assert cur.execute.call_args.args[0].strip().startswith("SELECT")
+
+
+def test_update_contact_guards_operator_verified_email(mocker):
+    conn, cur = _conn(mocker)
+    outreach.update_contact(conn, 5, {"contact_title": "VP People",
+                                      "contact_email": "jane@aiir.co"})
+    sql = cur.execute.call_args.args[0]
+    assert "contact_role = %(contact_role)s" in sql
+    # A provider email must never overwrite one the operator confirmed by hand.
+    assert "email_confidence = 'operator_verified'" in sql
+    assert "ELSE %(contact_email)s END" in sql
+
+
 # --- evidence upsert / close --------------------------------------------------
 
 
