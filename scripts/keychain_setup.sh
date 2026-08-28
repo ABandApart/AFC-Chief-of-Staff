@@ -35,6 +35,7 @@ set -euo pipefail
 ITEMS=(
     "db-url|Postgres connection URI (auto-populated during install)"
     "gemini-api-key|Gemini API key (Tartt — Phase 4 news scraping + embeddings)"
+    "apollo-api-key|Apollo.io API key (Track O Part 3 — firmographic/contact enrichment)"
     "anthropic-key-ted|Anthropic key for Ted (Phase 11 — health checks + alert summarization)"
     "anthropic-key-keeley-strategy|Anthropic key for Keeley Strategy (Phase 8 — content triage)"
     "anthropic-key-keeley-content|Anthropic key for Keeley Content (Phase 8 — drafting)"
