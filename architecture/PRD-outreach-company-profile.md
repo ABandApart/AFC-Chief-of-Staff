@@ -1404,7 +1404,42 @@ that is worth saying out loud rather than discovering during the check.
   for the column choice, and it should not be "simplified" later without noticing.
 - **No Glassdoor/Comparably automation.** See §3.4.
 
-## 3.3 Verify before writing code
+## 3.2a R21 — Apollo terms read (operator, 2026-08-10 T&C; recorded 2026-08-28)
+
+**Provider chosen: Apollo.io, as one source of several.** The operator read
+Apollo's terms as of 2026-08-10 and reports:
+
+- **Retention is permitted for personal/first-party use.** Data may be downloaded
+  and kept; storing Apollo-returned fields in this system's own database is fine.
+- **Not for third-party use, resale, or a *competing* database.** This system is a
+  private outreach CRM for the operator's own use — first-party, not a resale or a
+  competing product — so it is within terms.
+- **API-pulled data only; no bulk dumps.** The integration must pull per-firm via
+  the API (which is how Part 3 works anyway — enrich a target, not scrape a list).
+- **No deletion requirement at subscription termination.** So R21's "documented
+  deletion path" is not contractually forced by Apollo; it stays a good-practice
+  `cli/forget_contact.py` (§3.5 open #3), not a hard gate.
+
+**R21 for Apollo is therefore GREEN** — retention permitted, first-party use,
+API-only, no forced deletion. V1 (terms) is satisfied for Apollo; V2 (coverage on
+5 real targets) and V3 (TheirStack backfill value) still run before integration
+code.
+
+**Enrichment is multi-source (operator, 2026-08-28), each in its lane:**
+
+| Source | Lane | Notes |
+|---|---|---|
+| **Apollo** | Contacts + firmographics (name, title, email, headcount, sector, revenue estimate) | R21 green. The header of the packet; not the posting-age signal (§6). |
+| **Crunchbase** | Funding round / date / amount / lead investor | Its own terms read still needed (own V1). |
+| **TheirStack** | Job-posting `first_seen_at` backfill at import | Free tier; decided by V3. |
+| **PredictLeads** | Historical job records + News Events (OQ1 departure candidate) | Pricing demo-gated; own terms read needed. |
+| **Google search** | General web signal / gap-fill | Query-only, like the discovery `news_query` channel; no stored bulk. |
+
+Each non-Apollo source needs its **own** V1 terms read before its adapter is
+built — Apollo's green does not transfer. The build order: Apollo first (green,
+covers the card's contact gap), the others as their terms clear.
+
+## 3.3 Verify before writing code## 3.3 Verify before writing code
 
 Three probes, in the `PRD-outreach-gmail-channel.md` V1–V3 spirit — run against a
 real account, before any integration code exists:
