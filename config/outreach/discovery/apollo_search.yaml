@@ -20,6 +20,15 @@
 # 2026-08-28 after confirming the segment→industry mapping.
 enabled: true
 
+# Per-run, per-segment candidate cap. Apollo over-supplies (one page ≈ 70 refined
+# firms/segment) and every candidate costs a verify.py network check downstream, so
+# the channel stops fetching and truncates once it has this many per segment. 25 ×
+# 4 segments = ≤100 candidates/run — comfortably over the 25/day review window
+# while keeping verification bounded. Raise as the pool grows and page-1 firms are
+# increasingly already-known (the cap is applied before discover.py's dedup vs the
+# pool, so a large known set eventually wants more pages, not a bigger cap).
+max_candidates_per_segment: 25
+
 # Gates pushed into every query and re-checked on every returned row.
 gates:
   country: "United States"        # OQ-C US-only scope; the probe confirmed this kills geo noise

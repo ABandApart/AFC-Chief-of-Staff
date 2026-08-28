@@ -113,6 +113,19 @@ def test_find_refines_and_dedupes_by_domain(mocker):
     assert [c["company_url"] for c in out] == ["https://a.com"]  # only the on-ICP, deduped
 
 
+def test_find_caps_candidates_and_stops_fetching(mocker):
+    # A page of 5 on-ICP firms; a cap of 2 must truncate and not fetch page 2.
+    page = {"organizations": [_org(name=f"F{i}", primary_domain=f"f{i}.com")
+                              for i in range(5)],
+            "pagination": {"total_pages": 9}}
+    search = mocker.patch.object(
+        apollo_search.apollo, "search_organizations", return_value=page)
+    capped = {**_CONFIG, "max_candidates_per_segment": 2}
+    out = apollo_search.find("coaching_leadership", config=capped, api_key="k")
+    assert len(out) == 2
+    assert search.call_count == 1  # cap met on page 1 → no further requests
+
+
 def test_find_unconfigured_segment_is_empty(mocker):
     search = mocker.patch.object(apollo_search.apollo, "search_organizations")
     assert apollo_search.find("nope", config=_CONFIG, api_key="k") == []
@@ -152,8 +165,9 @@ def test_shipped_config_matches_operator_decisions():
         assert "human resources" not in inds
     # Global noise drop is still in place.
     assert "staffing & recruiting" in cfg["gates"]["exclude_industries"]
-    # Enabled by the operator (2026-08-28).
+    # Enabled by the operator (2026-08-28), with a per-run cap.
     assert cfg.get("enabled") is True
+    assert isinstance(cfg.get("max_candidates_per_segment"), int)
 
 
 def test_channel_is_registered_in_the_discovery_package():

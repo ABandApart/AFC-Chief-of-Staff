@@ -143,8 +143,11 @@ def find(segment: str, *, max_pages: int = DEFAULT_MAX_PAGES,
                            apollo.APOLLO_KEY_ITEM)
             return []
 
+    cap = cfg.get("max_candidates_per_segment")
     by_domain: dict[str, dict[str, Any]] = {}
     for tag in seg.get("keyword_tags") or []:
+        if cap and len(by_domain) >= cap:
+            break
         filters = _filters(seg, gates, tag)
         for page in range(1, max_pages + 1):
             try:
@@ -164,10 +167,17 @@ def find(segment: str, *, max_pages: int = DEFAULT_MAX_PAGES,
                 candidate = classify(org, segment, gates, industries)
                 if candidate:
                     by_domain.setdefault(candidate["company_url"], candidate)
+            # Stop fetching once the cap is met — bounds both verify.py load and
+            # Apollo requests (the whole point of the per-run cap).
+            if cap and len(by_domain) >= cap:
+                break
             pagination = resp.get("pagination") or {}
             if pagination.get("total_pages") and page >= pagination["total_pages"]:
                 break
 
+    candidates = list(by_domain.values())
+    if cap:
+        candidates = candidates[:cap]
     logger.info("discovery: apollo_search %s → %d refined candidate(s)",
-                segment, len(by_domain))
-    return list(by_domain.values())
+                segment, len(candidates))
+    return candidates

@@ -2,7 +2,7 @@
 name: outreach-discover
 schedule: "0 5 * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.outreach.discover
 description: Source, verify and score candidate firms into the Gate 0 pool (Track O, Part 0).
 ---
@@ -17,13 +17,19 @@ out of geographic scope or already known, verifies what remains (R0.5), scores i
 with ICP v1, and inserts the survivors into `outreach_discoveries` as
 **unreviewed**. It surfaces nothing — the Gate 0 cog does that from the pool.
 
-**No LLM.** Deterministic fetch, verification and arithmetic, so no `agent_runs`
-rows, no ceiling, and nothing that can fail from a provider outage.
+**One LLM path, bounded.** The core loop is deterministic, but the `news_query`
+channel makes one bounded Haiku extraction call per batch (R0.21, sanctioned
+2026-08-20) — so this loop DOES spend, `outreach_discovery` label, **$0.25/day**
+ceiling (`35-` §14). The other channels (`seed_list`, `apollo_search`) and all of
+verification/scoring are LLM-free. (This corrects the earlier "No LLM" note, which
+predated the R0.21 extraction step.)
 
-**Ships DISABLED, and unusually there is a real reason beyond convention.** The
-seed list is empty, so today this loop would do nothing but make network calls
-and report zero. Enable it once `config/outreach/discovery/seeds.yaml` has
-entries — until then, run it by hand:
+**ENABLED 2026-08-28.** It shipped disabled for a real reason beyond convention:
+the seed list was empty and `news_query` alone returns few firms, so the loop
+would spend and surface almost nothing. That reason is now gone — the
+`apollo_search` channel (ICP-refined Apollo company search, Free tier) is a real
+source, so the loop has something to do. It runs daily at 05:00; run it by hand
+any time with:
 
 ```
 uv run python -m agents.outreach.discover --dry-run
