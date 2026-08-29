@@ -22,8 +22,8 @@ PREREQUISITES (barry-agent, the OAuth setup step):
       security add-generic-password -a "$USER" -s gmail-refresh-token -w
         # value = the refresh token
   * Sending identity `barry@aiadaptive.co`; the BCC mailbox is the SEPARATE user
-    `outreach-bcc@aiadaptive.co` (35- §8, corrected 2026-08-28) — not needed for
-    this probe, which is about header/scope behaviour, not BCC delivery.
+    `bcc@aiadaptive.co` (35- §8; provisioned 2026-08-29) — not needed for this
+    probe, which is about header/scope behaviour, not BCC delivery.
 
 RUN:
     uv run python -m agents.test.gmail_probe
