@@ -2,7 +2,7 @@
 name: outreach-classify
 schedule: "0 19 * * 0"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.outreach.classify
 description: Classify the news queue into triggers; promote confident matches (Track O, Part 2).
 ---
