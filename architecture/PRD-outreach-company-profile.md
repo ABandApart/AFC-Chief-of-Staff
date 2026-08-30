@@ -1473,17 +1473,20 @@ funded — the other four are bootstrapped, so null is honest, not an Apollo gap
 returned no investor string for this cohort. Verdict: Apollo covers the packet's
 firmographic header well enough to justify the account.
 
-> **⚠️ Correction (barry-agent, 2026-08-28): Free is CREDIT-metered, not just
-> rate-limited.** A live `--apply` run exhausted the account's credits after ~20
-> enrichments and every subsequent enrich/search returned `422 insufficient
-> credits`. So Free org-enrich is a **hard ~20–25 records/day cap, SHARED across
-> enrich + search**, resetting ~Pacific midnight — separate from and much tighter
-> than the 600/day rate limit. This supersedes the "≈33k retrievable in a day"
-> reading of the pagination probe: the credit cap dominates. Consequences —
-> firmographic `--apply` can only enrich ~20–25 targets/day, and `apollo_search`'s
-> real daily supply is bounded by whatever credits enrich leaves, not the per-run
-> cap. It strengthens the paid-plan case (which lifts credits as well as unlocking
-> People). The adapter now stops cleanly on the 422 instead of crashing.
+> **⚠️ Correction (barry-agent, 2026-08-28/29): Free is CREDIT-metered, and the
+> allotment is MONTHLY, not daily.** A live `--apply` run exhausted the account's
+> credits after ~20 enrichments and every subsequent enrich/search returned `422
+> insufficient credits`. **It did NOT refill overnight** — 17h past Pacific midnight
+> it was still 422 — so Free is a small **~20–25-record MONTHLY allotment, SHARED
+> across enrich + search**, separate from the 600/day rate limit. This supersedes
+> both the "≈33k retrievable in a day" reading (the credit cap dominates) *and* the
+> earlier "resets daily" note. Consequences, and they are severe on Free:
+> firmographic `--apply` can enrich only ~20–25 targets **per month**, and
+> `apollo_search` shares that same monthly bucket — so once spent, the discovery
+> channel yields 0 (degrading gracefully) until the next billing cycle. Both are now
+> **blocked until a paid plan or the next cycle**, which makes the paid-plan case
+> decisive (it lifts credits *and* unlocks People). The adapter stops cleanly on the
+> 422 instead of crashing.
 
 **Contact coverage — BLOCKED on plan (barry-agent, 2026-08-28).** V2 above hit
 Organization enrichment, which is on Apollo's **Free** tier. The card gap that

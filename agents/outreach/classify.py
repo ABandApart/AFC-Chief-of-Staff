@@ -14,10 +14,14 @@ idempotency and H5 quarantine — is built and verified on the build box.
 
 **Two build-time open decisions settled 2026-08-27:**
 
-  * *Per-run cap* (open #1). Part 1's first run produced ~887 signals; at Haiku's
-    ~$0.0002/call that is ~$0.18 for the whole queue, under the $0.30 ceiling. So
-    the cap is generous — `ITEMS_PER_RUN = 200` — and the ceiling breaker in
-    `agent_run` is the real backstop, not this number.
+  * *Per-run cap* (open #1). `ITEMS_PER_RUN = 200`. **Measured cost (barry-agent,
+    2026-08-29): ~$0.00146/call, ~7× the earlier ~$0.0002 estimate** — a short
+    excerpt still runs a real Haiku call. So a full 200-item run costs **~$0.29**,
+    right at the $0.30 ceiling, and the ~964-signal queue drains over **~5 runs, not
+    one**. That is by design: the per-run cap keeps each run under the ceiling, and
+    the `agent_run` ceiling breaker is the real backstop. (The old "~$0.18 for the
+    whole queue in one run" claim was wrong on both the per-call cost and the
+    one-run assumption.)
   * *Retry* (open #2). `classified_as='none'` is **terminal**. A signal the model
     judged not-a-trigger does not get re-asked on the next run; re-classifying
     would spend again on a settled item. `classified_at` is stamped for every

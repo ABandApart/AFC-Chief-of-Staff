@@ -278,8 +278,8 @@ def run_apply(ids: list[int] | None, limit: int | None, with_contacts: bool) -> 
                 # stack-trace mid-run (barry-agent's --apply crash, 2026-08-28).
                 remaining = [x["company_name"] for x in targets[i:]]
                 print(f"\n{exc}\n  {done} written, {len(remaining)} remaining: "
-                      f"{', '.join(remaining)}\n  Re-run after the daily reset (or "
-                      f"on the paid plan) to finish — it is idempotent.",
+                      f"{', '.join(remaining)}\n  Re-run after the monthly credit "
+                      f"reset or on the paid plan to finish — it is idempotent.",
                       file=sys.stderr)
                 return 4
             if not res["org"]:

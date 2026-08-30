@@ -62,17 +62,18 @@ class ApolloRateLimitError(RuntimeError):
 
 
 class ApolloCreditsError(RuntimeError):
-    """Apollo returned 422 "insufficient credits" — the account's daily credit pool
-    is drained. On Free this is a HARD ~20–25/day cap SHARED across enrich + search
-    (barry-agent, 2026-08-28), separate from the 600/day rate limit, and resets at
-    ~Pacific midnight. Distinct from a plan gate: the endpoint is on the plan, the
-    credits are just spent. Callers stop cleanly (N done, M remaining, retry after
-    reset) rather than stack-tracing mid-run."""
+    """Apollo returned 422 "insufficient credits" — the account's credit pool is
+    drained. On Free this is a small **MONTHLY** allotment (~20–25 records) SHARED
+    across enrich + search — verified NOT daily: 17h past Pacific midnight it was
+    still 422 (barry-agent, 2026-08-29). Separate from the 600/day rate limit.
+    Distinct from a plan gate: the endpoint is on the plan, the credits are just
+    spent — until the next billing cycle or a paid plan. Callers stop cleanly (N
+    done, M remaining) rather than stack-tracing mid-run."""
 
     def __init__(self, endpoint: str):
         self.endpoint = endpoint
         super().__init__(f"Apollo credits exhausted on {endpoint} "
-                         f"(422; resets ~Pacific midnight)")
+                         f"(422; Free is a monthly allotment — next cycle or paid plan)")
 
 
 def _fetch_guarding_plan(call: Callable[[], bytes], endpoint: str) -> bytes:
