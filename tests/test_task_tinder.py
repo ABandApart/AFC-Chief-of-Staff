@@ -58,3 +58,33 @@ def test_task_from_candidate_maps_fields_links_followup_and_keeps_provenance():
     assert task["source_candidate_id"] == 42
     assert task["status"] == "open"
     assert task["follow_up_id"] == 7
+
+
+def _mock_db(mocker):
+    """Mock `task_tinder.db.connection()` → conn → cursor, returning `cur`."""
+    cur = mocker.MagicMock()
+    cur.fetchall.return_value = []
+    conn = mocker.MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cur
+    cm = mocker.MagicMock()
+    cm.__enter__.return_value = conn
+    mocker.patch.object(task_tinder.db, "connection", return_value=cm)
+    return cur
+
+
+def test_list_undelivered_excludes_outreach_rescore_candidates(mocker):
+    # The bespoke O2 re-score cog owns outreach_stale_signal; Task Tinder must not
+    # also post a generic card for it.
+    cur = _mock_db(mocker)
+    task_tinder.list_undelivered()
+    sql, params = cur.execute.call_args.args
+    assert "source_type <> %s" in sql
+    assert "outreach_stale_signal" in params
+
+
+def test_list_pending_posted_excludes_outreach_rescore_candidates(mocker):
+    cur = _mock_db(mocker)
+    task_tinder.list_pending_posted()
+    sql, params = cur.execute.call_args.args
+    assert "source_type <> %s" in sql
+    assert "outreach_stale_signal" in params

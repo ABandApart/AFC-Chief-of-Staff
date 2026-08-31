@@ -53,6 +53,7 @@ class CosBot(commands.Bot):
         await self.load_extension("agents.discord_bot.cogs.task_tinder")
         await self.load_extension("agents.discord_bot.cogs.outreach_intake")
         await self.load_extension("agents.discord_bot.cogs.outreach_discovery")
+        await self.load_extension("agents.discord_bot.cogs.outreach_rescore")
         # Sync app (slash) commands to our single guild for instant
         # availability (global sync lags ~1h). copy_global_to moves the
         # cog-registered commands into the guild scope, then sync registers.
@@ -61,7 +62,7 @@ class CosBot(commands.Bot):
         synced = await self.tree.sync(guild=guild)
         logger.info(
             "Cogs loaded (system, capture, outcomes, recall, approvals, task_tinder, "
-            "outreach_intake, outreach_discovery); synced "
+            "outreach_intake, outreach_discovery, outreach_rescore); synced "
             "%d app command(s) to guild %s; connecting to Discord...",
             len(synced),
             GUILD_ID,

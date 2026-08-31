@@ -94,6 +94,12 @@ def task_from_candidate(
 
 _CANDIDATE_COLS = "id, proposed_action, source_type, source_ref, evidence_text, confidence"
 
+# Owned by the bespoke outreach re-score cog (O2, `outreach_rescore.STALE_SOURCE_TYPE`),
+# NOT the generic Task Tinder card — the stale-signal re-check needs an S4/S5 modal,
+# not a Work/Snooze/Dismiss card. Excluded from both queries so the two cogs never
+# both post the same candidate. (Literal, not an import, to keep this lib leaf-level.)
+_OUTREACH_RESCORE = "outreach_stale_signal"
+
 
 def list_undelivered(min_confidence: float = MIN_CONFIDENCE) -> list[dict[str, Any]]:
     """Pending candidates (≥ min_confidence) not yet posted to #task-tinder."""
@@ -101,8 +107,9 @@ def list_undelivered(min_confidence: float = MIN_CONFIDENCE) -> list[dict[str, A
         cur.execute(
             f"SELECT {_CANDIDATE_COLS} FROM task_candidates "
             "WHERE status = 'pending' AND discord_message_id IS NULL "
-            "AND confidence >= %s ORDER BY confidence DESC, created_at",
-            (min_confidence,),
+            "AND source_type <> %s AND confidence >= %s "
+            "ORDER BY confidence DESC, created_at",
+            (_OUTREACH_RESCORE, min_confidence),
         )
         return cur.fetchall()
 
@@ -113,7 +120,8 @@ def list_pending_posted() -> list[dict[str, Any]]:
         cur.execute(
             "SELECT id, discord_message_id FROM task_candidates "
             "WHERE status = 'pending' AND discord_message_id IS NOT NULL "
-            "ORDER BY created_at"
+            "AND source_type <> %s ORDER BY created_at",
+            (_OUTREACH_RESCORE,),
         )
         return cur.fetchall()
 
