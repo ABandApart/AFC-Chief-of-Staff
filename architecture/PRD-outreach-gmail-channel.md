@@ -237,6 +237,20 @@ Do these as a throwaway script against the live account before the build, and
 record the actual output in the implementation's docstring — the same discipline
 used for the Track I stdio probe and the P4-1 vector-layout probe.
 
+### V1–V3 results (barry-agent, live Workspace, 2026-08-31)
+
+| # | Result | Consequence |
+|---|--------|-------------|
+| **V1** | **FAIL** — the `X-AIA-Touch` header does NOT survive to the sent message (a `messages.get?format=metadata` for `[X-AIA-Touch, Subject]` returned only `Subject`). | **Correlation cannot use the custom header.** Falls back to `threadId` + the BCC token. |
+| **V2** | **history PASS** — `gmail.metadata` scope permits `history.list`. **header FAIL** — metadata does not return custom `X-` headers. | **G2 stays** — no `gmail.readonly` reopen. Confirms V1: no header correlation. |
+| **V3** | draft `message.id` **is reassigned on send** (`draft=1a05a1fbf887bead → sent=1a05a2182e73fdad`). | **Don't rely on the draft id** to find the sent message; correlation is `threadId` + BCC token. |
+
+**Settled correlation design:** a sent message is matched to its touch by
+**`threadId` + the BCC token** (`bcc+<token>@aiadaptive.co` on `Delivered-To`),
+never the custom header and never the draft id. `gmail_thread_id` is the
+load-bearing column; `gmail_message_id` is stored only as the captured sent id.
+Implemented in migration 0025.
+
 </verification>
 
 ---
