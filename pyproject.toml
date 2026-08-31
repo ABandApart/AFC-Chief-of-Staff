@@ -82,6 +82,19 @@ tartt = [
     "trafilatura>=1.8,<2.0",
     "feedparser>=6.0",
 ]
+# Track O send half (Gmail draft + send-capture) — barry-agent only, like cognee.
+# NOT synced by default: the Gmail channel runs where the OAuth token lives
+# (barry-agent), and the build box must pass without it (CLAUDE.md). Install where
+# it runs: `uv sync --group gmail`. Everything that imports these — the one-time
+# `agents/test/gmail_probe.py` and the future `agents/outreach/gmail.py` — imports
+# them LAZILY (inside the function that needs a live service), and their tests mock
+# the Gmail client rather than importing the SDK, so the suite runs green in the
+# default env. Same discipline as `mcp`/`cognee`.
+gmail = [
+    "google-api-python-client>=2.100,<3.0",
+    "google-auth>=2.30,<3.0",
+    "google-auth-oauthlib>=1.2,<2.0",
+]
 
 [tool.ruff]
 line-length = 100

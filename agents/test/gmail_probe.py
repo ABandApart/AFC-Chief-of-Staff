@@ -12,7 +12,8 @@ one probe draft by hand** from Gmail — so this stays within the "system never
 sends" property (G3) even while probing.
 
 PREREQUISITES (barry-agent, the OAuth setup step):
-  * `uv add google-api-python-client google-auth` (deps not in pyproject yet).
+  * `uv sync --group gmail` (barry-agent-only optional group; the build box never
+    syncs it, and the Google imports below are lazy so the suite stays green).
   * An **Internal** OAuth app in the Workspace Google Cloud project, scopes
     `https://www.googleapis.com/auth/gmail.compose` and
     `https://www.googleapis.com/auth/gmail.metadata`.
