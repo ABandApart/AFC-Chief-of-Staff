@@ -558,14 +558,21 @@ The reusable helper is `agents/_lib/heartbeat.py` — `ping(slug)` on success,
 (`https://hc-ping.com/<key>/<slug>`). It **no-ops until the key is provisioned**,
 so it is safe to ship un-armed. A ping never raises.
 
-Wired so far: **`cos-briefing`** (`agents/briefing/run.py`, success + `/fail`) and
-**`cos-backup`** (`scripts/pg_backup.sh`, success + an `ERR` trap `/fail`). Still
-to wire as their loops land: `cos-scheduler` (daemon heartbeat), `cos-ted`,
-`cos-outreach-evidence`, `cos-outreach-bcc`. **Operator/runtime setup** (once):
-create the healthchecks.io project, add `healthchecks-ping-key` to barry-agent's
-keychain, create the `cos-briefing` (24h/1h) and `cos-backup` (24h/2h) checks per
-the table above, and point the project's alert at an **off-Discord** channel
-(email/push). The second layer (Ted's timestamp in the briefing System line) is
+Wired: **`cos-briefing`** (`agents/briefing/run.py`, success + `/fail`),
+**`cos-backup`** (`scripts/pg_backup.sh`, success + an `ERR` trap `/fail`),
+**`cos-scheduler`** (`agents/scheduler/run.py` `Scheduler._maybe_beat`, a
+rate-limited liveness ping each daemon cycle — the whole-schedule watchdog: if
+the daemon wedges, every loop stops firing and this trips in 1h, faster than any
+individual loop's grace), **`cos-outreach-evidence`** (`agents/outreach/
+evidence.py`, success + `/fail`), and **`cos-outreach-bcc`**
+(`agents/outreach/gmail_capture.py` `run_bcc`, pinged only on a live pass — never
+on the intentional skip when the bcc@ credential is absent, so the check stays
+honest). Still to wire as its loop lands: `cos-ted` (Phase 11). **Operator/runtime
+setup** (once): create the healthchecks.io project, add `healthchecks-ping-key` to
+barry-agent's keychain, create the checks per the table above — `cos-briefing`
+(24h/1h), `cos-scheduler` (1h/15m), `cos-outreach-evidence` (12h/2h),
+`cos-outreach-bcc` (15m/10m, only once bcc@ IMAP is set up), `cos-backup` (24h/2h)
+— and point the project's alert at an **off-Discord** channel (email/push). The second layer (Ted's timestamp in the briefing System line) is
 not yet built — it lands with the real briefing in Phase 4.
 
 ### What this deliberately does not do

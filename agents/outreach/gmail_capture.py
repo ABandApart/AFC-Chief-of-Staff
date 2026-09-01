@@ -29,12 +29,20 @@ from datetime import date
 from email import message_from_bytes, policy
 from typing import Any
 
-from agents._lib import creds, db
+from agents._lib import creds, db, heartbeat
 from agents.outreach import gmail
 
 logger = logging.getLogger(__name__)
 
 SENT_VIA = "gmail_api"
+
+# Dead-man's switch for the BCC body pass (80-telemetry-layer § PERF-4, 15m/10m).
+# The tight grace is deliberate: the BCC mailbox is the ONLY source of the
+# verbatim sent body, and IMAP going quiet (auth expired, mailbox wedged) is
+# invisible on-box. Pinged ONLY when the pass actually runs against a live
+# credential — never on the intentional skip when bcc@ isn't set up, so the
+# check stays honest: green means bodies are flowing, silent means they aren't.
+HEARTBEAT_SLUG_BCC = "cos-outreach-bcc"
 
 # The plus-address token in a BCC copy's routing headers: bcc+<token>@aiadaptive.co.
 _BCC_TOKEN_RE = re.compile(r"bcc\+([^@\s]+)@" + re.escape(gmail.BCC_DOMAIN), re.IGNORECASE)
@@ -277,7 +285,14 @@ def run_bcc() -> dict[str, int]:
     imap = bcc_imap()
     try:
         with db.connection() as conn:
-            return capture_bcc(imap, conn)
+            counts = capture_bcc(imap, conn)
+        # Success path only: a live credential and the pass completed. The skip
+        # above never reaches here, so the switch never falsely reads green.
+        heartbeat.ping(HEARTBEAT_SLUG_BCC)
+        return counts
+    except Exception:
+        heartbeat.ping_fail(HEARTBEAT_SLUG_BCC)
+        raise
     finally:
         try:
             imap.logout()

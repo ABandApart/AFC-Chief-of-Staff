@@ -31,13 +31,18 @@ import logging
 import sys
 from datetime import date
 
-from agents._lib import db, outreach
+from agents._lib import db, heartbeat, outreach
 from agents.outreach import adapters
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Dead-man's switch (80-telemetry-layer § PERF-4). Silence past the 12h/2h grace
+# means the two-weeks-of-posting-age data this loop exists to accrue has quietly
+# stopped accruing — the one failure this loop cannot make visible on its own.
+HEARTBEAT_SLUG = "cos-outreach-evidence"
 
 
 def poll_target(conn: object, target: dict, *, today: date) -> dict[str, int | str]:
@@ -146,11 +151,19 @@ def main() -> int:
         return 0
 
     poll()
+    # Success path only — the poll actually completed. Never move this into a
+    # finally: a ping on a crashed run manufactures confidence.
+    heartbeat.ping(HEARTBEAT_SLUG)
     return 0
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except Exception:
+        # A broken run signals /fail so it alerts now, not after the 2h window.
+        logger.exception("outreach evidence failed")
+        heartbeat.ping_fail(HEARTBEAT_SLUG)
+        sys.exit(1)
     finally:
         db.close_pool()

@@ -181,3 +181,23 @@ def test_scheduler_briefing_job_invokes_agent_with_playbook():
     brief = next(j for j in sched.jobs if j.loop.name == "morning-briefing")
     assert "agents.briefing.run" in brief.argv[2]
     assert brief.env.get("COS_PLAYBOOK") == "daily-briefing"
+
+
+# --- cos-scheduler liveness beat (80-telemetry-layer § PERF-4) --------------
+
+from datetime import timedelta  # noqa: E402
+
+from agents.scheduler.run import SCHEDULER_BEAT_SECONDS, SCHEDULER_SLUG  # noqa: E402
+
+
+def test_maybe_beat_pings_first_then_rate_limits(mocker):
+    cp = discover(repo_root())
+    t0 = datetime(2026, 1, 1, 0, 0)
+    sched = Scheduler(cp, repo_root(), t0)
+    ping = mocker.patch("agents.scheduler.run.heartbeat.ping")
+
+    assert sched._maybe_beat(t0) is True                      # first cycle → green now
+    assert sched._maybe_beat(t0 + timedelta(seconds=SCHEDULER_BEAT_SECONDS - 1)) is False
+    assert sched._maybe_beat(t0 + timedelta(seconds=SCHEDULER_BEAT_SECONDS)) is True
+    assert ping.call_count == 2
+    ping.assert_called_with(SCHEDULER_SLUG)

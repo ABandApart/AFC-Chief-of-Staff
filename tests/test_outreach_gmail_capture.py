@@ -214,4 +214,29 @@ def test_capture_bcc_parses_records_and_marks_seen(mocker):
 def test_run_bcc_skips_without_the_credential(mocker):
     mocker.patch.object(cap.creds, "keychain_get",
                         side_effect=RuntimeError("no gmail-bcc-imap"))
+    ping = mocker.patch.object(cap.heartbeat, "ping")
     assert cap.run_bcc() == {"seen": 0, "bodies": 0, "unmatched": 0, "not_ready": 0}
+    ping.assert_not_called()          # skip must NOT read green — bcc@ is off, not alive
+
+
+def test_run_bcc_pings_the_switch_on_a_live_pass(mocker):
+    mocker.patch.object(cap.creds, "keychain_get", return_value="pw")
+    mocker.patch.object(cap, "bcc_imap", return_value=MagicMock())
+    mocker.patch.object(cap.db, "connection")
+    mocker.patch.object(cap, "capture_bcc",
+                        return_value={"seen": 2, "bodies": 2, "unmatched": 0, "not_ready": 0})
+    ping = mocker.patch.object(cap.heartbeat, "ping")
+    cap.run_bcc()
+    ping.assert_called_once_with(cap.HEARTBEAT_SLUG_BCC)
+
+
+def test_run_bcc_signals_fail_when_the_pass_raises(mocker):
+    import pytest
+    mocker.patch.object(cap.creds, "keychain_get", return_value="pw")
+    mocker.patch.object(cap, "bcc_imap", return_value=MagicMock())
+    mocker.patch.object(cap.db, "connection")
+    mocker.patch.object(cap, "capture_bcc", side_effect=RuntimeError("imap wedged"))
+    fail = mocker.patch.object(cap.heartbeat, "ping_fail")
+    with pytest.raises(RuntimeError):
+        cap.run_bcc()
+    fail.assert_called_once_with(cap.HEARTBEAT_SLUG_BCC)   # a broken pass alerts now

@@ -146,3 +146,23 @@ def test_one_failing_target_does_not_stop_the_sweep(mocker):
 def test_poll_with_no_targets_is_a_clean_noop(mocker):
     _patch_db(mocker, [])
     assert evidence.poll(today=TODAY)["targets"] == 0
+
+
+# --- heartbeat (80-telemetry-layer § PERF-4) --------------------------------
+
+def test_main_pings_the_switch_after_a_real_poll(mocker):
+    mocker.patch.object(evidence.sys, "argv", ["evidence"])
+    mocker.patch.object(evidence, "poll")
+    ping = mocker.patch.object(evidence.heartbeat, "ping")
+    assert evidence.main() == 0
+    ping.assert_called_once_with(evidence.HEARTBEAT_SLUG)
+
+
+def test_dry_run_does_not_ping(mocker):
+    # --dry-run inspects; it isn't the scheduled work, so it must not read green.
+    mocker.patch.object(evidence.sys, "argv", ["evidence", "--dry-run"])
+    mocker.patch.object(evidence.db, "connection")
+    mocker.patch.object(evidence.outreach, "pollable_targets", return_value=[])
+    ping = mocker.patch.object(evidence.heartbeat, "ping")
+    assert evidence.main() == 0
+    ping.assert_not_called()

@@ -36,6 +36,7 @@ from pathlib import Path
 
 from croniter import croniter
 
+from agents._lib import heartbeat
 from agents._lib.control_plane import ControlPlane, Loop, discover, repo_root
 
 logging.basicConfig(
@@ -48,6 +49,18 @@ logger = logging.getLogger(__name__)
 # stale the running schedule can be after an activation — one minute, rather than
 # "until someone restarts the daemon", which is what it used to be.
 RELOAD_SECONDS = 60
+
+# The scheduler's own dead-man's switch (`cos-scheduler`, 80-telemetry-layer §
+# PERF-4). launchd keeps THIS daemon alive, but nothing off-box knows if it is
+# actually cycling — if it wedges, every loop silently stops firing and each
+# loop's own check only trips after its (long) grace. So the daemon pings its
+# liveness slug as it cycles; the *absence* of that ping is the fast, off-box
+# alert that the whole schedule has stalled. An on-box monitor can't do this
+# job — it can't observe the box being dead. Grace is 1h; ping every 5 minutes
+# so a single slow cycle is nowhere near the threshold. No-ops until the
+# `healthchecks-ping-key` is provisioned (see heartbeat.py).
+SCHEDULER_SLUG = "cos-scheduler"
+SCHEDULER_BEAT_SECONDS = 300
 
 
 def build_command(loop: Loop, root: Path | str) -> tuple[list[str], dict[str, str]]:
@@ -86,9 +99,25 @@ class Scheduler:
     def __init__(self, cp: ControlPlane, root: Path | str, now: datetime):
         self.root = Path(root)
         self.jobs: list[Job] = []
+        self._last_beat: datetime | None = None
         for lp in cp.enabled_loops():
             argv, env = build_command(lp, root)
             self.jobs.append(Job(lp, argv, env, next_fire(lp.schedule, now)))
+
+    def _maybe_beat(self, now: datetime) -> bool:
+        """Ping the daemon's own liveness switch (`cos-scheduler`), rate-limited.
+
+        Returns whether it pinged — the first call always does (so the check
+        goes green the moment the daemon starts), then at most once per
+        `SCHEDULER_BEAT_SECONDS`. Never raises: `heartbeat.ping` swallows its
+        own errors, and monitoring must never break the work it reports on.
+        """
+        if (self._last_beat is not None
+                and (now - self._last_beat).total_seconds() < SCHEDULER_BEAT_SECONDS):
+            return False
+        heartbeat.ping(SCHEDULER_SLUG)
+        self._last_beat = now
+        return True
 
     def plan(self) -> list[tuple[str, datetime, list[str]]]:
         """(name, next_run, argv) sorted by next_run — for --dry-run / tests."""
@@ -149,6 +178,10 @@ class Scheduler:
         logger.info("scheduling %d loop(s): %s", len(self.jobs),
                     ", ".join(j.loop.name for j in self.jobs) or "(none yet)")
         while not stop.is_set():
+            # Liveness first: the daemon reached the top of another cycle. If it
+            # dies or wedges below this line, the ping stops and cos-scheduler
+            # goes silent — that silence IS the alert.
+            self._maybe_beat(datetime.now())
             added, removed = self.reload(datetime.now())
             if added:
                 logger.info("loop(s) enabled since last check: %s", ", ".join(sorted(added)))
