@@ -7,12 +7,13 @@ dedicated `bcc+<token>@aiadaptive.co` mailbox** so the send-capture poller can
 later match the sent message to this touch by threadId + that token (the V1-probe
 fallback: the custom header does not survive draft→sent).
 
-**Idempotent, create-once (G-R4).** `outreach-daily` regenerates packets every
-morning, so a blind create would pile up duplicate drafts. A touch that already
-carries a `gmail_draft_id` is left alone — the draft is the operator's to edit and
-send. (Update-in-place-when-unedited is the §6 open sub-question — a later slice;
-this stores `draft_body_hash` ready for it but does not overwrite an existing
-draft.)
+**Idempotent (G-R4), and keeps drafts current (§6).** `outreach-daily` regenerates
+packets every morning. A touch with no draft gets one (create-once — never a
+duplicate). A touch that already has a draft is **refreshed to the latest packet
+only while the operator has not edited it**: `draft_body_hash` stores the draft as
+Gmail held it after our last write, so a re-read that still matches is ours to
+update, and one that differs is the operator's edit — left untouched, never
+overwritten. A draft the operator deleted is not resurrected.
 
 **§6 readiness:** the draft is created regardless of `ready` — an unresolved
 `[operator]` slot is shown, not a reason to withhold — because R1 (a placeholder
@@ -111,6 +112,39 @@ def create_draft(svc: Any, *, to: str, subject: str, body: str, bcc: str) -> dic
     }
 
 
+def update_draft(svc: Any, draft_id: str, *, to: str, subject: str,
+                 body: str, bcc: str) -> None:
+    """Rewrite an existing draft in place (keeps the same draft id + thread)."""
+    raw = build_raw(to=to, subject=subject, body=body, bcc=bcc)
+    svc.users().drafts().update(
+        userId="me", id=draft_id, body={"message": {"raw": raw}}).execute()
+
+
+def extract_body(payload: dict) -> str:
+    """The plain-text body from a Gmail message payload (`drafts.get?format=full`).
+    Walks parts for the first text/plain leaf; empty if none."""
+    def walk(part: dict) -> str | None:
+        if part.get("mimeType") == "text/plain":
+            data = part.get("body", {}).get("data")
+            if data:
+                return base64.urlsafe_b64decode(data).decode("utf-8", "replace")
+        for child in part.get("parts") or []:
+            found = walk(child)
+            if found is not None:
+                return found
+        return None
+    return walk(payload) or ""
+
+
+def roundtrip_hash(svc: Any, draft_id: str) -> str:
+    """Hash the draft's body AS GMAIL STORED IT — read back after we write. This is
+    what makes edit-detection reliable: comparing `hash(body_filled)` to a fetched
+    draft would mismatch on Gmail's own re-encoding even when untouched, so we
+    always compare 'what Gmail holds now' to 'what Gmail held after our last write'."""
+    draft = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute()
+    return body_hash(extract_body(draft.get("message", {}).get("payload", {})))
+
+
 # --- DB (draftable touches + persisting draft state) -------------------------
 
 _DRAFTABLE_SQL = """
@@ -152,36 +186,108 @@ def save_draft_state(conn: object, touch_id: int, ids: dict[str, str],
         )
 
 
+def update_draft_hash(conn: object, touch_id: int, hash_: str) -> None:
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute("UPDATE outreach_touches SET draft_body_hash = %s WHERE id = %s",
+                    (hash_, touch_id))
+
+
+# Existing drafts on active, unsent touches — candidates for a keep-current refresh.
+_EXISTING_SQL = _DRAFTABLE_SQL.replace(
+    "t.gmail_draft_id IS NULL          -- create-once: not yet drafted",
+    "t.gmail_draft_id IS NOT NULL      -- already drafted: refresh-if-unedited",
+).replace(
+    "SELECT t.id AS touch_id, t.bcc_token, tg.contact_email, tg.company_name,",
+    "SELECT t.id AS touch_id, t.bcc_token, t.gmail_draft_id, t.draft_body_hash, "
+    "tg.contact_email, tg.company_name,",
+)
+
+
+def list_existing_drafts(conn: object) -> list[dict[str, Any]]:
+    """Touches that already have a draft and are still active — checked each run to
+    keep the draft current with the latest packet UNLESS the operator has edited it."""
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(_EXISTING_SQL)
+        return cur.fetchall()
+
+
 # --- orchestration -----------------------------------------------------------
+
+def refresh_draft(svc: Any, touch: dict) -> tuple[str, str | None]:
+    """Keep one existing draft current (§6 update-in-place). Compares the draft as
+    Gmail holds it now to `draft_body_hash` (what it held after our last write):
+    a MISMATCH means the operator has edited it — leave their work untouched; a
+    MATCH means it is still ours to refresh to the latest packet body. Returns
+    `(action, new_hash)` — action ∈ {edited, refreshed, gone}."""
+    draft_id = touch["gmail_draft_id"]
+    try:
+        current = roundtrip_hash(svc, draft_id)
+    except Exception as exc:  # noqa: BLE001 — duck-typed Gmail HttpError
+        if getattr(getattr(exc, "resp", None), "status", None) == 404:
+            return ("gone", None)   # operator deleted it — do not resurrect
+        raise
+    if current != touch["draft_body_hash"]:
+        return ("edited", None)
+    update_draft(svc, draft_id, to=touch["contact_email"], subject=touch["subject_line"],
+                 body=touch["body_filled"], bcc=bcc_address(touch["bcc_token"]))
+    return ("refreshed", roundtrip_hash(svc, draft_id))
 
 def run(*, dry_run: bool = False) -> dict[str, int]:
     """One drafting pass: create a draft for each draftable touch. Returns counts.
     In `dry_run` nothing is composed or written — it only reports what it would do
     (and makes no Gmail call), so it is safe on the build box without the token."""
     with db.connection() as conn:
-        touches = list_draftable(conn)
-    counts = {"draftable": len(touches), "created": 0}
+        to_create = list_draftable(conn)
+        to_refresh = list_existing_drafts(conn)
+    counts = {"draftable": len(to_create), "created": 0,
+              "existing": len(to_refresh), "refreshed": 0, "operator_edited": 0}
     if dry_run:
-        for t in touches:
+        for t in to_create:
             logger.info("gmail: would draft touch %s → %s (%s)",
                         t["touch_id"], t["contact_email"], t["company_name"])
+        for t in to_refresh:
+            logger.info("gmail: would check draft for touch %s (refresh if unedited)",
+                        t["touch_id"])
         return counts
 
-    if not touches:
+    if not (to_create or to_refresh):
         return counts
     svc = service()
-    for t in touches:
+
+    for t in to_create:
         try:
             ids = create_draft(
                 svc, to=t["contact_email"], subject=t["subject_line"],
                 body=t["body_filled"], bcc=bcc_address(t["bcc_token"]))
+            # Stamp the round-trip hash (as Gmail stored it) so a later refresh can
+            # tell our content from the operator's edits.
             with db.connection() as conn:
-                save_draft_state(conn, t["touch_id"], ids, body_hash(t["body_filled"]))
+                save_draft_state(conn, t["touch_id"], ids,
+                                 roundtrip_hash(svc, ids["draft_id"]))
             counts["created"] += 1
             logger.info("gmail: drafted touch %s (draft %s, thread %s)",
                         t["touch_id"], ids["draft_id"], ids["thread_id"])
         except Exception:
             logger.exception("gmail: failed to draft touch %s", t["touch_id"])
+
+    for t in to_refresh:
+        try:
+            action, new_hash = refresh_draft(svc, t)
+            if action == "refreshed":
+                with db.connection() as conn:
+                    update_draft_hash(conn, t["touch_id"], new_hash)
+                counts["refreshed"] += 1
+                logger.info("gmail: refreshed draft for touch %s (was unedited)",
+                            t["touch_id"])
+            elif action == "edited":
+                counts["operator_edited"] += 1
+                logger.info("gmail: left draft for touch %s (operator has edited it)",
+                            t["touch_id"])
+            else:  # gone
+                logger.info("gmail: draft for touch %s is gone (deleted) — left as is",
+                            t["touch_id"])
+        except Exception:
+            logger.exception("gmail: failed to refresh draft for touch %s", t["touch_id"])
     return counts
 
 
@@ -194,8 +300,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     counts = run(dry_run=args.dry_run)
-    verb = "would draft" if args.dry_run else "drafted"
-    print(f"{counts['draftable']} draftable touch(es); {verb} {counts['created']}")
+    print(f"drafting: {counts['created']} created, {counts['refreshed']} refreshed, "
+          f"{counts['operator_edited']} left as-edited "
+          f"({counts['draftable']} draftable, {counts['existing']} existing)")
     return 0
 
 
