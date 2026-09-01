@@ -112,7 +112,13 @@ briefing's "new since yesterday / reading" section (extends `agents/briefing`).
   quality before scaling/pivoting — see the Free-tier quality trial box).
 - **mode-1 cognify: all articles vs interest-gated** (recommended: gated — also
   keeps the trial cheap).
-- **Legacy `content_items` SQL table:** retire vs repurpose as the operational
-  tracker.
+- ~~**Legacy `content_items` SQL table:** retire vs repurpose as the operational
+  tracker.~~ **RESOLVED (2026-09-01): REPURPOSED — kept as the operational tracker.**
+  It is not legacy: the poller reads it for URL dedup (`run.py`) and writes each
+  processed item, the briefing reads it for the Reading section, and `content_node`
+  links each row to its cognee graph node — the same SQL-structural / graph-semantic
+  split Track O uses (`outreach_evidence`). Retiring it would break the poller's
+  dedup and the briefing; the graph holds the semantics, this holds dedup + interest
+  score + the graph link.
 - **Source seed list + poll cadence** — start **small** (a handful of sources,
   slow cadence) for the free-tier quality trial.

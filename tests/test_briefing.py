@@ -41,9 +41,14 @@ def test_briefing_flags_failures():
     assert "⚠️ 2 failure(s)" in s
 
 
-def test_briefing_marks_itself_as_skeleton():
+def test_briefing_no_longer_carries_the_skeleton_disclaimer():
+    # Phase 4 is live, so the "synthesis arrives with Tartt" placeholder is gone;
+    # the status block still renders and the message ends cleanly (sections are
+    # appended by main() with \n\n).
     s = format_briefing(datetime(2026, 7, 6), STATUS)
-    assert "Phase 4" in s
+    assert "skeleton" not in s.lower()
+    assert "real synthesis arrives" not in s
+    assert "**System status**" in s and s.rstrip().endswith("✓")
 
 
 # --- reading recs (Phase 4, Task 5) -----------------------------------------

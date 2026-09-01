@@ -1,4 +1,4 @@
-"""Briefing skeleton — the 6am good-morning post to #briefing.
+"""Morning briefing — the 6am good-morning post to #briefing.
 
 Phase 3.5 scope (per `architecture/70-build-order.md` Phase 3 task 5):
 a *static* system-status message, no synthesis, no LLM call — so this does
@@ -103,8 +103,7 @@ def format_briefing(now: datetime, status: dict[str, Any]) -> str:
         f"• Notes captured: {status['notes_total']} total, {status['notes_24h']} in the last 24h\n"
         f"• LLM calls (24h): {status['calls_24h']} for ${status['spend_24h']:.6f} — {failure_str}\n"
         f"• Outcomes recorded: {status['outcomes_total']}\n"
-        f"• Brain: Postgres reachable ✓\n\n"
-        f"_Briefing skeleton — real synthesis arrives with Tartt in Phase 4._"
+        f"• Brain: Postgres reachable ✓"
     )
 
 
