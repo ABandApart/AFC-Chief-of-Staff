@@ -24,15 +24,23 @@ Runs where the token lives (barry-agent); the Google SDK is imported lazily via
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
+from email import message_from_bytes, policy
 from typing import Any
 
-from agents._lib import db
+from agents._lib import creds, db
 from agents.outreach import gmail
 
 logger = logging.getLogger(__name__)
 
 SENT_VIA = "gmail_api"
+
+# The plus-address token in a BCC copy's routing headers: bcc+<token>@aiadaptive.co.
+_BCC_TOKEN_RE = re.compile(r"bcc\+([^@\s]+)@" + re.escape(gmail.BCC_DOMAIN), re.IGNORECASE)
+_BCC_IMAP_ITEM = "gmail-bcc-imap"       # the bcc@ IMAP app password (keychain)
+_BCC_ADDRESS = f"bcc@{gmail.BCC_DOMAIN}"
+_BCC_ROUTING_HEADERS = ("Delivered-To", "X-Original-To", "To", "Cc")
 
 
 # --- watermark ---------------------------------------------------------------
@@ -170,13 +178,122 @@ def run(*, today: date | None = None) -> dict[str, int]:
     return counts
 
 
+# --- BCC body path (the verbatim sent_body, §3) ------------------------------
+
+def bcc_token_from_headers(msg: Any) -> str | None:
+    """Pull the correlation token out of a BCC copy's routing headers. The token
+    rides in the plus-address (`bcc+<token>@aiadaptive.co`) the draft BCC'd to."""
+    for header in _BCC_ROUTING_HEADERS:
+        for value in msg.get_all(header, []):
+            match = _BCC_TOKEN_RE.search(str(value))
+            if match:
+                return match.group(1)
+    return None
+
+
+def plain_body(msg: Any) -> str:
+    """The message's plain-text body (the verbatim send). Prefer text/plain; fall
+    back to the payload as-is. Read in full — this is the SEPARATE bcc@ mailbox, so
+    there is no client-mail blast radius (the whole point of G2's dedicated design)."""
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                return part.get_content()
+        return ""
+    return msg.get_content()
+
+
+def record_body(conn: object, token: str, body: str) -> dict[str, Any]:
+    """Attach the verbatim body to the touch with this BCC token, and claim the
+    send for the `bcc` path only if the history path has not already. Returns
+    whether it matched, whether THIS write newly marked it sent, and the packet's
+    readiness (a newly-sent not-ready capture is the Ted-alert case)."""
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            "SELECT id, sent_at IS NULL AS was_unsent FROM outreach_touches "
+            "WHERE bcc_token = %s", (token,))
+        row = cur.fetchone()
+        if row is None:
+            return {"matched": False, "newly_sent": False, "ready": True}
+        touch_id, was_unsent = row
+        cur.execute(
+            "UPDATE outreach_touches SET sent_body = %s, "
+            "sent_at = COALESCE(sent_at, now()), sent_via = COALESCE(sent_via, 'bcc') "
+            "WHERE id = %s", (body, touch_id))
+        ready = True
+        if was_unsent:
+            cur.execute("SELECT ready FROM outreach_packets WHERE touch_id = %s "
+                        "ORDER BY assembled_at DESC, id DESC LIMIT 1", (touch_id,))
+            r = cur.fetchone()
+            ready = r[0] if r else True
+    return {"matched": True, "newly_sent": was_unsent, "ready": ready}
+
+
+def bcc_imap() -> Any:
+    """Open an IMAP session to the dedicated bcc@ inbox. `imaplib` is stdlib; only
+    the app-password credential is external."""
+    import imaplib
+    imap = imaplib.IMAP4_SSL("imap.gmail.com")
+    imap.login(_BCC_ADDRESS, creds.keychain_get(_BCC_IMAP_ITEM))
+    imap.select("INBOX")
+    return imap
+
+
+def capture_bcc(imap: Any, conn: object) -> dict[str, int]:
+    """Read UNSEEN bcc@ messages, correlate each by its token, write sent_body, and
+    mark it seen. `imap` is injected so this is unit-testable without a live inbox."""
+    counts = {"seen": 0, "bodies": 0, "unmatched": 0, "not_ready": 0}
+    _typ, data = imap.search(None, "UNSEEN")
+    for num in (data[0] or b"").split():
+        _typ, fetched = imap.fetch(num, "(RFC822)")
+        raw = fetched[0][1]
+        msg = message_from_bytes(raw, policy=policy.default)
+        counts["seen"] += 1
+        token = bcc_token_from_headers(msg)
+        if token:
+            result = record_body(conn, token, plain_body(msg))
+            if result["matched"]:
+                counts["bodies"] += 1
+                if result["newly_sent"] and not result["ready"]:
+                    counts["not_ready"] += 1
+                    logger.warning("gmail capture(bcc): touch for token %s recorded "
+                                   "SENT but its packet was NOT READY — TED ALERT", token)
+            else:
+                counts["unmatched"] += 1
+        imap.store(num, "+FLAGS", "\\Seen")
+    return counts
+
+
+def run_bcc() -> dict[str, int]:
+    """The BCC body pass. No-ops (logs) when the `gmail-bcc-imap` credential is
+    absent, so it is safe before the bcc@ app password is set up."""
+    zero = {"seen": 0, "bodies": 0, "unmatched": 0, "not_ready": 0}
+    try:
+        creds.keychain_get(_BCC_IMAP_ITEM)
+    except RuntimeError:
+        logger.info("gmail capture(bcc): no '%s' credential — body capture skipped",
+                    _BCC_IMAP_ITEM)
+        return zero
+    imap = bcc_imap()
+    try:
+        with db.connection() as conn:
+            return capture_bcc(imap, conn)
+    finally:
+        try:
+            imap.logout()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     argparse.ArgumentParser(description=__doc__).parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     c = run()
+    b = run_bcc()
     print(f"gmail capture: {c['events']} sent event(s), {c['recorded']} recorded "
-          f"({c['unmatched']} unmatched, {c['not_ready']} not-ready)")
+          f"({c['unmatched']} unmatched, {c['not_ready']} not-ready); "
+          f"bcc: {b['bodies']} body(ies) from {b['seen']} message(s)")
     return 0
 
 

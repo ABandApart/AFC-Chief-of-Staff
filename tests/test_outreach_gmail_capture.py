@@ -145,3 +145,73 @@ def test_run_counts_an_unmatched_send(mocker):
     counts = cap.run()
     assert counts["unmatched"] == 1 and counts["recorded"] == 0
     rec.assert_not_called()
+
+
+# --- BCC body path -----------------------------------------------------------
+
+from email.message import EmailMessage  # noqa: E402
+
+
+def _bcc_raw(token, body, *, header="Delivered-To"):
+    msg = EmailMessage()
+    msg[header] = f"bcc+{token}@aiadaptive.co"
+    msg["Subject"] = "Re: your team"
+    msg.set_content(body)
+    return msg.as_bytes()
+
+
+def _parsed(raw):
+    from email import message_from_bytes, policy
+    return message_from_bytes(raw, policy=policy.default)
+
+
+def test_bcc_token_parsed_from_routing_headers():
+    assert cap.bcc_token_from_headers(_parsed(_bcc_raw("tok5", "hi"))) == "tok5"
+    # token can ride other routing headers too
+    assert cap.bcc_token_from_headers(_parsed(_bcc_raw("t9", "hi", header="To"))) == "t9"
+
+
+def test_bcc_token_none_when_absent():
+    m = EmailMessage()
+    m["To"] = "someone@example.com"
+    m.set_content("x")
+    assert cap.bcc_token_from_headers(_parsed(m.as_bytes())) is None
+
+
+def test_plain_body_extracts_the_text():
+    assert cap.plain_body(_parsed(_bcc_raw("t", "Verbatim body."))).strip() == "Verbatim body."
+
+
+def test_record_body_writes_body_and_claims_bcc_when_unsent(mocker):
+    conn, cur = _conn(mocker, [(5, True), (True,)])   # id+was_unsent, then packet ready
+    out = cap.record_body(conn, "tok5", "Body.")
+    assert out == {"matched": True, "newly_sent": True, "ready": True}
+    upd = cur.execute.call_args_list[1].args[0]
+    assert "sent_body = %s" in upd
+    assert "COALESCE(sent_at, now())" in upd and "COALESCE(sent_via, 'bcc')" in upd
+
+
+def test_record_body_unmatched_token(mocker):
+    conn, cur = _conn(mocker, [None])
+    assert cap.record_body(conn, "nope", "b") == {
+        "matched": False, "newly_sent": False, "ready": True}
+    assert cur.execute.call_count == 1               # no UPDATE when no touch matched
+
+
+def test_capture_bcc_parses_records_and_marks_seen(mocker):
+    imap = MagicMock()
+    imap.search.return_value = ("OK", [b"1"])
+    imap.fetch.return_value = ("OK", [(b"1 (RFC822)", _bcc_raw("tok5", "Hi there."))])
+    conn = mocker.MagicMock()
+    cur = mocker.MagicMock()
+    cur.fetchone.side_effect = [(5, True), (True,)]
+    conn.cursor.return_value.__enter__.return_value = cur
+    counts = cap.capture_bcc(imap, conn)
+    assert counts["seen"] == 1 and counts["bodies"] == 1
+    imap.store.assert_called_once_with(b"1", "+FLAGS", "\\Seen")
+
+
+def test_run_bcc_skips_without_the_credential(mocker):
+    mocker.patch.object(cap.creds, "keychain_get",
+                        side_effect=RuntimeError("no gmail-bcc-imap"))
+    assert cap.run_bcc() == {"seen": 0, "bodies": 0, "unmatched": 0, "not_ready": 0}
