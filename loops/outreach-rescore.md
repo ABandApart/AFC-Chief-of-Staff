@@ -2,7 +2,7 @@
 name: outreach-rescore
 schedule: "0 18 * * 0"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.outreach.rescore
 description: Weekly band-change record and 30-day stale-signal re-check cards (Track O, 35- §14).
 ---
