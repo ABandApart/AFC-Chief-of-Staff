@@ -21,6 +21,12 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from agents._lib import ontology
 from agents._lib.telemetry_context import labeled
 
+# The cognee pgvector table holding InterestSignal nodes (one row per topic; the
+# topic text lives in payload->>'text'). scoring.py reads it for the cosine; the
+# management functions below read/delete it. Named here so the coupling to
+# cognee's internal layout is in one place.
+_INTEREST_TABLE = '"InterestSignal_topic_label"'
+
 # Stable namespaces → ids reproducible across runs/processes.
 _CONTENT_NS = uuid5(NAMESPACE_URL, "afc-richmond/content")
 _INTEREST_NS = uuid5(NAMESPACE_URL, "afc-richmond/interest")
@@ -88,3 +94,44 @@ async def add_interest_signals(signals: list[tuple[str, float]]) -> list[str]:
     with labeled("tartt", "news_aggregation", trigger_kind="manual"):
         await add_data_points(items)
     return [str(i.id) for i in items]
+
+
+def list_interest_signals() -> list[str]:
+    """The operator's current interest topics, from the graph (read-only, no LLM).
+
+    Reads the topic text out of the cognee node payload. Sorted for a stable,
+    readable listing. Empty list when nothing is seeded.
+    """
+    import psycopg
+
+    from agents._lib import cognee_setup, creds
+
+    dsn = cognee_setup.cognee_dsn(creds.keychain_get("db-url"))
+    sql = (f"SELECT payload->>'text' FROM {_INTEREST_TABLE} "
+           "WHERE payload->>'text' IS NOT NULL ORDER BY 1")
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        return [r[0] for r in cur.fetchall()]
+
+
+def remove_interest_signals(topic_labels: list[str]) -> int:
+    """Delete InterestSignal nodes by **topic text** (case-insensitive).
+
+    Text-matched on purpose: some early rows were seeded with random ids rather
+    than the deterministic `interest_signal_id`, so a delete-by-id would miss
+    them. Deleting the row is what makes scoring stop counting the interest (the
+    cosine in `scoring.py` reads every row in this table). Returns the count
+    removed — 0 means nothing matched, which the caller reports as "not found".
+    """
+    import psycopg
+
+    from agents._lib import cognee_setup, creds
+
+    wanted = [t.strip().lower() for t in topic_labels if t.strip()]
+    if not wanted:
+        return 0
+    dsn = cognee_setup.cognee_dsn(creds.keychain_get("db-url"))
+    sql = f"DELETE FROM {_INTEREST_TABLE} WHERE lower(payload->>'text') = ANY(%s)"
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(sql, (wanted,))
+        return cur.rowcount

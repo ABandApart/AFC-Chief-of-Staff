@@ -88,6 +88,7 @@ DAILY_CEILINGS: dict[str, float] = {
     "granola":           3.00,   # Track C — meeting-note ingest (cognify per note)
     "outreach-discover": 0.25,   # Track O Part 0 — bounded entity extraction (R0.21)
     "trent-crimm":        0.30,   # Track O Part 2 — news classification (35- §10)
+    "tartt-control":      0.20,   # Phase 4 — #briefing feed/interest command parsing (haiku)
 }
 
 # System-wide kill switch: total spend across ALL agents per day.
