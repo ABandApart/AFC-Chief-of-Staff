@@ -2,7 +2,7 @@
 name: outreach-gmail-capture
 schedule: "*/15 * * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.outreach.gmail_capture
 description: Detect sent touches via Gmail history + BCC, mark them sent, capture the body (Track O send half, §8).
 ---

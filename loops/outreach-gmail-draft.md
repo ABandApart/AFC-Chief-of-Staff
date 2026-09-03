@@ -2,7 +2,7 @@
 name: outreach-gmail-draft
 schedule: "0 6 * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.outreach.gmail
 description: Compose Gmail drafts for due touches from assembled packets (Track O send half, §8).
 ---

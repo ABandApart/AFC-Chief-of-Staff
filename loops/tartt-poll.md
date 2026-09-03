@@ -2,7 +2,7 @@
 name: tartt-poll
 schedule: "0 */6 * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 agent: tartt
 description: Poll content sources and turn new items into graph knowledge + reading recs + task candidates (Phase 4).
 ---
