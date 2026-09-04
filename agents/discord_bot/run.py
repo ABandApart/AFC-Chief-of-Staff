@@ -64,7 +64,8 @@ class CosBot(commands.Bot):
         synced = await self.tree.sync(guild=guild)
         logger.info(
             "Cogs loaded (system, capture, outcomes, recall, approvals, task_tinder, "
-            "outreach_intake, outreach_discovery, outreach_rescore, tartt_control); synced "
+            "outreach_intake, outreach_today, outreach_discovery, outreach_rescore, "
+            "tartt_control); synced "
             "%d app command(s) to guild %s; connecting to Discord...",
             len(synced),
             GUILD_ID,

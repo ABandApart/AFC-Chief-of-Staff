@@ -7,8 +7,8 @@ those stay in `#task-tinder`). Each card renders the assembled packet and carrie
 exactly two actions (R2):
 
   * **Contact** — one tap. Records `marked_working_at` ("working this today"). The
-    draft already waits in Gmail (the 06:00 loop); this is an intent flag, not a
-    send. B2 is untouched: nothing here calls Gmail.
+    06:00 loop drafts the email in Gmail once the packet is ready; this is an
+    intent flag, not a send. B2 is untouched: nothing here calls Gmail.
   * **Defer** — opens a modal with a **required** note (R3), then snoozes the
     touch past today (bounded by its window). No Skip button: a touch whose
     window closes unsent is left to the drain (§8).
@@ -83,10 +83,16 @@ def build_card(data: dict) -> discord.Embed:
             inline=False,
         )
 
+    # The 06:00 loop writes gmail_thread_id and gmail_draft_id together, so a
+    # missing thread link means there is NO draft yet — say so rather than
+    # asserting one is in Drafts (a due touch is carded before it is drafted, and
+    # while packet assembly is off no draft is ever created).
     if link := ds.gmail_link(touch):
         draft = f"[open the Gmail draft]({link})"
-    else:
+    elif touch.get("gmail_draft_id"):
         draft = "in Gmail Drafts (barry@aiadaptive.co)"
+    else:
+        draft = "_not drafted yet — the 06:00 loop drafts once the packet is ready_"
     embed.add_field(name="Draft", value=draft, inline=False)
     embed.add_field(name="BCC", value=ds.bcc_address(touch), inline=False)
 
@@ -253,7 +259,8 @@ class OutreachTodayCog(commands.Cog):
         await self._mark_working_footer(interaction)
         await self._reply(
             interaction,
-            "✍️ Marked as working today. Draft is in Gmail — write the observation and send.",
+            "✍️ Marked as working today. When the draft is ready in Gmail, "
+            "write the observation and send.",
         )
 
     async def finish_defer(

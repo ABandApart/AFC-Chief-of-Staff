@@ -89,8 +89,19 @@ def test_working_touch_shows_the_mark():
     assert "✓ working" in embed.footer.text
 
 
-def test_draft_falls_back_to_the_drafts_folder_without_a_thread():
+def test_draft_says_not_drafted_when_no_draft_exists():
+    # The bug barry-agent found: no thread AND no draft id means NO draft — the
+    # card must not claim one is "in Gmail Drafts". A due touch is carded before
+    # it is drafted (and while packet assembly is off, never drafted).
     embed = cog.build_card({**DATA, "touch": {**TOUCH, "gmail_thread_id": None}})
+    fields = {f.name: f.value for f in embed.fields}
+    assert "not drafted yet" in fields["Draft"]
+    assert "Gmail Drafts" not in fields["Draft"]
+
+
+def test_draft_points_to_the_folder_only_when_a_draft_exists_without_a_thread():
+    touch = {**TOUCH, "gmail_thread_id": None, "gmail_draft_id": "r-123"}
+    embed = cog.build_card({**DATA, "touch": touch})
     fields = {f.name: f.value for f in embed.fields}
     assert "Gmail Drafts" in fields["Draft"]
 
