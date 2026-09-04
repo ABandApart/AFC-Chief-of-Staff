@@ -52,6 +52,7 @@ class CosBot(commands.Bot):
         await self.load_extension("agents.discord_bot.cogs.approvals")
         await self.load_extension("agents.discord_bot.cogs.task_tinder")
         await self.load_extension("agents.discord_bot.cogs.outreach_intake")
+        await self.load_extension("agents.discord_bot.cogs.outreach_today")
         await self.load_extension("agents.discord_bot.cogs.outreach_discovery")
         await self.load_extension("agents.discord_bot.cogs.outreach_rescore")
         await self.load_extension("agents.discord_bot.cogs.tartt_control")

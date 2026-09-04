@@ -619,15 +619,31 @@ binding constraint and attention belongs there instead.
 | Surface | Role |
 |---------|------|
 | Task Tinder | **Decisions.** Intake · reactive · re-engagement · stale-signal re-check · stalled-reason prompt |
-| Morning briefing | **One line and a link.** "5 touches due · 13/15 live · 1 not ready · 2 facts ageing" |
+| **`#outreach`** | **Daily contact worklist** (revived 2026-09-03 — see the amendment). One card per due touch: read the packet, **Contact** (mark working today), or **Defer** (snooze + required note). Two actions, narrow by design. |
+| Morning briefing | **One line and a link.** "5 touches due · 13/15 live · 1 not ready · 2 facts ageing"; the link points at `#outreach` |
 | NocoDB filtered view | **The work surface.** Read packets, write the observation, mark sent, log replies, skip with reason, import, correct. *(Correcting CONTACT fields has an interim Discord path until NocoDB lands — `PRD-outreach-company-profile.md` R0.22. Deliberately narrow so it does not become a competing editor.)* |
 | Calendar | **Dumb reminder.** Five dates at sequence start, explicitly non-authoritative |
 | Apple Shortcut | **Fast write from a phone** (requires B3) |
 
-`#outreach-today` is dropped. Invariants it would have enforced are database
-constraints: skip-requires-reason · watchlist-requires-stalled-reason ·
-sent-XOR-skipped · reply-implies-send · snooze-cannot-cross-windows ·
-not-ready-cannot-be-sent.
+> **AMENDED 2026-09-03 — `#outreach-today` un-dropped as `#outreach`
+> (`PRD-outreach-daily-surface.md`).** The earlier decision below dropped a
+> Discord daily surface in favour of NocoDB plus a briefing link. It is revived
+> as a **narrow** surface: it shows only today's due touches (no worklist
+> backfill, no decision cards — those stay in Task Tinder) and offers only
+> **Contact** (an advisory `marked_working_at` intent flag; it never sends) and
+> **Defer** (snooze + a required `snooze_note`). There is **no Skip** — a touch
+> whose window closes unsent drains. Crucially the invariants stay where they
+> are: every action writes columns NocoDB already writes, subject to the same
+> constraints, so this is a view over the invariants, not a re-home of them. It
+> is not a second editor of target/contact fields — NocoDB stays the editor of
+> record.
+
+The original decision, retained for the record: *`#outreach-today` is dropped.
+Invariants it would have enforced are database constraints:
+skip-requires-reason · watchlist-requires-stalled-reason · sent-XOR-skipped ·
+reply-implies-send · snooze-cannot-cross-windows · not-ready-cannot-be-sent.*
+Those constraints are unchanged; the revived surface relies on them rather than
+replacing them.
 
 **Snooze** never shifts other slots — the arc anchors on `trigger_date` — and may
 not exceed `window_closes`. **On-schedule** is
