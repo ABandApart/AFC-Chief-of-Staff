@@ -2,7 +2,7 @@
 name: outreach-daily
 schedule: "45 5 * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.outreach.daily
 description: Regenerate due packets, run the drain rule, report the briefing counts (Track O, 35- §14).
 ---
