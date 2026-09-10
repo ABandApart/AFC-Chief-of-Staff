@@ -89,7 +89,12 @@ def test_scheduler_plans_only_enabled_real_loops():
 
     assert planned == enabled
     assert planned.isdisjoint(disabled)   # the thing the name actually promises
-    assert enabled and disabled           # a repo with neither would vacuously pass
+    # Non-vacuous: there ARE loops and they get planned. We deliberately do NOT
+    # also require a disabled loop — the repo may legitimately have every loop
+    # enabled (it does now, fully activated), and demanding otherwise would
+    # false-fail on the correct final activation, the exact roster-coupling this
+    # test was rewritten to remove.
+    assert enabled
 
 
 def test_reload_picks_up_a_newly_enabled_loop(tmp_path):
