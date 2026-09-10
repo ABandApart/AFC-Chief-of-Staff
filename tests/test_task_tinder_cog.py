@@ -60,3 +60,22 @@ def test_build_card_shows_action_and_candidate_id():
     )
     assert card.description == "Share X"
     assert "candidate #5" in card.footer.text
+
+
+def test_build_card_shows_source_link_when_present():
+    # Increment 2: a resolved source URL renders as a link field on the card.
+    card = cog.build_card(
+        {"id": 5, "proposed_action": "Share X", "source_type": "discovery",
+         "confidence": 0.7, "source_url": "https://example.com/story"}
+    )
+    links = [f.value for f in card.fields if f.name == "Source link"]
+    assert links == ["https://example.com/story"]
+
+
+def test_build_card_omits_source_link_when_absent():
+    # No resolvable URL → no empty "Source link" field (renders as it did before).
+    card = cog.build_card(
+        {"id": 6, "proposed_action": "Do Y", "source_type": "inbound_lead",
+         "confidence": 0.7, "source_url": None}
+    )
+    assert not any(f.name == "Source link" for f in card.fields)

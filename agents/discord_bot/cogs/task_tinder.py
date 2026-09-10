@@ -49,6 +49,12 @@ def build_card(candidate: dict) -> discord.Embed:
     src = candidate.get("source_type", "?")
     conf = candidate.get("confidence", 0) or 0
     embed.add_field(name="Source", value=f"{src} · confidence {conf:.2f}", inline=False)
+    # The stored source URL, when one resolves for this card (Increment 2). A card
+    # with no resolvable URL renders without a link — no empty field.
+    if candidate.get("source_url"):
+        embed.add_field(
+            name="Source link", value=str(candidate["source_url"])[:1024], inline=False
+        )
     embed.set_footer(text=f"candidate #{candidate['id']}")
     return embed
 

@@ -88,3 +88,14 @@ def test_list_pending_posted_excludes_outreach_rescore_candidates(mocker):
     sql, params = cur.execute.call_args.args
     assert "source_type <> %s" in sql
     assert "outreach_stale_signal" in params
+
+
+def test_list_undelivered_joins_the_stored_source_url(mocker):
+    # Increment 2: the card query left-joins content_items to carry source_url,
+    # so a discovery card can show its stored link and a non-matching card can't.
+    cur = _mock_db(mocker)
+    task_tinder.list_undelivered()
+    sql, _ = cur.execute.call_args.args
+    assert "LEFT JOIN content_items" in sql
+    assert "ci.content_node = tc.source_ref" in sql
+    assert "ci.url AS source_url" in sql
