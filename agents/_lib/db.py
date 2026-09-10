@@ -29,17 +29,60 @@ EMBEDDING_DIM = 768
 _pool: ConnectionPool | None = None
 _ro_pool: ConnectionPool | None = None
 
+# --- Resilience to a bounced Postgres ---------------------------------------
+# A Postgres restart under the long-lived Discord bot used to wedge the *entire*
+# process: borrowed connections held dead sockets with no timeout, so every pool
+# slot stayed pinned and every subsequent `getconn` hit PoolTimeout until a manual
+# bot restart — and Postgres bounces on every reboot here. See
+# `architecture/HANDOFF-2026-09-09-discord-pool-wedge.md`.
+#
+# The three defences, applied identically to BOTH pools (the read-only pool had
+# the same defect):
+#   check=       validate a connection on checkout — one left dead by a server
+#                bounce is discarded and replaced rather than handed out, so the
+#                pool self-heals on the next borrow once Postgres is back. The
+#                per-borrow ping cost is negligible at the bot's poll rate, and it
+#                is the strongest guarantee (open decision #1, resolved: use check).
+#   max_lifetime retire connections by age, so a stranded socket cannot hold a
+#                slot indefinitely even without a checkout.
+#   keepalives / connect_timeout  bound blocking at the socket level so an
+#                operation on a dead peer fails fast instead of hanging, and a
+#                reconnect while Postgres is still down does not hang either.
+_MAX_LIFETIME = 30 * 60  # seconds — within the spec's 30–60 min band
+# Bound at import so a test that patches ConnectionPool still sees the real check.
+_CHECK_CONNECTION = ConnectionPool.check_connection
+_CONNECT_KWARGS: dict[str, object] = {
+    "autocommit": True,
+    "connect_timeout": 10,
+    "keepalives": 1,
+    "keepalives_idle": 10,
+    "keepalives_interval": 5,
+    "keepalives_count": 3,
+}
+
+
+def _build_pool(dsn: str) -> ConnectionPool:
+    """Build a connection pool that survives a Postgres bounce (see note above).
+
+    `min_size=0` keeps one-shot CLIs to at most one connection; `open=True` opens
+    no connections eagerly at `min_size=0`, so construction does not fail if
+    Postgres is down at launch — the first borrow reconnects once it is back.
+    """
+    return ConnectionPool(
+        dsn,
+        min_size=0,
+        max_size=4,
+        open=True,
+        max_lifetime=_MAX_LIFETIME,
+        check=_CHECK_CONNECTION,
+        kwargs=dict(_CONNECT_KWARGS),
+    )
+
 
 def _get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
-        _pool = ConnectionPool(
-            creds.keychain_get("db-url"),
-            min_size=0,
-            max_size=4,
-            open=True,
-            kwargs={"autocommit": True},
-        )
+        _pool = _build_pool(creds.keychain_get("db-url"))
     return _pool
 
 
@@ -48,17 +91,12 @@ def _get_ro_pool() -> ConnectionPool:
 
     Separate DSN (`brain-reader-db-url`) so the MCP tool layer's reads run over a
     role that can only SELECT the `v_*` views — defense in depth (migration 0008).
-    Distinct from the read-write pool above.
+    Distinct from the read-write pool above; both share the bounce-resilient
+    `_build_pool` config so they cannot drift apart again.
     """
     global _ro_pool
     if _ro_pool is None:
-        _ro_pool = ConnectionPool(
-            creds.keychain_get("brain-reader-db-url"),
-            min_size=0,
-            max_size=4,
-            open=True,
-            kwargs={"autocommit": True},
-        )
+        _ro_pool = _build_pool(creds.keychain_get("brain-reader-db-url"))
     return _ro_pool
 
 
