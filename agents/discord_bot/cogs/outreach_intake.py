@@ -26,7 +26,7 @@ import discord
 from discord.ext import commands, tasks
 
 from agents._lib import db, outreach_intake
-from agents.discord_bot.config import OPERATOR_DISCORD_ID, TASK_TINDER_CHANNEL_ID
+from agents.discord_bot.config import OPERATOR_DISCORD_ID, OUTREACH_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ class OutreachIntakeCog(commands.Cog):
 
     @tasks.loop(seconds=120)
     async def _poll(self) -> None:
-        channel = self.bot.get_channel(TASK_TINDER_CHANNEL_ID)
+        channel = self.bot.get_channel(OUTREACH_CHANNEL_ID)
         if channel is None:
             return  # not connected yet; try again next tick
         try:

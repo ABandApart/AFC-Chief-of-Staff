@@ -38,7 +38,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from agents._lib import db, outreach_discovery
-from agents.discord_bot.config import OPERATOR_DISCORD_ID, TASK_TINDER_CHANNEL_ID
+from agents.discord_bot.config import OPERATOR_DISCORD_ID, OUTREACH_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +482,7 @@ class OutreachDiscoveryCog(commands.Cog):
         not a decision that ages. Posting is idempotent because `surfaced_at` is
         stamped once and the window query is ordered deterministically.
         """
-        channel = self.bot.get_channel(TASK_TINDER_CHANNEL_ID)
+        channel = self.bot.get_channel(OUTREACH_CHANNEL_ID)
         if channel is None:
             return
         try:
@@ -594,7 +594,7 @@ class OutreachDiscoveryCog(commands.Cog):
             rows = await asyncio.to_thread(self._fetch_page, message_id)
             if not rows:
                 return  # unknown message id; nothing to redraw
-            channel = self.bot.get_channel(TASK_TINDER_CHANNEL_ID)
+            channel = self.bot.get_channel(OUTREACH_CHANNEL_ID)
             if channel is None:
                 return
             view = SheetView(self, rows, page=1, pages=1, total=len(rows))
