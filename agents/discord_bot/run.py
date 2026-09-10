@@ -51,6 +51,7 @@ class CosBot(commands.Bot):
         await self.load_extension("agents.discord_bot.cogs.recall")
         await self.load_extension("agents.discord_bot.cogs.approvals")
         await self.load_extension("agents.discord_bot.cogs.task_tinder")
+        await self.load_extension("agents.discord_bot.cogs.tasks_checklist")
         await self.load_extension("agents.discord_bot.cogs.outreach_intake")
         await self.load_extension("agents.discord_bot.cogs.outreach_today")
         await self.load_extension("agents.discord_bot.cogs.outreach_discovery")
@@ -64,8 +65,8 @@ class CosBot(commands.Bot):
         synced = await self.tree.sync(guild=guild)
         logger.info(
             "Cogs loaded (system, capture, outcomes, recall, approvals, task_tinder, "
-            "outreach_intake, outreach_today, outreach_discovery, outreach_rescore, "
-            "tartt_control); synced "
+            "tasks_checklist, outreach_intake, outreach_today, outreach_discovery, "
+            "outreach_rescore, tartt_control); synced "
             "%d app command(s) to guild %s; connecting to Discord...",
             len(synced),
             GUILD_ID,

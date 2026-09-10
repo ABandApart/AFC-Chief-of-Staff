@@ -26,6 +26,13 @@ ARCHIVE_CHANNEL_ID = 1506399755914186835
 # posts nothing. Create the #outreach channel, then set its ID here and re-deploy.
 OUTREACH_CHANNEL_ID = 1545244774145982494
 
+# The #tasks pinned-checklist channel (Track O, PRD-tasktinder-refinements.md
+# Increment 3). One bot-maintained pinned message lists open tasks with check-off
+# controls. FAIL-CLOSED: while this is 0 (unset) the checklist cog finds no
+# channel and does nothing. Create the #tasks channel, grant the bot **Manage
+# Messages** there (needed to pin), then set its ID here and re-deploy.
+TASKS_CHANNEL_ID = 0
+
 # The operator's Discord user ID — the ONLY account allowed to decide approvals
 # (B2 / PRD-b2 Amendment 1). A non-secret Snowflake, like the channel IDs above.
 # FAIL-CLOSED: while this is 0 (unset), *every* approval click is denied — the

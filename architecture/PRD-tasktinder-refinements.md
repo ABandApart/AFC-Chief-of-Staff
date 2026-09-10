@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:from>barry-agent (design capture), 2026-09-10</doc:from>
   <doc:to>barry-admin (build)</doc:to>
-  <doc:status>Increments 1–2 BUILT 2026-09-10; Increment 3 SPEC (decisions taken 2026-09-10). Spec-before-build per the working convention.</doc:status>
+  <doc:status>Increments 1–3 BUILT 2026-09-10. Spec-before-build per the working convention.</doc:status>
   <doc:depends_on>`50-channel-layer.md`; `agents/discord_bot/cogs/{task_tinder,outreach_intake,outreach_discovery}.py`; `agents/_lib/task_tinder.py`; `agents/discord_bot/config.py`; tables `task_candidates`, `tasks`, `follow_ups`, `content_items`.</doc:depends_on>
   <doc:not_this>The pool-wedge bug is separate — `HANDOFF-2026-09-09-discord-pool-wedge.md`.</doc:not_this>
 </doc:meta>
@@ -98,6 +98,32 @@ its `content_node`; a card with no resolvable URL renders unchanged.
 ---
 
 ## Increment 3 — Accepted items → pinned checklist in #tasks
+
+**Status:** BUILT 2026-09-10. New files `agents/_lib/tasks_checklist.py` +
+`agents/discord_bot/cogs/tasks_checklist.py`; `TASKS_CHANNEL_ID` added
+(fail-closed 0); cog registered in `run.py`. The open decisions below were
+resolved by the operator (2026-09-10): completed items show **struck-through,
+then archive** after 24h (`ARCHIVE_AFTER`); check-off is **reversible** (uncheck
+reopens, clearing `completed_at`); ordering is **escalation then due date**
+(`follow_ups.escalation_level` desc, `tasks.due_date` asc). Channel name `#tasks`;
+component budget handled by a `MAX_ROWS = 25` cap (open-first, so a cap never
+hides open work) with an overflow note in the header.
+
+**Mechanism:** one pinned **Components-v2** `LayoutView` (Container → one Section
+per task + an accessory check/undo Button), per the sketch — discord.py 2.7.1
+supports it; first use of Components-v2 in this repo. **Deviation from the sketch
+(builder's call, recorded):** the pinned message is rebuilt by a 60s **poll** and
+edited immediately on a toggle, *not* event-pushed from `task_tinder.promote`. A
+newly accepted task therefore appears within one poll cycle, with no cross-cog
+coupling — the same trade the other surface cogs make. The separation invariant
+is pinned by `tests/test_tasks_checklist_separation.py` (only
+`task_tinder.promote` inserts `tasks`).
+
+**Runtime (barry-agent):** create the `#tasks` channel, grant the bot **Manage
+Messages** there (to pin), set `TASKS_CHANNEL_ID`, restart. Then live-verify S3
+below. Because this is the repo's first Components-v2 surface and the cog can't be
+exercised on the build box, confirm the pinned message renders and the buttons
+complete/reopen tasks.
 
 **Context (already built):** accepting a Task Tinder card creates a `follow_up` + a linked `tasks`
 row (`agents/_lib/task_tinder.py:173` `promote`, called from `task_tinder.py:185`). `tasks` holds
