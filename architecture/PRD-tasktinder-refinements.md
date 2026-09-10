@@ -117,7 +117,8 @@ raise `maximum number of children exceeded (40)` and render nothing. Fixed:
 `MAX_ROWS = 12`, with the header stating how many open tasks are not shown
 (checking some off surfaces the rest on the next poll). A queue that routinely
 exceeds 12 wants pagination across multiple pinned messages (gate-0's
-`ROWS_PER_MESSAGE` pattern) — deferred, operator's call.
+`ROWS_PER_MESSAGE` pattern) — **deferred (operator, 2026-09-10: keep the
+cap-with-overflow for now; revisit if the queue routinely runs well past 12).**
 
 **Mechanism:** one pinned **Components-v2** `LayoutView` (Container → one Section
 per task + an accessory check/undo Button), per the sketch — discord.py 2.7.1
