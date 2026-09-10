@@ -93,6 +93,9 @@ def task_from_candidate(
 # --- DB reads/writes (runtime; the cog calls these off the event loop) --------
 
 _CANDIDATE_COLS = "id, proposed_action, source_type, source_ref, evidence_text, confidence"
+# Same columns, qualified with the `tc` alias for the content_items join in
+# list_undelivered (both tables have an `id`, so the list query must qualify).
+_CANDIDATE_COLS_Q = ", ".join(f"tc.{c.strip()}" for c in _CANDIDATE_COLS.split(","))
 
 # Owned by the bespoke outreach re-score cog (O2, `outreach_rescore.STALE_SOURCE_TYPE`),
 # NOT the generic Task Tinder card — the stale-signal re-check needs an S4/S5 modal,
@@ -102,13 +105,22 @@ _OUTREACH_RESCORE = "outreach_stale_signal"
 
 
 def list_undelivered(min_confidence: float = MIN_CONFIDENCE) -> list[dict[str, Any]]:
-    """Pending candidates (≥ min_confidence) not yet posted to #task-tinder."""
+    """Pending candidates (≥ min_confidence) not yet posted to #task-tinder.
+
+    Left-joins `content_items` on `content_node = source_ref` to carry the stored
+    source URL as `source_url`. The join resolves for content `discovery`
+    candidates (their `source_ref` is a `content_items.content_node`); other
+    source types leave `source_url` NULL, and the card renders without a link
+    (`PRD-tasktinder-refinements.md` Increment 2).
+    """
     with db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            f"SELECT {_CANDIDATE_COLS} FROM task_candidates "
-            "WHERE status = 'pending' AND discord_message_id IS NULL "
-            "AND source_type <> %s AND confidence >= %s "
-            "ORDER BY confidence DESC, created_at",
+            f"SELECT {_CANDIDATE_COLS_Q}, ci.url AS source_url "
+            "FROM task_candidates tc "
+            "LEFT JOIN content_items ci ON ci.content_node = tc.source_ref "
+            "WHERE tc.status = 'pending' AND tc.discord_message_id IS NULL "
+            "AND tc.source_type <> %s AND tc.confidence >= %s "
+            "ORDER BY tc.confidence DESC, tc.created_at",
             (_OUTREACH_RESCORE, min_confidence),
         )
         return cur.fetchall()

@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:from>barry-agent (design capture), 2026-09-10</doc:from>
   <doc:to>barry-admin (build)</doc:to>
-  <doc:status>Increment 1 BUILT 2026-09-10; Increments 2–3 SPEC (decisions taken 2026-09-10). Spec-before-build per the working convention.</doc:status>
+  <doc:status>Increments 1–2 BUILT 2026-09-10; Increment 3 SPEC (decisions taken 2026-09-10). Spec-before-build per the working convention.</doc:status>
   <doc:depends_on>`50-channel-layer.md`; `agents/discord_bot/cogs/{task_tinder,outreach_intake,outreach_discovery}.py`; `agents/_lib/task_tinder.py`; `agents/discord_bot/config.py`; tables `task_candidates`, `tasks`, `follow_ups`, `content_items`.</doc:depends_on>
   <doc:not_this>The pool-wedge bug is separate — `HANDOFF-2026-09-09-discord-pool-wedge.md`.</doc:not_this>
 </doc:meta>
@@ -65,6 +65,10 @@ cards are unaffected.
 ---
 
 ## Increment 2 — Show the source link on content cards (surface only)
+
+**Status:** BUILT 2026-09-10. The open decision below was resolved as recommended —
+`list_undelivered` LEFT JOINs `content_items`, so a link renders only when one
+resolves for that card, and non-matching source types render unchanged.
 
 **Why:** content cards carry `evidence_text` (prose) and `source_ref` (a `content_node` UUID) but
 no visible link. The URL **is** stored: `content_items.url`, reachable via
