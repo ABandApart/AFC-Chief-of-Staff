@@ -49,7 +49,9 @@ def _header(rows: list[dict], open_count: int) -> str:
     done = sum(1 for r in rows if tc.is_done(r))
     line = f"**Tasks — {open_count} open**"
     if open_count > shown_open:
-        line += f" (showing first {shown_open})"
+        # Over the per-message budget; say so in the header (no extra component)
+        # rather than dropping rows silently. Checking some off surfaces the rest.
+        line += f" · showing {shown_open} of {open_count} — check some off to see the rest"
     if done:
         line += f" · {done} just done"
     return line
