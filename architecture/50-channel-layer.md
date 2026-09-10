@@ -61,6 +61,7 @@ A single Discord server (guild) with category-organized channels. All channels a
 AI Adaptive COS (guild)
 ├── #briefing            Morning briefing posted by Briefing agent
 ├── #task-tinder         Content suggestions + inbound leads (✅/❌/⏰); NO outreach cards
+├── #tasks               Bot-maintained pinned checklist of accepted tasks (Done/Undo); content-accepted only
 ├── #outreach            All Track O cards: daily Contact/Defer, Gate-1 intake, Gate-0 review, re-score
 ├── #approvals           Content drafts with ✅/❌/✏️ buttons
 ├── #capture             You → bot; messages extracted to facts
