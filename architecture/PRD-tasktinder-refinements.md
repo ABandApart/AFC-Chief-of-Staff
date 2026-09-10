@@ -109,6 +109,16 @@ reopens, clearing `completed_at`); ordering is **escalation then due date**
 component budget handled by a `MAX_ROWS = 25` cap (open-first, so a cap never
 hides open work) with an overflow note in the header.
 
+**Component-budget fix (2026-09-10, barry-agent runtime → barry-admin):** the first
+build capped at `MAX_ROWS = 25`, above Discord's real Components-v2 ceiling — a
+single message holds **40 components** and each task costs 3 (Section + TextDisplay
++ Button), so **12 task sections** is the true maximum; 14 open tasks made the view
+raise `maximum number of children exceeded (40)` and render nothing. Fixed:
+`MAX_ROWS = 12`, with the header stating how many open tasks are not shown
+(checking some off surfaces the rest on the next poll). A queue that routinely
+exceeds 12 wants pagination across multiple pinned messages (gate-0's
+`ROWS_PER_MESSAGE` pattern) — deferred, operator's call.
+
 **Mechanism:** one pinned **Components-v2** `LayoutView` (Container → one Section
 per task + an accessory check/undo Button), per the sketch — discord.py 2.7.1
 supports it; first use of Components-v2 in this repo. **Deviation from the sketch

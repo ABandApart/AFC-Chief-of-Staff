@@ -29,10 +29,15 @@ from agents._lib import db
 # out (drops on the next rebuild). Reversible while shown: uncheck reopens it.
 ARCHIVE_AFTER = "24 hours"
 
-# Cap the rendered rows so a large backlog cannot exceed Discord's per-message
-# component budget (Components-v2 caps a container's children). Open tasks sort
-# first, so a cap never hides open work behind completed rows. 14 open today.
-MAX_ROWS = 25
+# Cap the rendered rows to Discord's Components-v2 budget: a single message holds
+# at most 40 components, and each task costs 3 (Section + its TextDisplay + the
+# accessory Button) on top of the container + header + separator overhead — so 12
+# task sections is the empirical maximum (13 raises "maximum number of children
+# exceeded (40)"). Open tasks sort first, so the cap only ever hides the
+# lowest-priority open rows; the header notes how many are not shown, and checking
+# some off surfaces the rest on the next poll. A queue that routinely exceeds 12
+# wants pagination across multiple pinned messages (PRD Increment 3 open decision).
+MAX_ROWS = 12
 
 _COLS = "t.id, t.title, t.status, t.due_date, t.completed_at, fu.escalation_level"
 

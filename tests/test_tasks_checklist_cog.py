@@ -44,6 +44,26 @@ def test_view_wires_check_for_open_and_undo_for_completed():
     assert _button_ids(view) == ["tasks:check:1", "tasks:uncheck:2"]
 
 
+def test_view_at_max_rows_stays_within_the_component_budget():
+    # Regression: a full page (MAX_ROWS task sections) must build without tripping
+    # Discord's Components-v2 40-child ceiling — each task costs 3 components, so a
+    # cap above 12 renders NOTHING (raised "maximum number of children exceeded").
+    from agents._lib import tasks_checklist as core
+    rows = [
+        {"id": i, "title": f"task {i}", "status": "open", "due_date": None,
+         "escalation_level": 0}
+        for i in range(core.MAX_ROWS)
+    ]
+    view = cog.ChecklistView(MagicMock(), rows, open_count=core.MAX_ROWS)  # must not raise
+    assert len(_button_ids(view)) == core.MAX_ROWS
+
+
+def test_header_flags_rows_hidden_by_the_cap():
+    shown = [{"id": i, "title": f"t{i}", "status": "open"} for i in range(12)]
+    header = cog._header(shown, open_count=14)  # 14 open, only 12 fit
+    assert "showing 12 of 14" in header
+
+
 def test_view_with_rows_is_persistent():
     # Persistence (timeout=None + custom_ids) is what lets it re-attach on restart.
     assert cog.ChecklistView(MagicMock(), _ROWS, open_count=1).is_persistent() is True
