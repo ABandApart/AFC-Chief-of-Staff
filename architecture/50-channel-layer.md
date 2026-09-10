@@ -60,8 +60,8 @@ A single Discord server (guild) with category-organized channels. All channels a
 ```
 AI Adaptive COS (guild)
 ├── #briefing            Morning briefing posted by Briefing agent
-├── #task-tinder         Candidate tasks with ✅/❌/⏰ buttons
-├── #outreach            Daily due-touch contacts; Contact / Defer buttons (Track O)
+├── #task-tinder         Content suggestions + inbound leads (✅/❌/⏰); NO outreach cards
+├── #outreach            All Track O cards: daily Contact/Defer, Gate-1 intake, Gate-0 review, re-score
 ├── #approvals           Content drafts with ✅/❌/✏️ buttons
 ├── #capture             You → bot; messages extracted to facts
 ├── #system              Health alerts, errors, rate-limit warnings
@@ -122,7 +122,10 @@ Suggested action: Send Alex Mendez the positioning document
 
 **Outreach card variants (Track O)**: the outreach engine reuses this exact
 pattern — one-shot decision, buttons removed after the first click, idempotency
-owned by the DB row — for four card types (`35-outreach-crm.md`): **intake**
+owned by the DB row — but posts to **`#outreach`**, not `#task-tinder`
+(`PRD-tasktinder-refinements.md` Increment 1 separated outreach from content;
+the routing invariant is: no outreach cards in `#task-tinder`). Four card types
+(`35-outreach-crm.md`): **intake**
 (`Work this / Watchlist / Drop`, capacity-gated), **reactive** on a logged reply
 (`Book the call — T43 / Answer and advance — T44 / Objection`), **re-engagement**
 from a Trent Crimm watch signal (`Re-engage — T47 / Not yet / Remove`), and

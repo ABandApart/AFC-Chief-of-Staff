@@ -22,7 +22,7 @@ import discord
 from discord.ext import commands, tasks
 
 from agents._lib import db, outreach_rescore
-from agents.discord_bot.config import OPERATOR_DISCORD_ID, TASK_TINDER_CHANNEL_ID
+from agents.discord_bot.config import OPERATOR_DISCORD_ID, OUTREACH_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ class OutreachRescoreCog(commands.Cog):
 
     @tasks.loop(seconds=120)
     async def _poll(self) -> None:
-        channel = self.bot.get_channel(TASK_TINDER_CHANNEL_ID)
+        channel = self.bot.get_channel(OUTREACH_CHANNEL_ID)
         if channel is None:
             return
         try:
@@ -248,7 +248,7 @@ class OutreachRescoreCog(commands.Cog):
         message). A failure here is cosmetic — the write already committed."""
         if not card_message_id:
             return
-        channel = self.bot.get_channel(TASK_TINDER_CHANNEL_ID)
+        channel = self.bot.get_channel(OUTREACH_CHANNEL_ID)
         if channel is None:
             return
         view = discord.ui.View(timeout=None)
