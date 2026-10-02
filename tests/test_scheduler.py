@@ -206,3 +206,73 @@ def test_maybe_beat_pings_first_then_rate_limits(mocker):
     assert sched._maybe_beat(t0 + timedelta(seconds=SCHEDULER_BEAT_SECONDS)) is True
     assert ping.call_count == 2
     ping.assert_called_with(SCHEDULER_SLUG)
+
+
+# --- cos-brain + un-armed warning (PRD-liveness-alerting) -------------------
+
+from agents.scheduler import run as sched_run  # noqa: E402
+from agents.scheduler.run import BRAIN_SLUG  # noqa: E402
+
+
+def test_brain_check_pings_only_when_db_answers(mocker):
+    t0 = datetime(2026, 1, 1, 0, 0)
+    sched = Scheduler(discover(repo_root()), repo_root(), t0)
+    ping = mocker.patch("agents.scheduler.run.heartbeat.ping")
+
+    mocker.patch.object(sched_run, "brain_ok", return_value=False)
+    assert sched._maybe_check_brain(t0) is True
+    ping.assert_not_called()                     # a down DB sends nothing
+
+    mocker.patch.object(sched_run, "brain_ok", return_value=True)
+    assert sched._maybe_check_brain(t0 + timedelta(seconds=SCHEDULER_BEAT_SECONDS)) is True
+    ping.assert_called_once_with(BRAIN_SLUG)
+
+
+def test_brain_check_is_rate_limited(mocker):
+    t0 = datetime(2026, 1, 1, 0, 0)
+    sched = Scheduler(discover(repo_root()), repo_root(), t0)
+    check = mocker.patch.object(sched_run, "brain_ok", return_value=True)
+    mocker.patch("agents.scheduler.run.heartbeat.ping")
+    assert sched._maybe_check_brain(t0) is True
+    assert sched._maybe_check_brain(t0 + timedelta(seconds=SCHEDULER_BEAT_SECONDS - 1)) is False
+    assert check.call_count == 1
+
+
+def test_brain_ok_never_raises(mocker):
+    # Missing credential and failed connection both report False, not raise.
+    mocker.patch("agents._lib.creds.keychain_get", side_effect=RuntimeError("missing"))
+    assert sched_run.brain_ok() is False
+
+    mocker.patch("agents._lib.creds.keychain_get", return_value="postgresql://u@localhost/aiadaptive_cos")
+    mocker.patch("psycopg.connect", side_effect=OSError("refused"))
+    assert sched_run.brain_ok() is False
+
+
+def test_brain_ok_checks_both_databases(mocker):
+    mocker.patch("agents._lib.creds.keychain_get", return_value="postgresql://u@localhost/aiadaptive_cos")
+    conn = mocker.MagicMock()
+    connect = mocker.patch("psycopg.connect", return_value=conn)
+    assert sched_run.brain_ok() is True
+    targets = [c.args[0] for c in connect.call_args_list]
+    assert targets == ["postgresql://u@localhost/aiadaptive_cos",
+                       "postgresql://u@localhost/aiadaptive_cognee"]
+
+
+def test_unarmed_switch_warns_and_posts_once(mocker):
+    mocker.patch("agents.scheduler.run.heartbeat.is_armed", return_value=False)
+    post = mocker.patch.object(sched_run, "post_system_notice", return_value=True)
+    assert sched_run.warn_if_unarmed() is True
+    post.assert_called_once_with(sched_run.UNARMED_NOTICE)
+
+
+def test_armed_switch_is_quiet(mocker):
+    mocker.patch("agents.scheduler.run.heartbeat.is_armed", return_value=True)
+    post = mocker.patch.object(sched_run, "post_system_notice")
+    assert sched_run.warn_if_unarmed() is False
+    post.assert_not_called()
+
+
+def test_system_notice_never_raises(mocker):
+    mocker.patch("agents._lib.creds.keychain_get", return_value="token")
+    mocker.patch("urllib.request.urlopen", side_effect=OSError("network down"))
+    assert sched_run.post_system_notice("hello") is False

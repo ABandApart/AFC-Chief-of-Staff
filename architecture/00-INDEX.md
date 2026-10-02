@@ -80,6 +80,12 @@ the repo root [`CLAUDE.md`](../CLAUDE.md) that every session loads
 For questions about **how the system measures itself** (agent_runs, cost helper, runaway-prevention guards, weekly dashboard):
 → [`80-telemetry-layer.md`](./80-telemetry-layer.md)
 
+For **being alerted when a service is down** (arming the dead-man's switch; new checks for the bot, gateway, tunnel, and Postgres):
+→ [`PRD-liveness-alerting.md`](./PRD-liveness-alerting.md) — DRAFT 2026-10-02
+
+For **keeping services running with no one logged in** (LaunchDaemons; the credentials decision that blocks it):
+→ [`PRD-session-independent-services.md`](./PRD-session-independent-services.md) — DRAFT 2026-10-02, blocked on D1
+
 For questions about **what the system does for the business** (the eight workflows, KR alignment, demo narrative):
 → [`90-workflows.md`](./90-workflows.md)
 

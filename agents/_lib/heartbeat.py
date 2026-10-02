@@ -48,6 +48,16 @@ def _ping_key() -> str | None:
         return None
 
 
+def is_armed() -> bool:
+    """Whether pings will actually be sent (the ping key is provisioned).
+
+    Exists so the un-armed state can be reported (PRD-liveness-alerting §3):
+    on 2026-09-24 an un-armed switch and a working one looked identical, and an
+    8-day outage produced no alert.
+    """
+    return _ping_key() is not None
+
+
 def ping(slug: str, *, fail: bool = False, timeout: int = _TIMEOUT) -> bool:
     """Best-effort dead-man's-switch ping for `slug`. Returns True iff sent.
 

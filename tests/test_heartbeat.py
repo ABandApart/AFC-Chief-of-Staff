@@ -59,3 +59,11 @@ def test_ping_key_missing_keychain_item_is_none(mocker):
         heartbeat.creds, "keychain_get", side_effect=RuntimeError("not found")
     )
     assert heartbeat._ping_key() is None
+
+
+def test_is_armed_reflects_ping_key(mocker):
+    # The un-armed state must be detectable (PRD-liveness-alerting §3).
+    mocker.patch.object(heartbeat, "_ping_key", return_value=None)
+    assert heartbeat.is_armed() is False
+    mocker.patch.object(heartbeat, "_ping_key", return_value=KEY)
+    assert heartbeat.is_armed() is True

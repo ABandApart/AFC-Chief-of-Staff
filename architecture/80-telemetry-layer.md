@@ -575,6 +575,14 @@ barry-agent's keychain, create the checks per the table above — `cos-briefing`
 — and point the project's alert at an **off-Discord** channel (email/push). The second layer (Ted's timestamp in the briefing System line) is
 not yet built — it lands with the real briefing in Phase 4.
 
+**Extended 2026-10-02 (`PRD-liveness-alerting.md`).** Four more checks:
+`cos-bot` (system cog, while connected), `cos-gateway` and `cos-tunnel`
+(`agents/gateway/liveness.py`, local and public `/health`), and `cos-brain`
+(scheduler, `SELECT 1` on both databases). The scheduler now reports an un-armed
+switch at startup (`heartbeat.is_armed()`), because on 2026-09-24 the switch
+was most likely un-armed and an 8-day outage went unalerted. The operator setup above is
+still the step that makes any of this fire.
+
 ### What this deliberately does not do
 
 No second local watchdog process. A watcher watching the watcher on the same box

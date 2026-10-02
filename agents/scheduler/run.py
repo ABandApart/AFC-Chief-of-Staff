@@ -62,6 +62,15 @@ RELOAD_SECONDS = 60
 SCHEDULER_SLUG = "cos-scheduler"
 SCHEDULER_BEAT_SECONDS = 300
 
+# Postgres liveness (`cos-brain`, PRD-liveness-alerting). A separate check from
+# `cos-scheduler` because a daemon that cycles while Postgres is down is a
+# different failure from a daemon that stopped, and the alert should name which.
+# Pinged only when BOTH databases answer `SELECT 1`.
+BRAIN_SLUG = "cos-brain"
+BRAIN_CONNECT_TIMEOUT = 5
+
+DISCORD_API = "https://discord.com/api/v10"
+
 
 def build_command(loop: Loop, root: Path | str) -> tuple[list[str], dict[str, str]]:
     """Return (argv, env-overlay) to run one loop from the repo root.
@@ -78,6 +87,76 @@ def build_command(loop: Loop, root: Path | str) -> tuple[list[str], dict[str, st
         env = {"COS_PLAYBOOK": loop.playbook} if loop.playbook else {}
     argv = ["/bin/zsh", "-lc", f"cd {root_q} && exec {inner}"]
     return argv, env
+
+
+def brain_ok() -> bool:
+    """True iff both brain databases answer `SELECT 1`. Never raises.
+
+    Short direct connections, not the shared pool: the scheduler holds no other
+    DB connections, and a probe must not keep one open between beats.
+    """
+    try:
+        import psycopg
+
+        from agents._lib import cognee_setup, creds
+
+        dsn = creds.keychain_get("db-url")
+        for target in (dsn, cognee_setup.cognee_dsn(dsn)):
+            with psycopg.connect(target, connect_timeout=BRAIN_CONNECT_TIMEOUT) as conn:
+                conn.execute("SELECT 1").fetchone()
+        return True
+    except Exception:
+        logger.warning("brain check failed — not pinging %s", BRAIN_SLUG, exc_info=True)
+        return False
+
+
+def post_system_notice(text: str) -> bool:
+    """Best-effort POST of one message to #system via the REST API. Never raises.
+
+    Used only while the system is up (the un-armed warning). Outage alerts never
+    go through Discord — see 80-telemetry-layer § dead_mans_switch.
+    """
+    import json
+    import urllib.request
+
+    try:
+        from agents._lib.creds import keychain_get
+        from agents.discord_bot.config import SYSTEM_CHANNEL_ID
+
+        req = urllib.request.Request(
+            f"{DISCORD_API}/channels/{SYSTEM_CHANNEL_ID}/messages",
+            data=json.dumps({"content": text}).encode("utf-8"),
+            headers={
+                "Authorization": f"Bot {keychain_get('discord-bot-token')}",
+                "Content-Type": "application/json",
+                "User-Agent": "aiadaptive-cos-scheduler",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            resp.read()
+        return True
+    except Exception:
+        logger.warning("could not post to #system", exc_info=True)
+        return False
+
+
+UNARMED_NOTICE = (
+    "⚠️ Dead-man's switch is UN-ARMED: no `healthchecks-ping-key` in the runtime "
+    "keychain. Outages will not alert. See PRD-liveness-alerting §1."
+)
+
+
+def warn_if_unarmed() -> bool:
+    """Report an un-armed switch once at startup. Returns whether it was un-armed.
+
+    Warns, never blocks: monitoring must not be able to stop the work it monitors.
+    """
+    if heartbeat.is_armed():
+        return False
+    logger.warning(UNARMED_NOTICE)
+    post_system_notice(UNARMED_NOTICE)
+    return True
 
 
 def next_fire(schedule: str, base: datetime) -> datetime:
@@ -100,6 +179,7 @@ class Scheduler:
         self.root = Path(root)
         self.jobs: list[Job] = []
         self._last_beat: datetime | None = None
+        self._last_brain_check: datetime | None = None
         for lp in cp.enabled_loops():
             argv, env = build_command(lp, root)
             self.jobs.append(Job(lp, argv, env, next_fire(lp.schedule, now)))
@@ -117,6 +197,20 @@ class Scheduler:
             return False
         heartbeat.ping(SCHEDULER_SLUG)
         self._last_beat = now
+        return True
+
+    def _maybe_check_brain(self, now: datetime) -> bool:
+        """Check Postgres and ping `cos-brain` on success, on the beat's cadence.
+
+        Returns whether a check ran. A failed check sends nothing: the silence
+        is the alert, as with every other check.
+        """
+        if (self._last_brain_check is not None
+                and (now - self._last_brain_check).total_seconds() < SCHEDULER_BEAT_SECONDS):
+            return False
+        if brain_ok():
+            heartbeat.ping(BRAIN_SLUG)
+        self._last_brain_check = now
         return True
 
     def plan(self) -> list[tuple[str, datetime, list[str]]]:
@@ -182,6 +276,7 @@ class Scheduler:
             # dies or wedges below this line, the ping stops and cos-scheduler
             # goes silent — that silence IS the alert.
             self._maybe_beat(datetime.now())
+            self._maybe_check_brain(datetime.now())
             added, removed = self.reload(datetime.now())
             if added:
                 logger.info("loop(s) enabled since last check: %s", ", ".join(sorted(added)))
@@ -236,6 +331,7 @@ def main() -> int:
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     logger.info("scheduler starting (pid %d)", os.getpid())
+    warn_if_unarmed()
     sched.run_forever(stop)
     logger.info("scheduler shutting down")
     return 0

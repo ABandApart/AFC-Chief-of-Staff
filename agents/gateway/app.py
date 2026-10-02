@@ -375,6 +375,9 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     logger.info("gateway starting on http://%s:%d", HOST, PORT)
+    from agents.gateway import liveness
+
+    liveness.start(f"http://{HOST}:{PORT}")  # cos-gateway + cos-tunnel
     uvicorn.run(app, host=HOST, port=PORT, log_config=None)
 
 
