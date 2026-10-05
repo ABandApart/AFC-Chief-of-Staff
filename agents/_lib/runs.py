@@ -89,6 +89,7 @@ DAILY_CEILINGS: dict[str, float] = {
     "outreach-discover": 0.25,   # Track O Part 0 — bounded entity extraction (R0.21)
     "trent-crimm":        0.30,   # Track O Part 2 — news classification (35- §10)
     "tartt-control":      0.20,   # Phase 4 — #briefing feed/interest command parsing (haiku)
+    "meeting-digest":     2.00,   # PRD-claude-session-spike — one CLI session per run, $1 cap each
 }
 
 # System-wide kill switch: total spend across ALL agents per day.
