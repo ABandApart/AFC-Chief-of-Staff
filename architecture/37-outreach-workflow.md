@@ -6,6 +6,13 @@
 <doc:depends_on>35-outreach-crm.md, 36-inbound-leads.md</doc:depends_on>
 <doc:referenced_by>90-workflows.md</doc:referenced_by>
 
+> **Partly superseded 2026-10-05 by `PRD-outreach-autonomous-sourcing.md`.** The diagrams
+> below show the original design. Since then: a research agent (Opus 5.5 planner,
+> Sonnet 5.5 workers with web search) sources candidates; Gate 0 approval accepts,
+> promotes, and starts the sequence in one click; the cap is 150 live sequences,
+> not 15; hypothesis tests run a 3-touch arc. The packet, the daily surface, and
+> the operator sending every email are unchanged.
+
 ## Purpose
 
 `35-outreach-crm.md` is the specification and it is dense. This file is the map.
@@ -33,8 +40,10 @@ evidence table. Gate 2 changes from *read the packet* to *write the observation*
 | Cylinder | Persisted state |
 
 Four human gates exist in the whole system. Everything else runs unattended.
-**One LLM call remains** in outreach — Trent Crimm's trigger classification — and
-it never touches outbound text.
+LLM calls in outreach (corrected 2026-10-05): Trent Crimm's trigger
+classification, Haiku entity extraction in the legacy discovery loop, and the
+autonomous sourcing agent's planner and research workers. **None of them touches
+outbound text**: the packet is still deterministic.
 
 </legend>
 
@@ -63,7 +72,7 @@ flowchart TD
     BAND -->|"14 to 19"| WATCH
     BAND -->|"20 to 25"| GATE1
 
-    GATE1{{"GATE 1 · Task Tinder<br/>Work this company?"}}:::human --> CAP{"cold_live < 15?"}
+    GATE1{{"GATE 1 · Task Tinder<br/>Work this company?"}}:::human --> CAP{"cold_live < 150?<br/>(15 before 0029)"}
     CAP -->|"no"| REQ(["Re-queue + alert to system"])
     CAP -->|"yes"| SEQ
 

@@ -6,6 +6,17 @@
 <doc:depends_on>10-strategy.md, 20-architecture-overview.md, 25-target-state.md, 30-memory-layer.md, 40-action-layer.md, 50-channel-layer.md</doc:depends_on>
 <doc:referenced_by>36-inbound-leads.md, 37-outreach-workflow.md, 70-build-order.md, 80-telemetry-layer.md, 90-workflows.md</doc:referenced_by>
 
+> **Partly superseded 2026-10-05 by `PRD-outreach-autonomous-sourcing.md`** (§3, §4, §16;
+> migration 0029). Read these sections with that in mind:
+> - **§8 capacity:** the live cold-sequence cap is **150**, not 15 (operator
+>   decision D1). Every "15" below describes the original design.
+> - **§5 intake:** firms found by the research agent are approved and started in
+>   one click on the Gate 0 card; the Gate 1 card remains for inbound leads and
+>   for a race-blocked approval.
+> - **Arcs:** a candidate testing a hypothesis gets a 3-touch arc (slots 1, 2, 5).
+> The packet (§7), the no-generated-prose rule, B2, and the staleness model are
+> unchanged.
+
 ## Purpose
 
 The Outreach Engine — trigger-driven qualification, five-touch sequencing, and

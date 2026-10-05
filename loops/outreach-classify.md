@@ -20,8 +20,10 @@ ceiling. It needs anthropic credentials, so it runs on barry-agent; the build bo
 verifies the deterministic half (queue reader, verdict recorder, promotion,
 evidence write, idempotency, H5 quarantine).
 
-**Ships DISABLED.** It needs Part 1's queue to have depth and the anthropic key,
-and it spends money — a deliberate flip, not a convention.
+**Enabled** (it shipped disabled; it was turned on during Track O activation,
+see the 2026-08-28 decision-log entries). It spends money, inside the $20 outreach
+group ceiling. Since 2026-10-05 its pool-promotion branch only serves legacy rows:
+one-click approval promotes agent-sourced firms directly.
 
 ## Deliberate choices
 

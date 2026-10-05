@@ -56,6 +56,14 @@ from agents._lib import creds, db
 # Price table — USD per token. Update via PR; bump module version on change.
 PRICE_TABLE: dict[tuple[str, str], dict[str, float]] = {
     # (provider, model) -> {"input": USD/token, "output": USD/token}
+    # Opus 5.5 / Sonnet 5.5 carry explicit cache rates: Opus 5.5 reads are 0.05x
+    # input, not the 0.1x default (PRD-outreach-autonomous-sourcing §6.8).
+    ("anthropic", "claude-opus-5-5"):    {"input":  4.0 / 1_000_000, "output": 20.0 / 1_000_000,
+                                          "cache_read": 0.20 / 1_000_000,
+                                          "cache_write": 5.0 / 1_000_000},
+    ("anthropic", "claude-sonnet-5-5"):  {"input":  2.0 / 1_000_000, "output": 10.0 / 1_000_000,
+                                          "cache_read": 0.20 / 1_000_000,
+                                          "cache_write": 2.50 / 1_000_000},
     ("anthropic", "claude-opus-4-7"):    {"input":  5.0 / 1_000_000, "output": 25.0 / 1_000_000},
     ("anthropic", "claude-opus-4-6"):    {"input":  5.0 / 1_000_000, "output": 25.0 / 1_000_000},
     ("anthropic", "claude-sonnet-4-6"):  {"input":  3.0 / 1_000_000, "output": 15.0 / 1_000_000},
@@ -67,6 +75,10 @@ PRICE_TABLE: dict[tuple[str, str], dict[str, float]] = {
     ("gemini",    "gemini-embedding-001"): {"input": 0.15 / 1_000_000, "output": 0.0},
     ("gemini",    "text-embedding-004"):   {"input": 0.0,              "output": 0.0},  # kept for reference; unavailable on this key
 }
+
+# Server-tool fees, charged per request on top of tokens. Web search is $10 per
+# 1,000 searches; web fetch has no per-request fee (tokens only).
+WEB_SEARCH_USD_PER_REQUEST = 10.0 / 1_000
 
 # Per-agent daily spend ceilings (the soft breaker). USD/day.
 # Total daily blast radius for the fully-populated system: ~$15.
@@ -89,10 +101,20 @@ DAILY_CEILINGS: dict[str, float] = {
     "outreach-discover": 0.25,   # Track O Part 0 — bounded entity extraction (R0.21)
     "trent-crimm":        0.30,   # Track O Part 2 — news classification (35- §10)
     "tartt-control":      0.20,   # Phase 4 — #briefing feed/interest command parsing (haiku)
+    # PRD-outreach-autonomous-sourcing: the research agent (orchestrator + workers).
+    # Its real limit is the outreach group ceiling below.
+    "outreach-sourcing": 20.00,
 }
 
-# System-wide kill switch: total spend across ALL agents per day.
-GLOBAL_DAILY_CEILING = 20.00
+# Group ceilings: agents that share one daily budget, on top of their own
+# ceilings (operator 2026-10-05: $20/day for all outreach agents together).
+CEILING_GROUPS: dict[str, tuple[float, tuple[str, ...]]] = {
+    "outreach": (20.00, ("outreach-sourcing", "outreach-discover", "trent-crimm")),
+}
+
+# System-wide kill switch: total spend across ALL agents per day. Raised from
+# $20 to $25 (operator 2026-10-05) so a full outreach day leaves room for the rest.
+GLOBAL_DAILY_CEILING = 25.00
 
 # One key per provider for own-agents (per-agent keys dropped with the pivot).
 ANTHROPIC_KEY_ITEM = "anthropic-api-key"
@@ -163,35 +185,54 @@ def _price_for(provider: str, model: str) -> dict[str, float]:
 # =============================================================================
 
 
+def group_of(agent_name: str) -> str | None:
+    """The ceiling group an agent belongs to, or None (pure)."""
+    for group, (_ceiling, members) in CEILING_GROUPS.items():
+        if agent_name in members:
+            return group
+    return None
+
+
 def assert_under_ceiling(agent_name: str) -> None:
     """Raise `DailyCeilingExceeded` if today's spend is at/over a ceiling.
 
-    Checks the system-wide ceiling always, and the agent's own ceiling when it
-    has a `DAILY_CEILINGS` entry (agents without one — rare — are bounded only
-    by the global ceiling). Callable directly before a cognee operation to block
+    Checks the system-wide ceiling always, the agent's group ceiling when it is in
+    a `CEILING_GROUPS` group, and the agent's own ceiling when it has a
+    `DAILY_CEILINGS` entry. Callable directly before a cognee operation to block
     the next cognify invocation once spend is over. "Today" = local midnight.
     """
     now = datetime.now(UTC)
     local_tz = datetime.now().astimezone().tzinfo
     today_start = now.astimezone(local_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    group = group_of(agent_name)
+    members = list(CEILING_GROUPS[group][1]) if group else []
     with db.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT COALESCE(SUM(usd_cost) FILTER (WHERE agent_name = %s), 0), "
-                "       COALESCE(SUM(usd_cost), 0) "
+                "       COALESCE(SUM(usd_cost), 0), "
+                "       COALESCE(SUM(usd_cost) FILTER (WHERE agent_name = ANY(%s)), 0) "
                 "FROM agent_runs "
                 "WHERE started_at >= %s",
-                (agent_name, today_start),
+                (agent_name, members, today_start),
             )
             row = cur.fetchone()
             spent_today = float(row[0]) if row else 0.0
             spent_global = float(row[1]) if row else 0.0
+            spent_group = float(row[2]) if row and len(row) > 2 else 0.0
 
     if spent_global >= GLOBAL_DAILY_CEILING:
         raise DailyCeilingExceeded(
             f"System-wide spend is ${spent_global:.4f} today; global daily "
             f"ceiling is ${GLOBAL_DAILY_CEILING:.2f}. Next invocation blocked."
         )
+    if group is not None:
+        group_ceiling = CEILING_GROUPS[group][0]
+        if spent_group >= group_ceiling:
+            raise DailyCeilingExceeded(
+                f"Group '{group}' has spent ${spent_group:.4f} today; group daily "
+                f"ceiling is ${group_ceiling:.2f}. Next invocation blocked."
+            )
     ceiling = DAILY_CEILINGS.get(agent_name)
     if ceiling is not None and spent_today >= ceiling:
         raise DailyCeilingExceeded(
@@ -226,6 +267,35 @@ class _RunState:
     _call_count: int = field(default=0)
 
 
+def _usage_int(usage: Any, name: str) -> int:
+    """An integer usage field, or 0 when absent (older responses, test doubles)."""
+    value = getattr(usage, name, 0)
+    return value if isinstance(value, int) else 0
+
+
+def _web_search_requests(usage: Any) -> int:
+    server = getattr(usage, "server_tool_use", None)
+    value = getattr(server, "web_search_requests", 0) if server is not None else 0
+    return value if isinstance(value, int) else 0
+
+
+def anthropic_cost(price: dict[str, float], usage: Any) -> float:
+    """USD for one response: tokens, cache reads and writes, and web searches (pure).
+
+    Cache rates default to 0.1x (read) and 1.25x (write) of input when a model's
+    PRICE_TABLE entry does not set them.
+    """
+    cache_read = _usage_int(usage, "cache_read_input_tokens")
+    cache_write = _usage_int(usage, "cache_creation_input_tokens")
+    return (
+        usage.input_tokens * price["input"]
+        + usage.output_tokens * price["output"]
+        + cache_read * price.get("cache_read", price["input"] * 0.1)
+        + cache_write * price.get("cache_write", price["input"] * 1.25)
+        + _web_search_requests(usage) * WEB_SEARCH_USD_PER_REQUEST
+    )
+
+
 class RunContext:
     """Exposed inside `with agent_run(...) as run:`. Holds LLM call methods.
 
@@ -245,10 +315,12 @@ class RunContext:
         system: str | None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: dict[str, Any] | None = None,
+        **extra: Any,
     ) -> Any:
         """Shared Anthropic call path: pricing + call + cost capture.
 
-        Returns the raw Messages API response.
+        `extra` passes further Messages API parameters through unchanged (for
+        example `thinking` or `output_config`). Returns the raw response.
         """
         # Price check first: an unknown model must refuse BEFORE spending.
         price = _price_for("anthropic", model)
@@ -265,19 +337,35 @@ class RunContext:
             create_kwargs["tools"] = tools
         if tool_choice is not None:
             create_kwargs["tool_choice"] = tool_choice
+        create_kwargs.update(extra)
         response = client.messages.create(**create_kwargs)
 
         # Record cost + telemetry
+        usage = response.usage
+        cache_read = _usage_int(usage, "cache_read_input_tokens")
+        cache_write = _usage_int(usage, "cache_creation_input_tokens")
         self._state.llm_provider = "anthropic"
         self._state.llm_model = model
-        self._state.input_tokens += response.usage.input_tokens
-        self._state.output_tokens += response.usage.output_tokens
-        self._state.usd_cost += (
-            response.usage.input_tokens * price["input"]
-            + response.usage.output_tokens * price["output"]
-        )
+        self._state.input_tokens += usage.input_tokens + cache_read + cache_write
+        self._state.output_tokens += usage.output_tokens
+        self._state.usd_cost += anthropic_cost(price, usage)
         self._state._call_count += 1
         return response
+
+    def call_anthropic_raw(self, messages: list[dict[str, Any]], *, model: str,
+                           max_output_tokens: int, system: str | None = None,
+                           tools: list[dict[str, Any]] | None = None,
+                           **extra: Any) -> Any:
+        """One priced Messages API call; returns the full response.
+
+        For callers that run their own tool loop (server tools such as web
+        search, client tools with `strict: true`). Every call is priced,
+        including cache tokens and web search requests, and accumulates on this
+        run's single `agent_runs` row.
+        """
+        return self._anthropic_call(messages, model=model,
+                                    max_output_tokens=max_output_tokens,
+                                    system=system, tools=tools, **extra)
 
     def call_anthropic(
         self,

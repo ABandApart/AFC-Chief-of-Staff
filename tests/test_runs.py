@@ -364,3 +364,66 @@ def test_call_embedding_requests_768_and_normalizes(patched_db, monkeypatch):
     _, params = patched_db.inserts[0]
     assert params[6] == "gemini"
     assert params[7] == "gemini-embedding-001"
+
+
+# =============================================================================
+# Group ceiling, web search and cache pricing (PRD-outreach-autonomous-sourcing §6.8)
+# =============================================================================
+
+from types import SimpleNamespace  # noqa: E402
+
+from agents._lib import runs as runs_mod  # noqa: E402
+
+
+class GroupCursor(FakeCursor):
+    def __init__(self, agent: float, global_: float, group: float):
+        super().__init__(today_spend=agent, global_spend=global_)
+        self.group_spend = group
+        self.params: tuple[Any, ...] | None = None
+
+    def execute(self, query: str, params: tuple[Any, ...] | None = None) -> None:
+        self.params = params
+        super().execute(query, params)
+
+    def fetchone(self) -> tuple[float, float, float]:  # type: ignore[override]
+        return (self.today_spend, self.global_spend, self.group_spend)
+
+
+def test_group_ceiling_blocks_even_when_each_agent_is_under(monkeypatch):
+    cursor = GroupCursor(agent=0.05, global_=20.0, group=20.0)
+    _patch_pool(monkeypatch, cursor)
+    with pytest.raises(DailyCeilingExceeded) as exc:
+        assert_under_ceiling("trent-crimm")  # own ceiling $0.30, group $20
+    assert "Group 'outreach'" in str(exc.value)
+    assert set(cursor.params[1]) == {"outreach-sourcing", "outreach-discover", "trent-crimm"}
+
+
+def test_group_ceiling_does_not_apply_outside_the_group(monkeypatch):
+    _patch_pool(monkeypatch, GroupCursor(agent=0.1, global_=21.0, group=21.0))
+    assert_under_ceiling("granola")  # not in the group; global is $25
+
+
+def test_system_ceiling_is_25():
+    assert runs_mod.GLOBAL_DAILY_CEILING == 25.00
+    assert runs_mod.CEILING_GROUPS["outreach"][0] == 20.00
+
+
+def test_cost_includes_cache_and_web_search():
+    price = runs_mod._price_for("anthropic", "claude-sonnet-5-5")
+    usage = SimpleNamespace(
+        input_tokens=1_000_000, output_tokens=100_000,
+        cache_read_input_tokens=1_000_000, cache_creation_input_tokens=0,
+        server_tool_use=SimpleNamespace(web_search_requests=10))
+    # $2 input + $1 output + $0.20 cache read + 10 searches x $0.01
+    assert runs_mod.anthropic_cost(price, usage) == pytest.approx(3.30)
+
+
+def test_cost_tolerates_responses_without_cache_or_tools():
+    price = runs_mod._price_for("anthropic", "claude-haiku-4-5")
+    usage = MagicMock(input_tokens=1000, output_tokens=100)  # MagicMock attrs ignored
+    assert runs_mod.anthropic_cost(price, usage) == pytest.approx(0.0015)
+
+
+def test_opus_5_5_cache_reads_are_priced_at_0_05x():
+    price = runs_mod._price_for("anthropic", "claude-opus-5-5")
+    assert price["cache_read"] == pytest.approx(price["input"] * 0.05)

@@ -25,12 +25,12 @@ import json
 import logging
 import sys
 import urllib.request
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from psycopg.rows import dict_row
 
-from agents._lib import db, heartbeat, task_tinder
+from agents._lib import db, heartbeat, runs, task_tinder
 from agents._lib.creds import keychain_get
 from agents.discord_bot.config import BRIEFING_CHANNEL_ID
 
@@ -101,10 +101,83 @@ def format_briefing(now: datetime, status: dict[str, Any]) -> str:
         f"☀️ Good morning — {now.strftime('%A %d %B %Y')}\n\n"
         f"**System status**\n"
         f"• Notes captured: {status['notes_total']} total, {status['notes_24h']} in the last 24h\n"
-        f"• LLM calls (24h): {status['calls_24h']} for ${status['spend_24h']:.6f} — {failure_str}\n"
+        f"• LLM calls (24h): {status['calls_24h']} — {failure_str}\n"
         f"• Outcomes recorded: {status['outcomes_total']}\n"
         f"• Brain: Postgres reachable ✓"
     )
+
+
+def fetch_spend(conn: object, day: date) -> dict[str, Any]:
+    """Spend for one local calendar day, from `agent_runs` (no LLM).
+
+    PRD-outreach-autonomous-sourcing §6.8: the previous full day, so the 05:00
+    outreach run is never half-counted in a 06:00 briefing.
+    """
+    tz = datetime.now().astimezone().tzinfo
+    start = datetime.combine(day, datetime.min.time(), tzinfo=tz)
+    end = start + timedelta(days=1)
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            "SELECT agent_name, sum(usd_cost) AS usd FROM agent_runs "
+            "WHERE started_at >= %s AND started_at < %s GROUP BY 1 "
+            "HAVING sum(usd_cost) > 0 ORDER BY 2 DESC", (start, end))
+        by_agent = [(r["agent_name"], float(r["usd"])) for r in cur.fetchall()]
+        cur.execute(
+            "SELECT COALESCE(sum(usd_cost), 0) / 7.0 AS avg7 FROM agent_runs "
+            "WHERE started_at >= %s AND started_at < %s", (end - timedelta(days=7), end))
+        avg7 = float(cur.fetchone()["avg7"])
+        cur.execute(
+            "SELECT COALESCE(sum(usd_cost), 0) AS mtd FROM agent_runs "
+            "WHERE started_at >= %s AND started_at < %s",
+            (start.replace(day=1), end))
+        mtd = float(cur.fetchone()["mtd"])
+        cur.execute(
+            "SELECT target_n, passed, usd_cost, stop_reason, finished_at "
+            "FROM outreach_sourcing_runs WHERE NOT dry_run AND finished_at IS NOT NULL "
+            "  AND started_at >= %s AND started_at < %s ORDER BY started_at DESC LIMIT 1",
+            (start, end))
+        sourcing = cur.fetchone()
+    return {"by_agent": by_agent, "avg7": avg7, "mtd": mtd, "sourcing": sourcing}
+
+
+def format_spend(day: date, data: dict[str, Any]) -> str:
+    """The daily spend section (pure — unit-tested)."""
+    group_ceiling, members = runs.CEILING_GROUPS["outreach"]
+    by_agent = data["by_agent"]
+    total = sum(usd for _, usd in by_agent)
+    outreach_rows = [(a, u) for a, u in by_agent if a in members]
+    other_rows = [(a, u) for a, u in by_agent if a not in members]
+    outreach_total = sum(u for _, u in outreach_rows)
+    other_total = sum(u for _, u in other_rows)
+
+    def listing(rows: list[tuple[str, float]]) -> str:
+        return " · ".join(f"{a.removeprefix('outreach-')} ${u:.2f}" for a, u in rows)
+
+    lines = [f"💵 **Spend, {day:%a %Y-%m-%d}: ${total:.2f} of "
+             f"${runs.GLOBAL_DAILY_CEILING:.2f}**"]
+    outreach_line = f"• Outreach ${outreach_total:.2f} of ${group_ceiling:.2f}"
+    if outreach_rows:
+        outreach_line += f": {listing(outreach_rows)}"
+    lines.append(outreach_line)
+    other_line = f"• Everything else ${other_total:.2f}"
+    if other_rows:
+        other_line += f": {listing(other_rows)}"
+    lines.append(other_line)
+    lines.append(f"• 7-day average ${data['avg7']:.2f} · month to date ${data['mtd']:.2f}")
+
+    run = data.get("sourcing")
+    if run and run["passed"]:
+        each = float(run["usd_cost"]) / run["passed"]
+        lines.append(f"• Outreach run: {run['passed']} candidates surfaced, ${each:.2f} each")
+    if run and run["stop_reason"] == "budget":
+        lines.append(f"⚠️ Outreach ceiling reached at {run['finished_at']:%H:%M}; the run "
+                     f"stopped with {run['passed']} of {run['target_n']} surfaced.")
+    elif outreach_total >= group_ceiling:
+        lines.append("⚠️ Outreach ceiling reached.")
+    if total >= runs.GLOBAL_DAILY_CEILING:
+        lines.append("⚠️ System ceiling reached: later calls that day were refused.")
+    lines.append("_Estimates from this system's own ledger, not Anthropic's invoice._")
+    return "\n".join(lines)
 
 
 def fetch_reading_recs(conn: object, limit: int = READING_RECS_LIMIT) -> list[dict]:
@@ -228,7 +301,18 @@ def main() -> int:
         text = f"{text}\n\n{prospects_text}"
     if outreach_line:
         text = f"{text}\n\n{outreach_line}"
+    spend_text = ""
+    try:
+        yesterday = date.today() - timedelta(days=1)
+        with db.connection() as conn:
+            spend = fetch_spend(conn, yesterday)
+        spend_text = format_spend(yesterday, spend)
+    except Exception:
+        logger.exception("briefing: spend section unavailable — omitting it")
     post_to_discord(text)
+    if spend_text:
+        # Its own message: the briefing is near Discord's 2,000-character limit.
+        post_to_discord(spend_text)
     # Success path only — the ping means "the briefing actually posted". Never
     # move this into a finally: a ping on a crashed run manufactures confidence.
     heartbeat.ping(HEARTBEAT_SLUG)

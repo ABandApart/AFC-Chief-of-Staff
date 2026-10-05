@@ -5,29 +5,28 @@ add a new one with the next sequential number.
 
 ## How to apply
 
-Apply via `psql` against the local Postgres instance. The DB URL lives in
-keychain (no `.env` files, never on the command line as a literal):
+As **barry-admin**, use the local socket (barry-admin has no keychain `db-url`;
+see the repo `CLAUDE.md`):
 
 ```bash
-export DB_URL=$(security find-generic-password -a "$USER" -s db-url -w)
-psql "$DB_URL" -f migrations/000N_description.sql
+psql aiadaptive_cos -f migrations/00NN_description.sql
 ```
+
+New tables need `ALTER TABLE … OWNER TO barry_agent` in the same migration: the
+runtime connects as that role, and a table it does not own fails writes silently
+(the bug 0011 fixed).
 
 ## How to verify
 
 ```bash
-psql "$DB_URL" -f migrations/verify_schema.sql
+psql aiadaptive_cos -f migrations/verify_schema.sql
 ```
 
-The verification script is updated alongside each new migration to expect the
-new tables.
+Update `verify_schema.sql` in the same change as every migration that adds a
+table or view. It is the source of truth for what should exist.
 
-## Current state
+## Numbering gaps
 
-| # | Name | Applied | Phase |
-|---|------|---------|-------|
-| 0001 | initial schema | pending | 1 |
-
-(This table stopped being maintained after 0001; `verify_schema.sql` is the
-living source of truth for what should exist. Latest migration: **0013** —
-Track O outreach CRM.)
+- **0017** was never used.
+- **0028** (`icp_syntheses`) exists only on the unmerged `phase-10-icp-intelligence`
+  branch. 0029 does not depend on it.

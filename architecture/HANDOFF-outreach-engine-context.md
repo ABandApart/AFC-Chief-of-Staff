@@ -1,5 +1,10 @@
 # Context handoff → outreach-engine dev thread
 
+> **SUPERSEDED 2026-10-05.** This snapshot is pinned to `main@9b2c612`
+> (2026-09-03) and predates migrations 0027–0029, one-click approval, and the
+> research agent. Use `37-outreach-workflow.md`, `35-outreach-crm.md`, and
+> `PRD-outreach-autonomous-sourcing.md` instead. Kept for history.
+
 **From:** barry-admin · 2026-09-03 · `main`@`9b2c612` · repo `~/code/aiadaptive-cos`
 
 Orientation for a thread adding functionality to the Track O outreach engine.

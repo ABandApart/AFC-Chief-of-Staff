@@ -6,11 +6,11 @@ like `_lib/outreach_intake` and `_lib/task_tinder`: the decision rules and the
 guarded writes live here so they are unit-testable without a bot, and the cog owns
 only the surface.
 
-**Gate 0 does not touch capacity.** `35-` §8 caps `cold_live` at 15 concurrent
-sequences, enforced at intake. Accepting 20 firms a day is affordable precisely
-because an accept costs a row and nothing else - no touch, no capacity slot, no
-Gate 1 card. That separation is the whole reason the daily 20 is not absurd
-against a ceiling of 15 (R0.6).
+**Approve starts outreach** (PRD-outreach-autonomous-sourcing §6.7, 2026-10-05).
+The original Gate 0 accept only added a firm to the pool (R0.6); a weekly
+classifier then promoted it and Gate 1 started the arc. Approval now does all of
+that in one click, against a live-sequence cap of 150 (migration 0029). A plain
+`decide(..., "accept")` still exists for the legacy path.
 
 **Three outcomes**, from the review modal (R0.15):
 
@@ -109,7 +109,9 @@ _COLUMNS = """
     contact_email, email_confidence, company_linkedin_url, contact_linkedin_url,
     verification_note, verified_on, pain_layer, pain_hook, discovered_via,
     discovery_query, discovered_at, surfaced_at, review_message_id, reviewed_at,
-    review_decision, reject_reason, reject_note, promoted_target_id, source_url
+    review_decision, reject_reason, reject_note, promoted_target_id, source_url,
+    hypothesis_id, summary, why_now, evidence, evidence_domains, proposed_scores,
+    contact_method, check_failures, suggested_angle, sourcing_run_id
 """
 
 
@@ -144,16 +146,23 @@ def validate_decision(action: str, reason: str | None, note: str | None) -> None
 
 
 def _eligible(conn: object) -> list[dict[str, Any]]:
-    """Every unreviewed candidate that clears the verification bar, best first."""
+    """Every unreviewed candidate that clears the verification bar, best first.
+
+    The bar is R0.5 as rewritten in 0029: two verification kinds, OR cited
+    evidence from two distinct registrable domains (the research agent's path).
+    A row the agent's deterministic checks failed is never eligible.
+    """
     with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
         cur.execute(
             f"""
             SELECT {_COLUMNS} FROM outreach_discoveries
             WHERE reviewed_at IS NULL
-              AND COALESCE(array_length(verified_on, 1), 0) >= %s
+              AND (COALESCE(array_length(verified_on, 1), 0) >= %s
+                   OR outreach_distinct_count(evidence_domains) >= %s)
+              AND COALESCE(array_length(check_failures, 1), 0) = 0
             ORDER BY icp_fit_score DESC NULLS LAST, discovered_at
             """,
-            (MIN_VERIFICATION_KINDS,),
+            (MIN_VERIFICATION_KINDS, MIN_VERIFICATION_KINDS),
         )
         return cur.fetchall()
 
@@ -635,8 +644,11 @@ def decide(
     *,
     reason: str | None = None,
     note: str | None = None,
+    conn: object | None = None,
 ) -> dict[str, Any] | None:
     """Record a Gate 0 decision. Returns a summary, or None if already decided.
+
+    Pass `conn` to make the decision part of a caller's transaction (`approve`).
 
     `defer` records **no label** (OQ-H): it clears nothing and writes nothing but
     a log line, so the row simply re-ranks into tomorrow's window. Treating a
@@ -651,8 +663,8 @@ def decide(
 
     clean_note = outreach.clean_field(note, max_chars=500)
 
-    with db.connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
+    def _write(c: object) -> dict[str, Any] | None:
+        with c.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
             cur.execute(
                 "UPDATE outreach_discoveries "
                 "SET review_decision = %s, reject_reason = %s, reject_note = %s, "
@@ -661,7 +673,13 @@ def decide(
                 "RETURNING id, company_name, segment, review_decision, reject_reason",
                 (action, reason, clean_note, discovery_id),
             )
-            updated = cur.fetchone()
+            return cur.fetchone()
+
+    if conn is not None:
+        updated = _write(conn)
+    else:
+        with db.connection() as own:
+            updated = _write(own)
 
     if updated is None:
         return None  # already decided, or lost the race to another submit
@@ -679,8 +697,135 @@ def decide(
 OPERATOR_SELECTED = "operator_selected"
 
 
-def promote(discovery_id: int, trigger: dict[str, Any] | None = None) -> dict[str, Any]:
+# Trigger kinds for a firm the research agent found (0029). A real market
+# trigger from the dossier is preferred when it carries a date.
+AGENT_SOURCED = "agent_sourced"
+HYPOTHESIS_TEST = "hypothesis_test"
+
+# The judgement columns the agent proposes and approval accepts (D7).
+PROPOSED_SCORE_COLUMNS = ("s2_stage_fit", "s3_sector_match", "s4_leadership_gap",
+                          "s5_team_build_below", "stage", "function_state")
+
+
+def trigger_for(row: dict[str, Any]) -> dict[str, Any]:
+    """The trigger kind an approved discovery is promoted on (pure).
+
+    A market trigger the agent cited keeps its kind and source URL, but **never
+    its date**: the arc anchors on the approval date (0023), because a cited event
+    40 days old would otherwise admit the firm with slots 1-3 already past their
+    windows (operator decision 2026-10-05, review finding). A hypothesis candidate
+    is always a `hypothesis_test`, so it gets the short arc and counts toward its
+    hypothesis. Without a cited trigger, an agent-sourced row is `agent_sourced`;
+    other rows keep the `operator_selected` default.
+    """
+    scores = row.get("proposed_scores") or {}
+    trig = scores.get("trigger") or {}
+    if row.get("hypothesis_id"):
+        return {"trigger_kind": HYPOTHESIS_TEST,
+                "trigger_source_url": trig.get("source_url")}
+    if trig.get("kind"):
+        return {"trigger_kind": trig["kind"], "trigger_source_url": trig.get("source_url")}
+    if row.get("sourcing_run_id"):
+        return {"trigger_kind": AGENT_SOURCED}
+    return {}
+
+
+REQUIRED_PROPOSALS = ("stage", "function_state", "s2_stage_fit", "s3_sector_match",
+                      "s4_leadership_gap", "s5_team_build_below")
+
+
+def approval_blocks(row: dict[str, Any], capacity: dict[str, Any]) -> str | None:
+    """Why this row cannot be approved right now, or None (pure).
+
+    Checked BEFORE anything is written, so a refused approval changes nothing and
+    the card stays where the operator can act on it. Covers everything that would
+    otherwise strand a firm after acceptance: missing judgements (a row the
+    research agent has not completed yet) and a full live-sequence cap.
+    """
+    from agents._lib import outreach_intake  # local: intake imports packet
+
+    scores = row.get("proposed_scores") or {}
+    missing = [c for c in REQUIRED_PROPOSALS if scores.get(c) in (None, "")]
+    if missing:
+        return ("the sourcing agent has not proposed its scores yet (stage, function "
+                "state, S2-S5). Defer it; the agent completes these rows")
+    return outreach_intake.capacity_blocks(capacity, is_reengagement=False)
+
+
+def approve(discovery_id: int, *, today: date | None = None) -> dict[str, Any] | None:
+    """One-click approval (PRD-outreach-autonomous-sourcing §6.7).
+
+    1. Check what could block (missing proposals, capacity) with nothing written.
+       A block returns `accepted: False` and changes nothing.
+    2. In ONE transaction: accept, promote with the proposed scores and hypothesis,
+       stamp `signals_observed_at` (so the Sunday sweep does not flag the target
+       as stale on day one), and move a proposed hypothesis to `testing`.
+    3. Start the sequence through the existing intake path, which re-checks
+       capacity and readiness exactly as Gate 1 does.
+
+    Returns None if the row was already decided. Otherwise `accepted`, `started`,
+    `target_id`, and `blocked` when something stopped it.
+    """
+    from agents._lib import outreach_intake  # local: intake imports packet
+
+    with db.connection() as conn:
+        row = get(conn, discovery_id)
+        if row is None or row.get("reviewed_at") is not None:
+            return None
+        if blocked := approval_blocks(row, outreach_intake.read_capacity(conn)):
+            return {"id": discovery_id, "accepted": False, "started": False,
+                    "blocked": blocked, "company_name": row["company_name"]}
+
+        scores = row["proposed_scores"]
+        updates = {c: scores[c] for c in REQUIRED_PROPOSALS}
+        with conn.transaction():
+            if decide(discovery_id, "accept", conn=conn) is None:
+                return None                      # lost the race to another click
+            target_id = promote(discovery_id, trigger_for(row), conn=conn)["target_id"]
+            assignments = ", ".join(f"{c} = %({c})s" for c in updates)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE outreach_targets SET {assignments}, "
+                    "signals_observed_at = CURRENT_DATE "
+                    "WHERE id = %(target_id)s AND status = 'candidate'",
+                    {**updates, "target_id": target_id},
+                )
+                if row.get("hypothesis_id"):
+                    cur.execute(
+                        "UPDATE outreach_hypotheses SET status = 'testing', "
+                        "status_changed_at = now() WHERE id = %s AND status = 'proposed'",
+                        (row["hypothesis_id"],),
+                    )
+
+    base = {"id": discovery_id, "target_id": target_id, "accepted": True,
+            "company_name": row["company_name"]}
+    try:
+        result = outreach_intake.decide(target_id, "work", today=today)
+    except (outreach_intake.CapacityFullError, outreach_intake.NotReadyToWorkError) as exc:
+        # Only a race can get here (both were checked above). The target keeps its
+        # scores, so it carries a treatment and shows on the Gate 1 card.
+        logger.warning("approve: %s promoted but not started: %s", discovery_id, exc)
+        return {**base, "started": False, "blocked": str(exc)}
+    started = bool(result) and result.get("status") == "in_sequence"
+    return {**base, "started": started,
+            "touches": len((result or {}).get("touches") or [])}
+
+
+def hypothesis_summary(conn: object, hypothesis_id: int) -> dict[str, Any] | None:
+    """A hypothesis with its results so far, for the review card."""
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            "SELECT * FROM v_outreach_hypothesis_results WHERE hypothesis_id = %s",
+            (hypothesis_id,),
+        )
+        return cur.fetchone()
+
+
+def promote(discovery_id: int, trigger: dict[str, Any] | None = None, *,
+            conn: object | None = None) -> dict[str, Any]:
     """Turn an accepted discovery into an `outreach_targets` row.
+
+    Pass `conn` to make the promotion part of a caller's transaction (`approve`).
 
     **`trigger_date` is when the operator accepted the firm into the pipeline**
     (0023, operator decision 2026-08-27) - the discovery's `reviewed_at` date -
@@ -697,66 +842,72 @@ def promote(discovery_id: int, trigger: dict[str, Any] | None = None) -> dict[st
     are used. A partial `trigger` (kind but no date) still takes the acceptance
     date - the date is never the caller's to fabricate here.
     """
+    if conn is None:
+        with db.connection() as own:
+            return promote(discovery_id, trigger, conn=own)
+
     trigger = trigger or {}
     kind = trigger.get("trigger_kind") or OPERATOR_SELECTED
     source = trigger.get("trigger_source_url")
 
-    with db.connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
+    with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            f"SELECT {_COLUMNS}, reviewed_at FROM outreach_discoveries WHERE id = %s",
+            (discovery_id,),
+        )
+        found = cur.fetchone()
+    if found is None:
+        raise KeyError(f"no discovery {discovery_id}")
+    if found["review_decision"] != "accept":
+        raise NotPromotableError(
+            f"discovery {discovery_id} is {found['review_decision'] or 'unreviewed'}, "
+            "not accepted"
+        )
+    if found["promoted_target_id"]:
+        return {"id": discovery_id, "target_id": found["promoted_target_id"],
+                "created": False}
+
+    # The acceptance date IS the trigger date (0023). Never the caller's to
+    # fabricate; a caller-supplied market date is honoured only if it is real
+    # and not in the future.
+    when = found["reviewed_at"].date()
+    supplied = trigger.get("trigger_date")
+    if supplied is not None and not (isinstance(supplied, date) and supplied > date.today()):
+        when = supplied
+
+    with conn.transaction():
+        target = outreach.upsert_target(conn, {
+            "company_name": found["company_name"],
+            "company_domain": found["company_domain"],
+            "company_url": found["company_url"],
+            "careers_url": found["careers_url"],
+            "sector": found["segment"],
+            # Unknown, and deliberately not invented. 0014 made `stage`
+            # nullable rather than let an import fabricate one, and
+            # `outreach_targets_seq_ck` re-imposes it before sequencing -
+            # which is the only place stage is consumed.
+            "stage": None,
+            "contact_name": found["contact_name"],
+            "contact_role": found["contact_title"],
+            "contact_email": found["contact_email"],
+            "contact_linkedin_url": found["contact_linkedin_url"],
+            "trigger_kind": kind,
+            "trigger_date": when,
+            "trigger_source_url": source,
+            # In the same INSERT: 0029 refuses a hypothesis_test target
+            # without its hypothesis, so a later UPDATE is too late.
+            "hypothesis_id": found.get("hypothesis_id"),
+        })
+        with conn.cursor() as cur:
             cur.execute(
-                f"SELECT {_COLUMNS}, reviewed_at FROM outreach_discoveries WHERE id = %s",
-                (discovery_id,),
+                "UPDATE outreach_discoveries SET promoted_target_id = %s "
+                "WHERE id = %s AND promoted_target_id IS NULL",
+                (target["id"], discovery_id),
             )
-            found = cur.fetchone()
-        if found is None:
-            raise KeyError(f"no discovery {discovery_id}")
-        if found["review_decision"] != "accept":
-            raise NotPromotableError(
-                f"discovery {discovery_id} is {found['review_decision'] or 'unreviewed'}, "
-                "not accepted"
-            )
-        if found["promoted_target_id"]:
-            return {"id": discovery_id, "target_id": found["promoted_target_id"],
-                    "created": False}
-
-        # The acceptance date IS the trigger date (0023). Never the caller's to
-        # fabricate; a caller-supplied market date is honoured only if it is real
-        # and not in the future.
-        when = found["reviewed_at"].date()
-        supplied = trigger.get("trigger_date")
-        if supplied is not None and not (isinstance(supplied, date) and supplied > date.today()):
-            when = supplied
-
-        with conn.transaction():
-            target = outreach.upsert_target(conn, {
-                "company_name": found["company_name"],
-                "company_domain": found["company_domain"],
-                "company_url": found["company_url"],
-                "careers_url": found["careers_url"],
-                "sector": found["segment"],
-                # Unknown, and deliberately not invented. 0014 made `stage`
-                # nullable rather than let an import fabricate one, and
-                # `outreach_targets_seq_ck` re-imposes it before sequencing -
-                # which is the only place stage is consumed.
-                "stage": None,
-                "contact_name": found["contact_name"],
-                "contact_role": found["contact_title"],
-                "contact_email": found["contact_email"],
-                "contact_linkedin_url": found["contact_linkedin_url"],
-                "trigger_kind": kind,
-                "trigger_date": when,
-                "trigger_source_url": source,
-            })
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE outreach_discoveries SET promoted_target_id = %s "
-                    "WHERE id = %s AND promoted_target_id IS NULL",
-                    (target["id"], discovery_id),
-                )
-            # Carry any news observed while the firm was in the pool across to the
-            # new target, so its history is not orphaned (R1.9). No-op until Part
-            # 1 has run; harmless before then.
-            outreach.reparent_watch_signals(conn, discovery_id, target["id"])
+        # Carry any news observed while the firm was in the pool across to the
+        # new target, so its history is not orphaned (R1.9). No-op until Part
+        # 1 has run; harmless before then.
+        outreach.reparent_watch_signals(conn, discovery_id, target["id"])
 
     logger.info(
         "gate 0: promoted %s to target %s on trigger %s",

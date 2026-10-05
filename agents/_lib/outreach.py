@@ -48,6 +48,7 @@ MAX_EXCERPT_CHARS = 500
 # `stalled_reason` are deliberately ABSENT — see the D1 rule above. Adding a
 # column here is a decision about whose knowledge wins, not a formatting choice.
 _IMPORT_REFRESHABLE = (
+    "hypothesis_id",  # 0029: must land with trigger_kind = 'hypothesis_test'
     "company_name",
     "company_url",
     "careers_url",
@@ -247,7 +248,7 @@ def upsert_target(conn: object, target: dict[str, Any]) -> dict[str, Any]:
     for key in ("company_url", "careers_url", "sector", "contact_name",
                 "contact_first_name", "contact_role", "contact_email",
                 "contact_linkedin_url", "trigger_source_url", "function",
-                "cognee_node_id", "prospect_id"):
+                "cognee_node_id", "prospect_id", "hypothesis_id"):
         row.setdefault(key, None)
 
     # Refreshable columns COALESCE so a sparse import doesn't blank existing data.
@@ -261,13 +262,13 @@ def upsert_target(conn: object, target: dict[str, Any]) -> dict[str, Any]:
             company_name, company_domain, company_url, careers_url, sector, stage,
             contact_name, contact_first_name, contact_role, contact_email,
             contact_linkedin_url, trigger_kind, trigger_date, trigger_source_url,
-            function, cognee_node_id, prospect_id
+            function, cognee_node_id, prospect_id, hypothesis_id
         ) VALUES (
             %(company_name)s, %(company_domain)s, %(company_url)s, %(careers_url)s,
             %(sector)s, %(stage)s, %(contact_name)s, %(contact_first_name)s,
             %(contact_role)s, %(contact_email)s, %(contact_linkedin_url)s,
             %(trigger_kind)s, %(trigger_date)s, %(trigger_source_url)s,
-            %(function)s, %(cognee_node_id)s, %(prospect_id)s
+            %(function)s, %(cognee_node_id)s, %(prospect_id)s, %(hypothesis_id)s
         )
         ON CONFLICT (company_domain) DO UPDATE SET
                 {refresh},

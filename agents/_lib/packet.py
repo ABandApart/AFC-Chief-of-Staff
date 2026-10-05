@@ -65,6 +65,13 @@ SLOT_WINDOWS: dict[int, tuple[int, int, int]] = {
 # completion metric is not poisoned by a decision that was never offered (§5).
 ADMITTED_LATE_REASON = "admitted_after_window"
 
+# Hypothesis tests run a shorter arc: slots 1, 2 and 5 (operator 2026-10-05,
+# PRD-outreach-autonomous-sourcing D1). Slots 3 and 4 are created pre-skipped so
+# the arc's shape stays visible and the completion metric is not poisoned.
+SHORT_ARC_TRIGGER = "hypothesis_test"
+SHORT_ARC_SKIPPED_SLOTS = frozenset({3, 4})
+SHORT_ARC_REASON = "hypothesis_short_arc"
+
 
 @dataclass(frozen=True)
 class AssembledPacket:
@@ -119,6 +126,9 @@ def materialize_sequence(
 ) -> list[dict[str, Any]]:
     """Create the five touches for a target. The intake gate's DB half.
 
+    A `hypothesis_test` target gets the short arc: slots 3 and 4 are created
+    pre-skipped (`hypothesis_short_arc`), leaving slots 1, 2 and 5.
+
     Idempotent per `(target_id, slot)` — the UNIQUE constraint means a
     double-click at the intake card cannot mint a second sequence.
 
@@ -135,6 +145,10 @@ def materialize_sequence(
         choice = selector.select(slot, target.get("stage"), facts)
         window = windows[slot]
         late = window["window_closes"] < today
+        short = (target.get("trigger_kind") == SHORT_ARC_TRIGGER
+                 and slot in SHORT_ARC_SKIPPED_SLOTS)
+        skip_reason = (SHORT_ARC_REASON if short
+                       else ADMITTED_LATE_REASON if late else None)
         with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
             cur.execute(
                 """
@@ -154,8 +168,8 @@ def materialize_sequence(
                     "template_code": choice.template_code,
                     **window,
                     "bcc_token": make_token(),
-                    "skipped_at": "now()" if late else None,
-                    "skip_reason": ADMITTED_LATE_REASON if late else None,
+                    "skipped_at": "now()" if skip_reason else None,
+                    "skip_reason": skip_reason,
                 },
             )
             if row := cur.fetchone():
