@@ -15,6 +15,7 @@ formatter, which were previously duplicated across brain.py and recall.py.
 from __future__ import annotations
 
 import atexit
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -28,6 +29,11 @@ EMBEDDING_DIM = 768
 
 _pool: ConnectionPool | None = None
 _ro_pool: ConnectionPool | None = None
+# Guards lazy pool creation. Without it, threads borrowing at the same moment
+# (the bot's cogs re-attaching views at startup) each build a pool; all but one
+# are orphaned and garbage-collected on their own worker thread, which logs
+# "cannot join current thread" (seen 2026-10-05).
+_pool_lock = threading.Lock()
 
 # --- Resilience to a bounced Postgres ---------------------------------------
 # A Postgres restart under the long-lived Discord bot used to wedge the *entire*
@@ -82,7 +88,9 @@ def _build_pool(dsn: str) -> ConnectionPool:
 def _get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
-        _pool = _build_pool(creds.keychain_get("db-url"))
+        with _pool_lock:
+            if _pool is None:
+                _pool = _build_pool(creds.keychain_get("db-url"))
     return _pool
 
 
@@ -96,7 +104,9 @@ def _get_ro_pool() -> ConnectionPool:
     """
     global _ro_pool
     if _ro_pool is None:
-        _ro_pool = _build_pool(creds.keychain_get("brain-reader-db-url"))
+        with _pool_lock:
+            if _ro_pool is None:
+                _ro_pool = _build_pool(creds.keychain_get("brain-reader-db-url"))
     return _ro_pool
 
 
@@ -117,12 +127,13 @@ def ro_connection() -> Iterator[psycopg.Connection]:
 def close_pool() -> None:
     """Close the pools (clean shutdown of long-running processes)."""
     global _pool, _ro_pool
-    if _pool is not None:
-        _pool.close()
-        _pool = None
-    if _ro_pool is not None:
-        _ro_pool.close()
-        _ro_pool = None
+    with _pool_lock:
+        if _pool is not None:
+            _pool.close()
+            _pool = None
+        if _ro_pool is not None:
+            _ro_pool.close()
+            _ro_pool = None
 
 
 # One-shot CLIs never reach an explicit close_pool(); without this, the

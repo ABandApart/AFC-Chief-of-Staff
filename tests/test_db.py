@@ -66,3 +66,42 @@ def test_both_pools_share_identical_resilience_config():
     for key in ("check", "max_lifetime", "min_size", "max_size"):
         assert rw[key] == ro[key], key
     assert rw["kwargs"] == ro["kwargs"]
+
+
+def test_concurrent_first_borrowers_build_exactly_one_pool(monkeypatch):
+    """Cogs re-attaching views at startup borrow at the same moment; they must
+    share one pool, not each build (and orphan) their own (2026-10-05)."""
+    import threading
+    import time
+
+    from agents._lib import db
+
+    builds: list[str] = []
+
+    class FakePool:
+        def close(self) -> None:
+            pass
+
+    def slow_build(dsn: str) -> FakePool:
+        builds.append(dsn)
+        time.sleep(0.05)  # widen the window the lock must close
+        return FakePool()
+
+    monkeypatch.setattr(db, "_build_pool", slow_build)
+    monkeypatch.setattr(db.creds, "keychain_get", lambda item: item)
+    monkeypatch.setattr(db, "_pool", None)
+    monkeypatch.setattr(db, "_ro_pool", None)
+
+    results: list[object] = []
+    threads = [threading.Thread(target=lambda: results.append(db._get_pool()))
+               for _ in range(8)]
+    threads += [threading.Thread(target=db._get_ro_pool) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert builds.count("db-url") == 1
+    assert builds.count("brain-reader-db-url") == 1
+    assert len({id(r) for r in results}) == 1
+    db.close_pool()

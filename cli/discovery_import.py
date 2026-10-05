@@ -37,7 +37,10 @@ from typing import Any
 from agents._lib import db, outreach, outreach_discovery
 from agents.outreach import icp
 
-DEFAULT_WORKBOOK = Path.home() / "Public" / "Education_LD_Leads_CRM_(current).xlsx"
+# The operator keeps the workbook in barry-admin's Public folder, but the importer
+# runs as barry-agent (it needs the runtime db-url), so `Path.home()` pointed at
+# the wrong account (found at go-live, 2026-10-05). `--workbook` still overrides.
+DEFAULT_WORKBOOK = Path("/Users/barry-admin/Public/Education_LD_Leads_CRM_(current).xlsx")
 SHEET = "Leads"
 
 # The workbook's segment names, mapped onto the CHECK-pinned vocabulary (R0.1).
