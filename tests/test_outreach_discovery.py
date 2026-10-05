@@ -449,7 +449,11 @@ def test_eligible_filters_unreviewed_and_unverified(mocker):
     assert "reviewed_at IS NULL" in sql
     assert "icp_fit_score DESC" in sql
     assert "array_length(verified_on, 1)" in sql
-    assert params == (gate0.MIN_VERIFICATION_KINDS,)
+    # 0029: two distinct evidence domains also clear the bar, and a row that
+    # failed the agent's checks never does.
+    assert "outreach_distinct_count(evidence_domains)" in sql
+    assert "check_failures" in sql
+    assert params == (gate0.MIN_VERIFICATION_KINDS, gate0.MIN_VERIFICATION_KINDS)
 
 
 def test_deferrals_are_not_counted_as_labels(mocker):

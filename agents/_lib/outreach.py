@@ -48,6 +48,8 @@ MAX_EXCERPT_CHARS = 500
 # `stalled_reason` are deliberately ABSENT — see the D1 rule above. Adding a
 # column here is a decision about whose knowledge wins, not a formatting choice.
 _IMPORT_REFRESHABLE = (
+    "hypothesis_id",  # 0029: must land with trigger_kind = 'hypothesis_test'
+    "country",        # 0029 §17: US / Canada; drives the [CA] draft note
     "company_name",
     "company_url",
     "careers_url",
@@ -209,6 +211,20 @@ def suggest_first_name(contact_name: str | None) -> str | None:
     return None
 
 
+# D6 as revised 2026-10-05: US + Canada, not Mexico. Spellings map to the stored
+# value. A bare "CA" is deliberately absent: it is also California.
+_COUNTRY_NAMES = {
+    "US": "US", "USA": "US", "U.S.": "US", "U.S.A.": "US", "UNITED STATES": "US",
+    "UNITED STATES OF AMERICA": "US",
+    "CANADA": "Canada", "CAN": "Canada",
+}
+
+
+def normalize_country(raw: str | None) -> str | None:
+    """`US` or `Canada` for an in-scope country, else None (pure)."""
+    return _COUNTRY_NAMES.get((raw or "").strip().upper())
+
+
 def normalize_domain(raw: str) -> str:
     """Normalize a company domain to the import dedup key (pure).
 
@@ -247,7 +263,7 @@ def upsert_target(conn: object, target: dict[str, Any]) -> dict[str, Any]:
     for key in ("company_url", "careers_url", "sector", "contact_name",
                 "contact_first_name", "contact_role", "contact_email",
                 "contact_linkedin_url", "trigger_source_url", "function",
-                "cognee_node_id", "prospect_id"):
+                "cognee_node_id", "prospect_id", "hypothesis_id", "country"):
         row.setdefault(key, None)
 
     # Refreshable columns COALESCE so a sparse import doesn't blank existing data.
@@ -261,13 +277,14 @@ def upsert_target(conn: object, target: dict[str, Any]) -> dict[str, Any]:
             company_name, company_domain, company_url, careers_url, sector, stage,
             contact_name, contact_first_name, contact_role, contact_email,
             contact_linkedin_url, trigger_kind, trigger_date, trigger_source_url,
-            function, cognee_node_id, prospect_id
+            function, cognee_node_id, prospect_id, hypothesis_id, country
         ) VALUES (
             %(company_name)s, %(company_domain)s, %(company_url)s, %(careers_url)s,
             %(sector)s, %(stage)s, %(contact_name)s, %(contact_first_name)s,
             %(contact_role)s, %(contact_email)s, %(contact_linkedin_url)s,
             %(trigger_kind)s, %(trigger_date)s, %(trigger_source_url)s,
-            %(function)s, %(cognee_node_id)s, %(prospect_id)s
+            %(function)s, %(cognee_node_id)s, %(prospect_id)s, %(hypothesis_id)s,
+            %(country)s
         )
         ON CONFLICT (company_domain) DO UPDATE SET
                 {refresh},

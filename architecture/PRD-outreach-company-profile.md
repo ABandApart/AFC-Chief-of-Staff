@@ -10,6 +10,13 @@
   <doc:blocks>nothing today. Part 0 becomes the top of the funnel that `35-` §5 intake assumes already exists.</doc:blocks>
 </doc:meta>
 
+> **Parts 0–2 partly superseded 2026-10-05 by `PRD-outreach-autonomous-sourcing.md`.** R0.5 is
+> rewritten (two verification kinds **or** cited evidence from two distinct
+> domains); Gate 0 "accept" now approves, promotes, and starts the sequence in one
+> click, so the classifier-promotion route (Part 2) serves only legacy rows; the
+> discovery channels in Part 0 are replaced by the research agent once it passes
+> V6. The field contract, R0.7 reject reasons, and R14 still hold.
+
 ## 0. What changed in rev 2, and what it costs
 
 Operator revisions, 2026-08-19, taken as given:
@@ -111,7 +118,7 @@ each is also applied where it belongs in the text below.
 |---|---|---|
 | **OQ-A** | Suggested Pain Point vs the no-generation rule | **Limited generation.** One bounded call, marked draft, operator-facing only, excluded from packet assembly. `35-` §7 must be amended to say so before the code lands (R0.12). |
 | **OQ-B** | Is 20/day sustainable | **Accepted as a ceiling**, not a quota. Achieved rate reported weekly; a falling rate is a finding. |
-| **OQ-C** | Geography | **US only, all six segments.** Changes R0.4 and puts 37 of the 86 workbook rows out of scope (R0.13). |
+| **OQ-C** | Geography | ~~US only, all six segments.~~ **Superseded 2026-10-05: US + Canada, not Mexico** (operator; `PRD-outreach-autonomous-sourcing.md` §17). Originally changed R0.4 and put 37 of the 86 workbook rows out of scope (R0.13). The workbook now has 100 rows: 59 US, 10 Canada, 20 UK, 11 Australia. |
 | **OQ-D** | Who assigns pain layer | **Definitions recorded (R0.14); the field is held out of the card and out of the score** until the operator has a clearer picture of the market. Column exists, nullable, unsurfaced. |
 | **OQ-F** | Workbook backlog | **Import the 49 US rows as unreviewed** (revised 2026-08-20 once the OQ-C collision surfaced). The 37 non-US rows are not imported at all. |
 | **OQ-H** | Does `defer` count as a label | **No label.** |
@@ -382,7 +389,7 @@ surface, and each stamps `discovered_via`:
 - *Directory and association membership rolls* where a public listing exists.
 - *The company's own site*, for everything after the firm is identified.
 
-**Geography: United States only, across all six segments** (OQ-C, 2026-08-19).
+**Geography: United States and Canada, across all six segments** (OQ-C as revised 2026-10-05; it read "United States only" from 2026-08-19).
 Every sourcing query is US-scoped. The workbook's UK, Australian, and Canadian rows
 stay in the file and out of the funnel — see R0.13. Reopening geography later costs
 nothing that has been thrown away, which is why it is a cheap decision to revisit.
@@ -392,7 +399,10 @@ automated access. This is the binding constraint on discovery volume, and with
 `20/day` accepted as a ceiling rather than a quota (OQ-B), a falling achieved rate
 is reported as a finding rather than padded around.
 
-**R0.5 — Verification is evidence, not a status.** A firm is surfaced only when at
+**R0.5 — REWRITTEN 2026-10-05 by migration 0029** (`PRD-outreach-autonomous-sourcing.md`
+§4 gate 10): a firm may also be surfaced on cited evidence from two distinct
+registrable domains, gathered by the research agent. Originally: **Verification is
+evidence, not a status.** A firm is surfaced only when at
 least two of four kinds hold, and the *Verification Note* names which. **Three of
 the four were narrowed on 2026-08-20** because the code could not honestly do what
 this rule first claimed — each correction is narrower than the original, never

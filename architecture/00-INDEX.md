@@ -57,6 +57,9 @@ For **inbound lead handling** (why inbound never runs the cold arc; the design i
 For **market discovery and company profiling** (sourcing candidate firms across six segments, the daily-20 review surface, news observation, classification into the eight triggers, contact/firmographic enrichment, and the ICP selection feedback loop — five parts, none built):
 → [`PRD-outreach-company-profile.md`](./PRD-outreach-company-profile.md) — Track O, rev 2 (2026-08-19) for operator review; Parts 0 and 1 unblocked
 
+For **autonomous outreach sourcing** (a research agent with web search and subagents surfacing ten approvable candidates a day; one-click approval replacing Gate 0 → classify → CLI scoring → Gate 1; hypotheses for candidates outside the current list):
+→ [`PRD-outreach-autonomous-sourcing.md`](./PRD-outreach-autonomous-sourcing.md) — BUILT builder-side 2026-10-05; loop disabled pending V6 (D2, Google API, deferred)
+
 For the **outreach workflow as a picture** (six diagrams — read this before 35-):
 → [`37-outreach-workflow.md`](./37-outreach-workflow.md)
 

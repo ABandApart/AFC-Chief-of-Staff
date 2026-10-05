@@ -69,6 +69,8 @@ def build_card(data: dict) -> discord.Embed:
             inline=False,
         )
     embed.add_field(name="Driving facts", value=ds.format_driving_facts(evidence), inline=False)
+    if note := ds.country_note(target):
+        embed.add_field(name="Note", value=note, inline=False)
 
     if pkt:
         unresolved = pkt.get("unresolved_slots") or []

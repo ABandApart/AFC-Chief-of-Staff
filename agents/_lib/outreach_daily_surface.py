@@ -101,6 +101,16 @@ def gmail_link(touch: dict[str, Any]) -> str | None:
     return None
 
 
+def country_note(target: dict[str, Any]) -> str | None:
+    """The card note for a Canadian firm (operator decision 2026-10-05, §17), or None.
+
+    Shown on the card, never written into the draft body.
+    """
+    if target.get("country") == "Canada":
+        return "🇨🇦 Canadian firm: CASL applies. The Gmail draft subject starts with [CA]."
+    return None
+
+
 def bcc_address(touch: dict[str, Any]) -> str:
     """The dedicated-mailbox BCC address for this touch (`35-` §8)."""
     return f"bcc+{touch['bcc_token']}@aiadaptive.co"

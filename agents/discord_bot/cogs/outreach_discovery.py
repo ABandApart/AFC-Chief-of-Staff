@@ -68,7 +68,9 @@ _CONFIDENCE = [
 ]
 
 _DECISIONS = [
-    discord.SelectOption(label="Accept — add to the pool", value="accept"),
+    # One click: accept, promote with the proposed scores, start the sequence
+    # (PRD-outreach-autonomous-sourcing §6.7). Stored as `accept`.
+    discord.SelectOption(label="Approve — start outreach", value="accept"),
     discord.SelectOption(label="Reject", value="reject"),
     discord.SelectOption(label="Defer — decide later", value="defer"),
 ]
@@ -124,6 +126,8 @@ def row_summary(row: dict) -> str:
     parts = []
     if mark := _DECIDED_MARK.get(decision or ""):
         parts.append(mark)
+    if row.get("hypothesis_id"):
+        parts.append("🧪")
     parts.append(f"**{row['company_name']}**")
     parts.append(row["segment"].replace("_", " "))
     if row.get("headcount_band"):
@@ -160,12 +164,56 @@ def detail_block(row: dict) -> str:
         f"**Observed signal** {row.get('observed_signal') or 'none observed yet'}",
         f"**Touches** {row.get('touches', 0)} — new",
     ]
+    if row.get("summary"):
+        lines[2:2] = [f"**Summary** {row['summary']}", ""]
+    if row.get("why_now"):
+        lines.append(f"**Why now** {row['why_now']}")
+    if row.get("contact_method"):
+        lines.append(f"**Contact found by** {row['contact_method'].replace('_', ' ')}")
+    if scores := proposed_scores_line(row.get("proposed_scores")):
+        lines.append(f"**Proposed** {scores} _(accepted on Approve; editable)_")
+    if hyp := row.get("hypothesis"):
+        lines.append(
+            f"**🧪 Tests hypothesis #{hyp['hypothesis_id']}** ({hyp['status']}) "
+            f"{hyp['statement']} — so far: {hyp['approved']} approved, "
+            f"{hyp['touches_sent']} sent, {hyp['targets_replied']} replied, "
+            f"{hyp['calls_booked']} calls")
+    if evidence := evidence_lines(row.get("evidence")):
+        lines.append("**Evidence**")
+        lines.extend(evidence)
+    if row.get("suggested_angle"):
+        lines.append(f"**Angle** _(for you — never sent)_ {row['suggested_angle']}")
     if row.get("pain_hook"):
         lines.append(f"**Suggested hook** _(draft — not for sending)_ {row['pain_hook']}")
     if row.get("source_url"):
         lines.append("")
         lines.append(f"Named from: {row['source_url']}")
     return "\n".join(lines)[:3900]
+
+
+def proposed_scores_line(scores: dict | None) -> str:
+    """The agent's proposed S2–S5, stage and function state, compactly."""
+    if not scores:
+        return ""
+    parts = []
+    for key, label in (("s2_stage_fit", "S2"), ("s3_sector_match", "S3"),
+                       ("s4_leadership_gap", "S4"), ("s5_team_build_below", "S5")):
+        if scores.get(key) is not None:
+            parts.append(f"{label} {scores[key]}")
+    for key in ("stage", "function_state"):
+        if scores.get(key):
+            parts.append(str(scores[key]).replace("_", " "))
+    return " · ".join(parts)
+
+
+def evidence_lines(evidence: list | None, limit: int = 6) -> list[str]:
+    """Cited evidence, one line each, with its source and date."""
+    out = []
+    for item in (evidence or [])[:limit]:
+        claim = str(item.get("claim", ""))[:160]
+        when = item.get("date") or "undated"
+        out.append(f"• {claim} — <{item.get('url', '')}> ({when})")
+    return out
 
 
 class ReviewModal(discord.ui.Modal):
@@ -212,10 +260,14 @@ class ReviewModal(discord.ui.Modal):
             return
 
         try:
-            result = await asyncio.to_thread(
-                outreach_discovery.decide, self.discovery_id, action,
-                reason=reason, note=note,
-            )
+            if action == "accept":
+                result = await asyncio.to_thread(outreach_discovery.approve,
+                                                 self.discovery_id)
+            else:
+                result = await asyncio.to_thread(
+                    outreach_discovery.decide, self.discovery_id, action,
+                    reason=reason, note=note,
+                )
         except Exception:
             logger.exception("gate 0: decision failed for %s", self.discovery_id)
             await interaction.response.send_message(
@@ -233,8 +285,8 @@ class ReviewModal(discord.ui.Modal):
                 ephemeral=True)
             return
         await interaction.response.send_message(
-            f"{'✅ Accepted' if action == 'accept' else '❌ Rejected'} "
-            f"**{result.get('company_name', '')}**"
+            approval_message(result) if action == "accept" else
+            f"❌ Rejected **{result.get('company_name', '')}**"
             f"{f' — {reason}' if reason else ''}",
             ephemeral=True,
             # Catches "I noticed the contact was stale while deciding" without a
@@ -246,6 +298,21 @@ class ReviewModal(discord.ui.Modal):
         # reads next time. Refresh it so the decision is visible without
         # remembering which rows were done.
         await self.cog.refresh_sheet(self.message_id)
+
+
+def approval_message(result: dict) -> str:
+    """What the operator sees after Approve (pure)."""
+    name = result.get("company_name", "")
+    if not result.get("accepted"):
+        return (f"⏸️ **{name}** was not approved: {result.get('blocked', 'unknown reason')}. "
+                "Nothing changed; the card stays.")
+    if result.get("started"):
+        return (f"✅ Approved **{name}** — outreach started "
+                f"({result.get('touches', 0)} touches scheduled; the first packet "
+                "and Gmail draft arrive with tomorrow's run).")
+    return (f"✅ Approved **{name}** and added it as a target, but the sequence did "
+            f"not start: {result.get('blocked', 'unknown reason')}. It is on the "
+            "Gate 1 card with its scores.")
 
 
 def _selected(label: discord.ui.Label) -> str | None:
@@ -461,7 +528,11 @@ class OutreachDiscoveryCog(commands.Cog):
     @staticmethod
     def fetch_one(discovery_id: int) -> dict | None:
         with db.connection() as conn:
-            return outreach_discovery.get(conn, discovery_id)
+            row = outreach_discovery.get(conn, discovery_id)
+            if row and row.get("hypothesis_id"):
+                row["hypothesis"] = outreach_discovery.hypothesis_summary(
+                    conn, row["hypothesis_id"])
+            return row
 
     @staticmethod
     def _fetch_window() -> list[dict]:

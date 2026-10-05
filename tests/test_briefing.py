@@ -25,7 +25,7 @@ def test_briefing_includes_date_and_counts():
     s = format_briefing(now, STATUS)
     assert "Monday 06 July 2026" in s
     assert "Notes captured: 12 total, 3 in the last 24h" in s
-    assert "7 for $0.000012" in s
+    assert "LLM calls (24h): 7 — no failures" in s
     assert "Outcomes recorded: 2" in s
 
 
@@ -103,3 +103,50 @@ def test_format_new_prospects_caps_at_limit():
     ]
     out = format_new_prospects(prospects)
     assert out.count("• ") == NEW_PROSPECTS_LIMIT
+
+
+# --- daily spend section (PRD-outreach-autonomous-sourcing §6.8) -------------
+
+from datetime import date  # noqa: E402
+
+from agents.briefing.run import format_spend  # noqa: E402
+
+
+def _spend(by_agent, sourcing=None):
+    return {"by_agent": by_agent, "avg7": 11.2, "mtd": 112.4, "sourcing": sourcing}
+
+
+def test_spend_splits_outreach_from_everything_else():
+    text = format_spend(date(2026, 10, 5), _spend([
+        ("outreach-sourcing", 13.40), ("granola", 0.62), ("trent-crimm", 0.31),
+        ("outreach-discover", 0.24), ("recall", 0.15)]))
+    assert "Spend, Mon 2026-10-05: $14.72 of $25.00" in text
+    assert "Outreach $13.95 of $20.00: sourcing $13.40 · trent-crimm $0.31 · discover $0.24" in text
+    assert "Everything else $0.77: granola $0.62 · recall $0.15" in text
+    assert "7-day average $11.20 · month to date $112.40" in text
+    assert "not Anthropic's invoice" in text
+    assert "⚠️" not in text
+
+
+def test_spend_reports_the_sourcing_run_and_its_unit_cost():
+    run = {"target_n": 15, "passed": 15, "usd_cost": 13.35, "stop_reason": "target_met",
+           "finished_at": datetime(2026, 10, 5, 6, 12)}
+    text = format_spend(date(2026, 10, 5), _spend([("outreach-sourcing", 13.35)], run))
+    assert "Outreach run: 15 candidates surfaced, $0.89 each" in text
+
+
+def test_spend_flags_a_budget_stop():
+    run = {"target_n": 15, "passed": 8, "usd_cost": 19.9, "stop_reason": "budget",
+           "finished_at": datetime(2026, 10, 5, 6, 41)}
+    text = format_spend(date(2026, 10, 5), _spend([("outreach-sourcing", 20.01)], run))
+    assert "Outreach ceiling reached at 06:41; the run stopped with 8 of 15 surfaced." in text
+
+
+def test_spend_flags_the_system_ceiling():
+    text = format_spend(date(2026, 10, 5), _spend([("granola", 25.5)]))
+    assert "System ceiling reached" in text
+
+
+def test_spend_with_no_activity_still_renders():
+    text = format_spend(date(2026, 10, 5), _spend([]))
+    assert "$0.00 of $25.00" in text and "Outreach $0.00 of $20.00" in text

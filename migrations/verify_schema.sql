@@ -7,7 +7,10 @@
 -- (Baseline 0001 was 18 with `facts`; 0006 dropped `facts`, and 0003/0005/0007
 -- added `capture_messages` + `playbook_publications` + `channel_state`
 -- → 18 - 1 + 3 = 20; 0009 added `tool_invocations` → 21; 0013 added the six
--- `outreach_*` tables → 27.)
+-- `outreach_*` tables → 27; 0018/0019/0022/0025 added `outreach_discoveries`,
+-- `outreach_segment_scores`, `outreach_icp_models`, `gmail_channel_state` → 31;
+-- 0029 added `outreach_hypotheses`, `outreach_segments`, `outreach_sourcing_runs`
+-- → 34. 0017 was never used; 0028 belongs to the unmerged Phase 10 branch.)
 -- =============================================================================
 
 \echo
@@ -18,7 +21,7 @@ SELECT
 FROM pg_extension;
 
 \echo
-\echo '=== Expected tables (27) ==='
+\echo '=== Expected tables (34) ==='
 WITH expected(name) AS (VALUES
     ('agent_runs'),
     ('approval_queue'),
@@ -30,13 +33,20 @@ WITH expected(name) AS (VALUES
     ('dashboard'),
     ('decisions'),
     ('follow_ups'),
+    ('gmail_channel_state'),
     ('icp_signals'),
     ('interest_signals'),
     ('meeting_transcripts'),
     ('outcomes'),
+    ('outreach_discoveries'),
     ('outreach_evidence'),
     ('outreach_events'),
+    ('outreach_hypotheses'),
+    ('outreach_icp_models'),
     ('outreach_packets'),
+    ('outreach_segment_scores'),
+    ('outreach_segments'),
+    ('outreach_sourcing_runs'),
     ('outreach_targets'),
     ('outreach_touches'),
     ('outreach_watch_signals'),
@@ -99,7 +109,8 @@ ORDER BY e.name;
 \echo
 \echo '=== Track O outreach layer (migration 0013): views, S1, audit triggers ==='
 WITH expected(name) AS (
-    VALUES ('v_outreach_scored'), ('v_outreach_evidence_display'), ('v_outreach_capacity')
+    VALUES ('v_outreach_scored'), ('v_outreach_evidence_display'), ('v_outreach_capacity'),
+           ('v_outreach_hypothesis_results')  -- 0029
 )
 SELECT
     e.name AS view_name,
@@ -123,7 +134,8 @@ SELECT
     END AS s1_status;
 
 WITH expected(tbl) AS (
-    VALUES ('outreach_targets'), ('outreach_touches'), ('outreach_evidence')
+    VALUES ('outreach_targets'), ('outreach_touches'), ('outreach_evidence'),
+           ('outreach_hypotheses'), ('outreach_segments')  -- 0029
 )
 SELECT
     e.tbl AS audited_table,
@@ -177,8 +189,22 @@ SELECT
          THEN 'OK' ELSE 'FAIL owner is ' || pg_get_userbyid(c.relowner) END AS owner_status
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'outreach%'
+WHERE n.nspname = 'public' AND c.relkind = 'r'
+  AND (c.relname LIKE 'outreach%' OR c.relname LIKE 'gmail%')
 ORDER BY c.relname;
+
+\echo
+\echo '=== Autonomous sourcing (migration 0029) ==='
+SELECT
+    CASE WHEN (SELECT cold_ceiling FROM v_outreach_capacity) = 150
+         THEN 'OK   live-sequence cap is 150 (D1)'
+         ELSE 'FAIL live-sequence cap is not 150 — check migration 0029' END AS capacity_status,
+    CASE WHEN (SELECT count(*) FROM outreach_segments WHERE in_list) >= 6
+         THEN 'OK   in-list segments seeded'
+         ELSE 'FAIL outreach_segments missing the six workbook segments' END AS segments_status,
+    CASE WHEN to_regclass('outreach_sourcing_runs') IS NOT NULL
+         THEN 'OK   outreach_sourcing_runs present'
+         ELSE 'MISSING outreach_sourcing_runs' END AS runs_status;
 
 \echo
 \echo '=== Summary ==='

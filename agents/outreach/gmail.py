@@ -66,6 +66,29 @@ def body_hash(body: str) -> str:
     return hashlib.sha256(body.strip().encode("utf-8")).hexdigest()
 
 
+# Operator decision 2026-10-05 (PRD-outreach-autonomous-sourcing §17): drafts to a
+# Canadian firm carry a subject prefix, never a body line (the body goes to the
+# prospect if the operator forgets to delete it). "For now", pending CASL handling.
+CANADA_SUBJECT_PREFIX = "[CA] "
+
+
+def draft_subject(subject: str | None, country: str | None) -> str:
+    """The draft's subject: the packet subject, prefixed for a Canadian firm (pure).
+
+    Never doubled: a refresh of an already-prefixed draft leaves one prefix.
+    """
+    subject = subject or ""
+    if country == "Canada" and not subject.startswith(CANADA_SUBJECT_PREFIX):
+        return CANADA_SUBJECT_PREFIX + subject
+    return subject
+
+
+def _with_draft_subject(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in rows:
+        row["subject_line"] = draft_subject(row.get("subject_line"), row.get("country"))
+    return rows
+
+
 def build_raw(*, to: str, subject: str, body: str, bcc: str) -> str:
     """Compose one draft as a base64url RFC-822 message (what drafts.create wants)."""
     msg = EmailMessage()
@@ -149,7 +172,7 @@ def roundtrip_hash(svc: Any, draft_id: str) -> str:
 
 _DRAFTABLE_SQL = """
     SELECT t.id AS touch_id, t.bcc_token, tg.contact_email, tg.company_name,
-           p.subject_line, p.body_filled
+           tg.country, p.subject_line, p.body_filled
       FROM outreach_touches t
       JOIN outreach_targets tg ON tg.id = t.target_id
       JOIN LATERAL (
@@ -173,7 +196,7 @@ def list_draftable(conn: object) -> list[dict[str, Any]]:
     (create-once)."""
     with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
         cur.execute(_DRAFTABLE_SQL)
-        return cur.fetchall()
+        return _with_draft_subject(cur.fetchall())
 
 
 def save_draft_state(conn: object, touch_id: int, ids: dict[str, str],
@@ -208,7 +231,7 @@ def list_existing_drafts(conn: object) -> list[dict[str, Any]]:
     keep the draft current with the latest packet UNLESS the operator has edited it."""
     with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
         cur.execute(_EXISTING_SQL)
-        return cur.fetchall()
+        return _with_draft_subject(cur.fetchall())
 
 
 # --- orchestration -----------------------------------------------------------

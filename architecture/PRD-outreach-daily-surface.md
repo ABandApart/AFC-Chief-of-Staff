@@ -5,7 +5,7 @@
   <doc:theme>A Discord daily worklist of ~15 items: due touches to contact, backfilled with pending decisions</doc:theme>
   <doc:duration>~2–3 days (worklist builder, cog + cards, migration)</doc:duration>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT 2026-09-03 — operator decisions taken (full Discord surface, Contact=mark-working, worklist-of-15). Not built.</doc:status>
+  <doc:status>BUILT — commit 72bae0d, migration 0027 (status corrected 2026-10-05; it read "Not built"). Operator decisions taken 2026-09-03: full Discord surface, Contact=mark-working, worklist-of-15.</doc:status>
   <doc:depends_on>`35-outreach-crm.md` §7 packet, §8 capacity, §9 surfaces; `37-outreach-workflow.md`; `PRD-outreach-gmail-channel.md`; migrations 0013 (touches), 0025 (gmail); `agents/outreach/daily.py`; `agents/discord_bot/cogs/outreach_intake.py`</doc:depends_on>
   <doc:blocks>nothing — NocoDB, Gmail drafts, and Task Tinder all keep working unchanged</doc:blocks>
 </doc:meta>

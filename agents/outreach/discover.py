@@ -4,9 +4,10 @@ Sources candidate firms from every channel, verifies them, scores them, and
 inserts the survivors into the Gate 0 pool as unreviewed. Surfacing them is the
 cog's job; this loop only fills the pool.
 
-**No LLM.** Deterministic fetch, verification and arithmetic, so it writes no
-`agent_runs` rows, trips no ceiling, and cannot fail from a provider outage
-(`40-action-layer.md`, Outreach_loops).
+**One bounded LLM path.** The `news_query` channel makes Haiku extraction calls
+(R0.21, `outreach_discovery` label, `outreach-discover` ceiling, inside the $20
+outreach group). Everything else is deterministic fetch, verification and
+arithmetic. (Corrected 2026-10-05: this said "No LLM", which predated R0.21.)
 
 **Nothing is fabricated to hit a number.** R0.11 makes the daily window a ceiling
 rather than a quota, and the same applies here: a run that finds three verifiable

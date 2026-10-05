@@ -325,7 +325,8 @@ cognee). It blocks the *next* invocation.
 **Where it lives**: `assert_under_ceiling(agent_name)` in `_lib/runs.py`. Runs on
 `agent_run` entry, and is callable directly before a cognee operation. One query
 sums today's spend for the agent *and* the system-wide total, so a bug spread
-across several agents is still bounded by `GLOBAL_DAILY_CEILING` ($20). "Today"
+across several agents is still bounded by `GLOBAL_DAILY_CEILING` ($25). Agents in a
+`CEILING_GROUPS` group also share that group's ceiling (2026-10-05). "Today"
 starts at **local** midnight. Check-then-act: concurrent runs can overshoot by
 roughly one call's cost — acceptable at these ceilings, and reconcile catches
 sustained drift.
@@ -346,7 +347,14 @@ sustained drift.
 | `nate-shelley` | $0.07 (~$0.50/wk) | 10 |
 | `ted` | $0.20 | 11 |
 | `higgins` | $0.04 (~$0.30/wk) | 11 |
-| **System-wide (`GLOBAL_DAILY_CEILING`)** | **$20.00** | kill switch |
+| `outreach-discover` / `trent-crimm` | $0.25 / $0.30 | Track O |
+| `outreach-sourcing` (planner + workers) | $20.00 | Track O, autonomous sourcing |
+| **Group `outreach`** (`CEILING_GROUPS`: the three outreach agents together) | **$20.00** | 2026-10-05 |
+| **System-wide (`GLOBAL_DAILY_CEILING`)** | **$25.00** (was $20.00 until 2026-10-05) | kill switch |
+
+Anthropic calls are priced on input and output tokens, cache reads and writes, and web
+search requests ($10 per 1,000); web fetch has no per-request fee
+(`runs.anthropic_cost`, 2026-10-05).
 
 Labeled cognee calls bill to the labeling agent's ceiling (e.g. capture →
 `fact-extraction`); only *unlabeled* cognee internals hit the `cognee` ceiling.

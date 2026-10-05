@@ -241,13 +241,49 @@ def _submit(mocker, decision, reason=None, note=None):
     return decide, interaction
 
 
-def test_an_accept_reaches_the_decision_core(mocker):
+def test_an_approve_goes_through_approve_not_decide(mocker):
+    """Approve is one click: accept + promote + start (autonomous-sourcing §6.7)."""
+    approve = mocker.patch.object(
+        cog.outreach_discovery, "approve",
+        return_value={"company_name": ROW["company_name"], "accepted": True,
+                      "started": True, "touches": 5, "target_id": 9},
+    )
     decide, interaction = _submit(mocker, "accept")
-    decide.assert_called_once()
-    args, kwargs = decide.call_args
-    assert args[0] == ROW["id"] and args[1] == "accept"
-    assert kwargs["reason"] is None
-    interaction.response.send_message.assert_awaited_once()
+    decide.assert_not_called()
+    approve.assert_called_once_with(ROW["id"])
+    message = interaction.response.send_message.call_args[0][0]
+    assert "outreach started" in message
+
+
+def test_approval_message_for_a_refusal_says_nothing_changed():
+    text = cog.approval_message({"company_name": "Acme", "accepted": False,
+                                 "started": False,
+                                 "blocked": "cold capacity is full (150/150)"})
+    assert "not approved" in text and "150/150" in text and "Nothing changed" in text
+
+
+def test_approval_message_for_a_race_points_at_gate_1():
+    text = cog.approval_message({"company_name": "Acme", "accepted": True,
+                                 "started": False, "blocked": "full"})
+    assert "did not start" in text and "Gate 1" in text
+
+
+def test_detail_block_shows_dossier_fields():
+    row = {**ROW, "summary": "Boutique L&D firm.", "why_now": "Hiring a COO.",
+           "contact_method": "published",
+           "proposed_scores": {"s2_stage_fit": 3, "s3_sector_match": 5,
+                               "s4_leadership_gap": 3, "s5_team_build_below": 1,
+                               "stage": "mature", "function_state": "self_covered"},
+           "evidence": [{"claim": "Opened a COO role", "url": "https://acme.example/jobs",
+                         "date": "2026-10-01"}],
+           "hypothesis": {"hypothesis_id": 4, "status": "testing", "statement": "X",
+                          "approved": 2, "touches_sent": 3, "targets_replied": 1,
+                          "calls_booked": 0},
+           "suggested_angle": "Ask about the COO search."}
+    text = cog.detail_block(row)
+    for expected in ("Boutique L&D firm.", "Hiring a COO.", "published", "S3 5",
+                     "self covered", "Opened a COO role", "hypothesis #4", "never sent"):
+        assert expected in text
 
 
 def test_a_reject_carries_its_reason_through(mocker):
@@ -467,7 +503,7 @@ def test_refresh_is_a_no_op_without_a_message_id(mocker):
 
 
 def test_a_submit_refreshes_the_sheet_it_came_from(mocker):
-    decide, _ = _submit(mocker, "accept")
+    decide, _ = _submit(mocker, "reject", reason="too_small")
     decide.assert_called_once()
 
 

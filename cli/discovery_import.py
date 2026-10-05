@@ -10,7 +10,8 @@ column — a batch stamp, identical on all 100 rows — became every target's
 
 **What it imports, and what it refuses to.**
 
-  * **US rows only** (OQ-C, 2026-08-20). `--country` parameterises it so
+  * **US and Canada** (OQ-C, revised 2026-10-05 from US-only): run once with
+    `--country US` and once with `--country Canada`. `--country` parameterises it so
     reopening geography is a flag rather than a code change.
   * **As unreviewed** (OQ-F). The workbook's `Status` is `New` on all 100 rows —
     they were assembled but never triaged. Importing them as accepts would
