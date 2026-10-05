@@ -412,7 +412,7 @@ Each increment gets its own verification and decision-log entry.
 | **D3** | **Contact data** | (a) Agent-found published contacts only; (b) add a paid enrichment plan (Apollo Basic or similar); (c) allow pattern-inferred emails, clearly marked | **(a) + (c) to start**, then (b) if contact coverage stays below 50% after two weeks. 18 of 28 current targets have only a generic inbox. Pattern inference raises bounce risk on your own domain; R21 terms must be read for any paid provider. |
 | **D4** | **Hypothesis approval** | (a) Implicit, with the first approved candidate (§7.2); (b) a separate hypothesis card | **(a).** It adds no gate. (b) is the fallback if implicit approval proves too loose. |
 | ~~D5~~ | ~~Daily spend~~ | | **Settled 2026-10-05:** $20/day outreach group, $25/day system (§6.8). Estimated cost, unverified: $0.30–$1.00 per researched candidate and 20–30 researched for 15 surfaced, so $6–$30/day. V6 measures it. |
-| **D6** | **Geography** | Keep US-only (OQ-C); widen to US + Canada; or let hypotheses propose other markets | **Keep US-only for I1–I3.** Revisit once hypotheses have results. |
+| ~~D6~~ | ~~Geography~~ | | **Revised 2026-10-05 (operator): US + Canada, not Mexico** (§17). It read "keep US-only for I1–I3". |
 | **D7** | **S2–S5, stage, function state** | (a) Agent proposes, approval accepts; (b) drop them for agent-sourced candidates | **(a).** Packets and the Selector use them; dropping them is a larger change. |
 | **D8** | **Promoting a validated hypothesis to a segment** | (a) A migration extending the segment CHECK; (b) move segments to a config table read by the CHECK via a foreign key | **(b),** so a validated hypothesis needs no migration. A one-time migration does the move. |
 
@@ -499,7 +499,58 @@ Auto-retiring proposed hypotheses that nobody approved is built.
 | V1 | Passed in a rolled-back transaction against the live schema (rules refuse and accept as specified). |
 | V2, V3, V4, V9, V10 | Unit tests: `tests/test_outreach_sourcing.py`, `tests/test_runs.py`, `tests/test_briefing.py`. |
 | V5 | Builder side passed in a rolled-back transaction: approve started a 5-touch arc for an in-list candidate and a 3-touch arc for a hypothesis candidate, and moved the hypothesis to `testing`. The runtime check (packet and Gmail draft the next morning) needs barry-agent. |
-| V6, V7, V8 | Pending: need the migration applied and a run on barry-agent. |
+| V6 | **Passed 2026-10-05** (§17). Needed no migration. |
+| V7, V8 | Pending: need the migration applied and a run on barry-agent. |
+
+## 17. After V6 (2026-10-05)
+
+**V6 result: PASS.** On 10 existing targets: 8 of 10 dossiers passed the checks
+(bar 8), the operator rated 10 of 10 summaries accurate (bar 7), 0 R14 sources,
+$2.65 total ($0.27 per firm, range $0.13–$0.43). The two failures were correct
+non-US rejections. Report: `/Users/Shared/afc-richmond/V6-probe-2026-10-05.md`.
+
+**Operator decisions:**
+
+- **D6 revised: geography is US + Canada.** Mexico is excluded (it would bring in
+  Spanish-language firms). Supersedes "US-only for I1–I3" above and OQ-C in
+  `PRD-outreach-company-profile.md`. Not retroactive: the V6 result stands.
+- **Canadian-firm note on drafts.** Every Gmail draft for a target whose country
+  is Canada gets a `[CA]` subject prefix, on create and on refresh. The `#outreach`
+  card shows "Canadian firm: CASL applies". **Nothing is added to the email body**
+  (`body_filled`), because the operator sends drafts by hand and a body line
+  could reach the prospect. "For now": revisit when the CASL handling is decided.
+
+**Outcome (S1).** A Canadian firm can be found, checked, stored, approved and
+sequenced exactly like a US one, and every draft and card for it carries the note.
+A dossier missing any proposed score never passes the checks.
+
+**Changes:**
+
+1. **Checks validate the dossier in code** (V6 finding 1: LifeLabs passed with
+   every proposed score empty, so the strict tool schema was not fully enforced).
+   Missing or out-of-vocabulary proposals, contact method, or evidence fields fail
+   as `bad_proposals` / `bad_fields`.
+2. **Country is normalized and stored.** The worker writes the full country name;
+   `checks.normalize_country` maps it to `US` or `Canada` (a bare `CA` is refused as
+   ambiguous with California). The stored value comes from the dossier; it was
+   hard-coded `US` (`run.py`). Targets gain a `country` column (0029, edited before
+   it was ever applied), carried from the discovery on promotion.
+3. **0029 rebuilds `v_outreach_scored`**: the view's column list is frozen at
+   creation (the 0016/0024 trap), and 0029 adds `hypothesis_id` and `country` to
+   targets. Found while adding `country`; the earlier 0029 would have failed
+   `verify_schema.sql`'s drift check.
+4. **The worker bases "why now" and the suggested angle only on pages it opened**
+   (V6 finding 3: AIIR's angle rested on an unopened snippet).
+5. **The probe report shows the trigger as the real path stores it**
+   (`usable_trigger`), and probe ledger rows are `trigger_kind = manual`.
+
+**Non-goals:** CASL compliance logic (consent tracking, unsubscribe handling);
+Mexico; any change to the email body.
+
+**Verification:** unit tests for country normalization and the geography check,
+proposal validation, the `[CA]` prefix on create and refresh (and not doubled),
+the card field, the probe report trigger, and the worker prompt; 0029 re-run in a
+rolled-back transaction with `verify_schema.sql`'s drift check passing.
 
 ## 15. Risks
 

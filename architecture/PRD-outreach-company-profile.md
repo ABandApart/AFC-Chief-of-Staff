@@ -118,7 +118,7 @@ each is also applied where it belongs in the text below.
 |---|---|---|
 | **OQ-A** | Suggested Pain Point vs the no-generation rule | **Limited generation.** One bounded call, marked draft, operator-facing only, excluded from packet assembly. `35-` §7 must be amended to say so before the code lands (R0.12). |
 | **OQ-B** | Is 20/day sustainable | **Accepted as a ceiling**, not a quota. Achieved rate reported weekly; a falling rate is a finding. |
-| **OQ-C** | Geography | **US only, all six segments.** Changes R0.4 and puts 37 of the 86 workbook rows out of scope (R0.13). |
+| **OQ-C** | Geography | ~~US only, all six segments.~~ **Superseded 2026-10-05: US + Canada, not Mexico** (operator; `PRD-outreach-autonomous-sourcing.md` §17). Originally changed R0.4 and put 37 of the 86 workbook rows out of scope (R0.13). The workbook now has 100 rows: 59 US, 10 Canada, 20 UK, 11 Australia. |
 | **OQ-D** | Who assigns pain layer | **Definitions recorded (R0.14); the field is held out of the card and out of the score** until the operator has a clearer picture of the market. Column exists, nullable, unsurfaced. |
 | **OQ-F** | Workbook backlog | **Import the 49 US rows as unreviewed** (revised 2026-08-20 once the OQ-C collision surfaced). The 37 non-US rows are not imported at all. |
 | **OQ-H** | Does `defer` count as a label | **No label.** |
@@ -389,7 +389,7 @@ surface, and each stamps `discovered_via`:
 - *Directory and association membership rolls* where a public listing exists.
 - *The company's own site*, for everything after the firm is identified.
 
-**Geography: United States only, across all six segments** (OQ-C, 2026-08-19).
+**Geography: United States and Canada, across all six segments** (OQ-C as revised 2026-10-05; it read "United States only" from 2026-08-19).
 Every sourcing query is US-scoped. The workbook's UK, Australian, and Canadian rows
 stay in the file and out of the funnel — see R0.13. Reopening geography later costs
 nothing that has been thrown away, which is why it is a cheap decision to revisit.

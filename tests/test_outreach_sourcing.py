@@ -102,7 +102,8 @@ def test_worker_tools_block_r14_domains():
 
 @pytest.mark.parametrize("over,code", [
     ({"domain": "already.example"}, "duplicate"),
-    ({"country": "Canada"}, "geography"),
+    ({"country": "Mexico"}, "geography"),
+    ({"country": "CA"}, "geography"),  # ambiguous with California
     ({"segment_key": "legal_ops"}, "no_hypothesis"),
     ({"summary": ""}, "missing_summary"),
 ])
@@ -480,3 +481,112 @@ def test_probe_report_summarises_and_leaves_rating_columns():
     assert "**1 of 2**" in text and "$0.90" in text and "$0.45" in text
     assert "| 1 | Acme | pass | $0.80 |  |  |" in text
     assert "error: refusal" in text and "## Verdict" in text
+
+
+
+# --- after V6 (§17): US + Canada, proposal validation, the [CA] note -------------
+
+from agents._lib import outreach as outreach_lib  # noqa: E402
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("United States", "US"), ("usa", "US"), ("U.S.", "US"), (" US ", "US"),
+    ("Canada", "Canada"), ("CAN", "Canada"),
+    ("CA", None), ("Mexico", None), ("", None), (None, None),
+])
+def test_normalize_country(raw, expected):
+    assert outreach_lib.normalize_country(raw) == expected
+    assert outreach_discovery.canonical_country(raw) == expected
+
+
+def test_a_canadian_firm_passes():
+    assert check(good_dossier(country="Canada")) == []
+
+
+def test_missing_proposals_fail():
+    """V6 finding 1: LifeLabs passed with every proposed score empty."""
+    empty = {"s2_stage_fit": None, "s3_sector_match": None, "s4_leadership_gap": None,
+             "s5_team_build_below": None, "stage": None, "function_state": None,
+             "reasons": ""}
+    assert "bad_proposals" in check(good_dossier(proposed=empty))
+    assert "bad_proposals" in check(good_dossier(proposed={**good_dossier()["proposed"],
+                                                           "s2_stage_fit": 2}))
+
+
+def test_malformed_contact_or_evidence_fails():
+    d = good_dossier(contact={**good_dossier()["contact"], "method": "guessed"})
+    assert "bad_fields" in check(d)
+    d = good_dossier()
+    d["evidence"].append({"claim": "", "url": "https://acmelearning.com/about",
+                          "source_kind": "own_site", "date": None})
+    assert "bad_fields" in check(d)
+
+
+def test_store_records_the_dossiers_country(mocker):
+    insert = mocker.patch.object(run.outreach_discovery, "insert_discovery", return_value=7)
+    run.store(mocker.MagicMock(), {"kind": "find", "segment_key": "corporate_l_and_d",
+                                   "guidance": "g"},
+              good_dossier(country="Canada"), SEEN, run_id="r", failures=[])
+    assert insert.call_args.args[1]["country"] == "Canada"
+
+
+def test_worker_prompt_rules_after_v6():
+    assert "Canadian" in worker.SYSTEM_PROMPT and "not Mexico" in worker.SYSTEM_PROMPT
+    assert "never on a search snippet" in worker.SYSTEM_PROMPT
+    find = worker.brief_prompt({"kind": "find", "segment_key": "x", "exclude_domains": set()})
+    assert "US or Canadian" in find
+
+
+def test_probe_reports_the_stored_trigger_and_is_manual(mocker):
+    undated = good_dossier(trigger={"kind": "new_executive_hire", "date": None,
+                                    "source_url": "https://news.example.org/acme-coo"})
+    research = mocker.patch.object(run.worker, "research", return_value=worker.WorkerResult(
+        dossier=undated, seen_urls=SEEN))
+    mocker.patch.object(checks, "default_site_is_live", return_value=True)
+    out = run.probe_one({"id": 1, "company_name": "Acme", "company_domain": "acmelearning.com",
+                         "sector": "corporate_l_and_d"}, "v6")
+    assert out["dossier"]["trigger"]["kind"] is None       # dropped, as stored
+    assert research.call_args.kwargs["trigger_kind"] == "manual"
+
+
+# --- the [CA] draft note -------------------------------------------------------------
+
+from agents._lib import outreach_daily_surface as ds  # noqa: E402
+from agents.outreach import gmail  # noqa: E402
+
+
+def test_draft_subject_prefixes_canadian_firms_once():
+    assert gmail.draft_subject("Your COO search", "Canada") == "[CA] Your COO search"
+    assert gmail.draft_subject("[CA] Your COO search", "Canada") == "[CA] Your COO search"
+    assert gmail.draft_subject("Your COO search", "US") == "Your COO search"
+    assert gmail.draft_subject("Your COO search", None) == "Your COO search"
+
+
+def test_draft_queries_apply_the_prefix_on_create_and_refresh(mocker):
+    rows = [{"subject_line": "Hello", "country": "Canada"},
+            {"subject_line": "Hello", "country": "US"}]
+    for fn in (gmail.list_draftable, gmail.list_existing_drafts):
+        cur = mocker.MagicMock()
+        cur.fetchall.return_value = [dict(r) for r in rows]
+        conn = mocker.MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cur
+        out = fn(conn)
+        assert [r["subject_line"] for r in out] == ["[CA] Hello", "Hello"]
+        assert "tg.country" in cur.execute.call_args.args[0]
+
+
+def test_the_note_never_touches_the_body():
+    raw = gmail.build_raw(to="a@b.ca", subject=gmail.draft_subject("Hi", "Canada"),
+                          body="Body text", bcc="bcc+x@aiadaptive.co")
+    import base64
+    import email as email_mod
+    from email import policy
+    msg = email_mod.message_from_bytes(base64.urlsafe_b64decode(raw), policy=policy.default)
+    assert msg["Subject"] == "[CA] Hi"
+    assert msg.get_content().strip() == "Body text"
+
+
+def test_card_note_for_canadian_firms_only():
+    assert "CASL" in ds.country_note({"country": "Canada"})
+    assert ds.country_note({"country": "US"}) is None
+    assert ds.country_note({}) is None

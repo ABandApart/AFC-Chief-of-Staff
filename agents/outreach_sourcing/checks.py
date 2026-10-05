@@ -24,7 +24,34 @@ _TWO_LABEL_SUFFIXES = frozenset({"co.uk", "org.uk", "ac.uk", "com.au", "co.nz",
                                  "co.jp", "com.br", "co.in", "com.mx"})
 
 MIN_DISTINCT_EVIDENCE_DOMAINS = 2
-ALLOWED_COUNTRIES = frozenset({"US", "USA", "UNITED STATES"})
+
+normalize_country = outreach.normalize_country  # D6: US + Canada (shared rule)
+
+
+def proposal_failures(dossier: dict[str, Any]) -> list[str]:
+    """Fields the strict tool schema should have guaranteed, checked in code (pure).
+
+    V6 showed the schema is not fully enforced: one dossier arrived with every
+    proposed score empty. A dossier like that must not pass, and must not reach a
+    card that approval would then refuse.
+    """
+    from agents.outreach_sourcing import dossier as vocab
+
+    failures: list[str] = []
+    proposed = dossier.get("proposed") or {}
+    scores_ok = all(proposed.get(k) in vocab.SCORE_VALUES for k in (
+        "s2_stage_fit", "s3_sector_match", "s4_leadership_gap", "s5_team_build_below"))
+    if not (scores_ok and proposed.get("stage") in vocab.STAGES
+            and proposed.get("function_state") in vocab.FUNCTION_STATES):
+        failures.append("bad_proposals")
+    contact = dossier.get("contact") or {}
+    evidence = dossier.get("evidence")
+    if (contact.get("method") not in vocab.CONTACT_METHODS
+            or not isinstance(evidence, list)
+            or any(not (isinstance(e, dict) and e.get("url") and e.get("claim"))
+                   for e in evidence)):
+        failures.append("bad_fields")
+    return failures
 
 
 def registrable_domain(url_or_host: str) -> str:
@@ -128,9 +155,12 @@ def run_checks(
     if domain and domain in known_domains and domain != own_discovery_domain:
         failures.append("duplicate")
 
-    # 6. Geography (D6: US only).
-    if (dossier.get("country") or "").strip().upper() not in ALLOWED_COUNTRIES:
+    # 6. Geography (D6, revised 2026-10-05: US + Canada).
+    if normalize_country(dossier.get("country")) is None:
         failures.append("geography")
+
+    # 9. The fields the schema should have guaranteed.
+    failures += proposal_failures(dossier)
 
     # 7. Outside the current list needs a hypothesis (also enforced by 0029).
     if dossier.get("segment_key") not in in_list_segments and not has_hypothesis:

@@ -236,7 +236,8 @@ PLAN_SCHEMA: dict[str, Any] = {
 
 PLAN_SYSTEM = """\
 You plan today's prospect research for AI Adaptive, a solo AI consultancy
-(Barry Baldwin). Research workers will each find one US company per brief.
+(Barry Baldwin). Research workers will each find one US or Canadian company
+per brief (not Mexico).
 
 Return briefs that, together, produce the requested number of candidates. Most
 briefs should target the in-list segments. Up to the stated exploration share may
@@ -412,7 +413,7 @@ def store(conn: object, brief: dict[str, Any], found: dict[str, Any], seen: set[
         "company_domain": found.get("domain"),
         "company_url": found.get("company_url"),
         "segment": brief["segment_key"],
-        "country": "US",
+        "country": checks.normalize_country(found.get("country")),
         "hq_location": found.get("hq_location"),
         "headcount_band": outreach.clean_field(found.get("headcount_estimate"), max_chars=50),
         "contact_name": contact.get("name"),
@@ -652,9 +653,9 @@ def probe_targets(conn: object, n: int) -> list[dict[str, Any]]:
         cur.execute(
             "SELECT id, company_name, company_domain, sector FROM outreach_targets "
             "WHERE company_domain IS NOT NULL "
-            # Discovery is US-only (D6); a foreign firm would fail geography,
-            # which is not the worker quality V6 measures.
-            "  AND company_domain !~ '\\.(au|uk|ca|nz|ie|de|fr|in|sg)$' "
+            # Discovery is US + Canada (D6, revised 2026-10-05); a firm elsewhere
+            # would fail geography, which is not the worker quality V6 measures.
+            "  AND company_domain !~ '\\.(au|uk|nz|ie|de|fr|in|sg)$' "
             "ORDER BY id LIMIT %s", (n,))
         return cur.fetchall()
 
@@ -674,7 +675,7 @@ def probe_one(target: dict[str, Any], probe_id: str) -> dict[str, Any]:
              "domain": domain, "segment_key": segment, "known": "an existing target"}
     correlation = f"{probe_id}:{domain}"
     try:
-        result = worker.research(brief, run_id=correlation)
+        result = worker.research(brief, run_id=correlation, trigger_kind="manual")
     except Exception as exc:
         return {"target": target, "error": str(exc)[:300], "correlation": correlation}
     found = result.dossier
@@ -684,6 +685,8 @@ def probe_one(target: dict[str, Any], probe_id: str) -> dict[str, Any]:
                                  own_discovery_domain=domain)
     blocked = [e.get("url") for e in found.get("evidence") or []
                if checks.is_blocked(e.get("url", ""))]
+    # Report the trigger as the real path would store it (V6 finding 2).
+    found["trigger"] = checks.usable_trigger(found, result.seen_urls)
     return {"target": target, "dossier": found, "failures": failures, "turns": result.turns,
             "seen": len(result.seen_urls), "blocked": blocked, "correlation": correlation}
 

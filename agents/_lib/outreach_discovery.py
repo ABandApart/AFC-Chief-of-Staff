@@ -811,6 +811,15 @@ def approve(discovery_id: int, *, today: date | None = None) -> dict[str, Any] |
             "touches": len((result or {}).get("touches") or [])}
 
 
+def canonical_country(raw: str | None) -> str | None:
+    """The `outreach_targets.country` value for a discovery's country (pure).
+
+    Discovery rows store what their source said ("US", "United States",
+    "Canada"); targets store `US` / `Canada` only, and NULL for anything else.
+    """
+    return outreach.normalize_country(raw)
+
+
 def hypothesis_summary(conn: object, hypothesis_id: int) -> dict[str, Any] | None:
     """A hypothesis with its results so far, for the review card."""
     with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
@@ -897,6 +906,8 @@ def promote(discovery_id: int, trigger: dict[str, Any] | None = None, *,
             # In the same INSERT: 0029 refuses a hypothesis_test target
             # without its hypothesis, so a later UPDATE is too late.
             "hypothesis_id": found.get("hypothesis_id"),
+            # §17: carried so the target's drafts can carry the [CA] note.
+            "country": canonical_country(found.get("country")),
         })
         with conn.cursor() as cur:
             cur.execute(

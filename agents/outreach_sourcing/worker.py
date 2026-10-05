@@ -51,7 +51,9 @@ Rules:
 - Use at least two independent sources on different websites. The company's own
   site counts once however many pages you use.
 - Never use LinkedIn, ZoomInfo, or Glassdoor.
-- US companies only. If the company is not US-based, say so in no_candidate_reason.
+- US and Canadian companies only (not Mexico). Write `country` as the full name,
+  "United States" or "Canada". If the company is based elsewhere, say so in
+  no_candidate_reason.
 - Contact: prefer a named person whose name and email the company publishes. If you
   can only infer an email from a pattern, set method to pattern_inferred. If only a
   generic inbox exists (info@, hello@), use generic_inbox. Never invent a person.
@@ -59,6 +61,9 @@ Rules:
 - `summary` is 3 to 5 plain sentences for Barry: what the firm does, why it might
   buy, and the risk in that reading. `suggested_angle` is one sentence he may use
   when writing to them himself; it is never sent as-is.
+- Base `why_now` and `suggested_angle` only on pages you actually opened with
+  web_fetch, never on a search snippet. If you could not open the source of a
+  claim, leave it out of both.
 - State only what your sources support. When you are unsure, say so.
 - Finish by calling submit_dossier exactly once.
 """
@@ -106,7 +111,8 @@ def brief_prompt(brief: dict[str, Any]) -> str:
     hyp_text = (f"\nThis tests hypothesis #{hyp['id']}: {hyp['statement']}\n"
                 f"Pattern to look for: {hyp['pattern']}\n") if hyp else ""
     return (
-        f"Find ONE new US company that fits this brief and is not already known to us.\n"
+        f"Find ONE new US or Canadian company that fits this brief and is not "
+        f"already known to us.\n"
         f"- Segment key to use: {brief['segment_key']}\n"
         f"- Guidance: {brief.get('guidance', '')}\n{hyp_text}"
         f"- Do not return any of these domains: {excluded}\n\n"
@@ -154,7 +160,8 @@ def _submitted(content: list[Any]) -> dict[str, Any] | None:
     return None
 
 
-def research(brief: dict[str, Any], *, run_id: str, call: Any = None) -> WorkerResult:
+def research(brief: dict[str, Any], *, run_id: str, call: Any = None,
+             trigger_kind: str = "scheduled") -> WorkerResult:
     """Run one brief to a dossier. Raises `WorkerError` if none is submitted.
 
     `call` is injectable for tests; by default each worker is its own
@@ -162,7 +169,7 @@ def research(brief: dict[str, Any], *, run_id: str, call: Any = None) -> WorkerR
     """
     if call is not None:
         return _loop(brief, call)
-    with agent_run(AGENT, FUNCTION_LABEL, trigger_kind="scheduled",
+    with agent_run(AGENT, FUNCTION_LABEL, trigger_kind=trigger_kind,
                    correlation_id=run_id, correlation_kind="sourcing_run") as run:
         return _loop(brief, run.call_anthropic_raw)
 
