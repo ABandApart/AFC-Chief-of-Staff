@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import base64
 import email
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -48,10 +48,22 @@ def test_gather_filters_and_sorts(mocker):
         "next-week": _note("next-week", "2026-10-06T15:00:00Z"),
     }
     mocker.patch.object(run.creds, "keychain_get", return_value="tok")
-    mocker.patch.object(run.granola_client, "iter_note_summaries",
-                        return_value=[{"id": k} for k in notes])
+    listing = mocker.patch.object(run.granola_client, "iter_note_summaries",
+                                  return_value=[{"id": k} for k in notes])
     mocker.patch.object(run.granola_client, "get_note", side_effect=lambda t, i: notes[i])
     assert [n["id"] for n in run.gather(start, end)] == ["early", "late"]
+    # Granola rejects offsets; it must be UTC with a Z (barry-agent, 2026-10-05).
+    assert listing.call_args.kwargs["updated_after"] == "2026-09-28T04:00:00Z"
+
+
+@pytest.mark.parametrize("dt,expected", [
+    (datetime(2026, 9, 28, tzinfo=EDT), "2026-09-28T04:00:00Z"),
+    (datetime(2026, 9, 28, 4, 0, tzinfo=UTC), "2026-09-28T04:00:00Z"),
+    (datetime(2026, 12, 31, 23, 30, 15, 999, tzinfo=timezone(timedelta(hours=-5))),
+     "2027-01-01T04:30:15Z"),
+])
+def test_granola_timestamp_is_utc_z(dt, expected):
+    assert run.granola_timestamp(dt) == expected
 
 
 def test_prompt_caps_each_meeting_and_marks_data():
@@ -94,7 +106,10 @@ def test_dry_run_calls_neither_claude_nor_gmail(mocker, capsys):
     session = mocker.patch.object(run.claude_cli, "run_session")
     assert run.main(["--dry-run"]) == 0
     session.assert_not_called()
-    assert "Kickoff" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Kickoff" in out
+    local = datetime(2026, 9, 29, 15, 0, tzinfo=UTC).astimezone()
+    assert f"{local:%a %Y-%m-%d %H:%M}" in out   # printed in local time, not UTC
 
 
 def test_empty_week_skips_session(mocker):

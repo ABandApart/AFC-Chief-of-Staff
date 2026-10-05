@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -32,6 +33,12 @@ logger = logging.getLogger(__name__)
 
 CLAUDE_BIN = "claude"
 DEFAULT_TIMEOUT = 600
+
+# Oldest CLI that can run the models we use. 2.1.228 rejected `claude-opus-5-5`
+# with "version 2.1.280 or newer is required" (barry-agent, 2026-10-05). Checked
+# before every launch so a stale install fails early with a clear message
+# instead of as an API error mid-session.
+MIN_CLI_VERSION = (2, 1, 280)
 
 
 class ClaudeSessionError(RuntimeError):
@@ -46,6 +53,33 @@ class SessionResult:
     output_tokens: int
     session_id: str | None
     num_turns: int | None
+
+
+def parse_version(text: str) -> tuple[int, int, int] | None:
+    """`(major, minor, patch)` from `claude --version` output such as
+    `2.1.282 (Claude Code)`, or None if it has no version (pure)."""
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", text)
+    return tuple(int(g) for g in match.groups()) if match else None  # type: ignore[return-value]
+
+
+def check_cli_version(*, timeout: int = 30) -> tuple[int, int, int]:
+    """Raise `ClaudeSessionError` unless the `claude` on PATH is new enough."""
+    try:
+        proc = subprocess.run([CLAUDE_BIN, "--version"], capture_output=True,
+                              text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ClaudeSessionError(f"could not run `{CLAUDE_BIN} --version`: {e}") from e
+    version = parse_version(proc.stdout)
+    if version is None:
+        raise ClaudeSessionError(
+            f"could not read the claude CLI version from {proc.stdout.strip()[:100]!r}")
+    if version < MIN_CLI_VERSION:
+        have = ".".join(map(str, version))
+        need = ".".join(map(str, MIN_CLI_VERSION))
+        raise ClaudeSessionError(
+            f"claude CLI {have} is too old; {need} or newer is required. "
+            f"Update it as this account with `claude update`.")
+    return version
 
 
 def build_command(*, model: str, schema: dict[str, Any], max_budget_usd: float,
@@ -87,9 +121,11 @@ def parse_result(stdout: str) -> SessionResult:
         raise ClaudeSessionError(f"CLI output is not JSON: {stdout[:200]!r}") from e
     if not isinstance(data, dict):
         raise ClaudeSessionError("CLI output is not a JSON object")
+    # Check is_error first: the CLI reports some failures (auth, unsupported
+    # model) as subtype "success" with is_error true.
     if data.get("is_error") or (data.get("subtype") not in (None, "success")):
         raise ClaudeSessionError(
-            f"session ended with {data.get('subtype')!r}: {str(data.get('result'))[:300]}")
+            f"session failed ({data.get('subtype')}): {str(data.get('result'))[:300]}")
 
     output = data.get("structured_output")
     if output is None:
@@ -158,9 +194,12 @@ def run_session(prompt: str, *, agent: str, function_label: str, model: str,
     """Run one session and return its structured output. Ledgers success and failure.
 
     Raises `runs.DailyCeilingExceeded` before launching if the agent is over its
-    ceiling, and `ClaudeSessionError` if the session fails.
+    ceiling, `ClaudeSessionError` before launching if the CLI is too old, and
+    `ClaudeSessionError` if the session fails. Pre-launch refusals spend nothing
+    and write no ledger row.
     """
     runs.assert_under_ceiling(agent)
+    check_cli_version()
     argv = build_command(model=model, schema=schema, max_budget_usd=max_budget_usd,
                          system_prompt=system_prompt)
     env = {**os.environ, "ANTHROPIC_API_KEY": creds.keychain_get(runs.ANTHROPIC_KEY_ITEM)}

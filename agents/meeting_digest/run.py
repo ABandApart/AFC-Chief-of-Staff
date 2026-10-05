@@ -17,7 +17,7 @@ import argparse
 import base64
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from typing import Any
 
@@ -90,10 +90,17 @@ def in_window(note: dict[str, Any], start: datetime, end: datetime) -> bool:
     return dt is not None and start <= dt < end
 
 
+def granola_timestamp(dt: datetime) -> str:
+    """`dt` as UTC with a `Z` suffix — the only form Granola's `updated_after`
+    accepts. An offset such as `-04:00` is rejected as "Invalid date" (400),
+    found by barry-agent's dry run on 2026-10-05 (pure)."""
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def gather(start: datetime, end: datetime) -> list[dict[str, Any]]:
     """Full notes for meetings dated in [start, end), oldest first."""
     token = creds.keychain_get(GRANOLA_KEY_ITEM)
-    summaries = granola_client.iter_note_summaries(token, updated_after=start.isoformat())
+    summaries = granola_client.iter_note_summaries(token, updated_after=granola_timestamp(start))
     notes = [granola_client.get_note(token, s["id"]) for s in summaries]
     kept = [n for n in notes if in_window(n, start, end)]
     kept.sort(key=lambda n: meeting_start(n) or start)
@@ -149,7 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     notes = gather(start, end)
     print(f"{len(notes)} meeting(s) from {start:%Y-%m-%d} to {end:%Y-%m-%d} (exclusive):")
     for n in notes:
-        print(f"  {meeting_start(n):%a %Y-%m-%d %H:%M}  {(n.get('title') or '(untitled)')[:70]}")
+        local = meeting_start(n).astimezone()  # notes carry UTC; show the operator local time
+        print(f"  {local:%a %Y-%m-%d %H:%M}  {(n.get('title') or '(untitled)')[:70]}")
     if not notes:
         print("nothing to summarize")
         return 0

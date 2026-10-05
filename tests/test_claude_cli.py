@@ -72,6 +72,7 @@ def test_cost_from_failed_session():
 @pytest.fixture
 def harness(mocker):
     mocker.patch.object(claude_cli.runs, "assert_under_ceiling")
+    mocker.patch.object(claude_cli, "check_cli_version", return_value=(2, 1, 282))
     mocker.patch.object(claude_cli.creds, "keychain_get", return_value="sk-test")
     record = mocker.patch.object(claude_cli, "record_run")
     run = mocker.patch.object(claude_cli.subprocess, "run")
@@ -135,3 +136,61 @@ def test_record_run_writes_one_row(mocker):
     assert params[0:2] == ("meeting-digest", "meeting_digest")
     assert "claude-opus-5-5" in params
     assert 0.1234 in params and "sess-1" in params
+
+
+# --- CLI version check (barry-agent 2026-10-05: 2.1.228 rejected the model) ---
+
+@pytest.mark.parametrize("text,expected", [
+    ("2.1.282 (Claude Code)\n", (2, 1, 282)),
+    ("2.1.228 (Claude Code)", (2, 1, 228)),
+    ("claude version unknown", None),
+])
+def test_parse_version(text, expected):
+    assert claude_cli.parse_version(text) == expected
+
+
+def _version_proc(mocker, stdout):
+    return mocker.patch.object(
+        claude_cli.subprocess, "run",
+        return_value=SimpleNamespace(returncode=0, stdout=stdout, stderr=""))
+
+
+def test_version_check_accepts_new_enough(mocker):
+    _version_proc(mocker, "2.1.280 (Claude Code)")
+    assert claude_cli.check_cli_version() == (2, 1, 280)
+    _version_proc(mocker, "3.0.0 (Claude Code)")
+    assert claude_cli.check_cli_version() == (3, 0, 0)
+
+
+def test_version_check_rejects_old_with_clear_message(mocker):
+    _version_proc(mocker, "2.1.228 (Claude Code)")
+    pattern = r"2\.1\.228 is too old.*2\.1\.280.*claude update"
+    with pytest.raises(claude_cli.ClaudeSessionError, match=pattern):
+        claude_cli.check_cli_version()
+
+
+def test_version_check_unreadable_or_missing(mocker):
+    _version_proc(mocker, "")
+    with pytest.raises(claude_cli.ClaudeSessionError, match="could not read"):
+        claude_cli.check_cli_version()
+    mocker.patch.object(claude_cli.subprocess, "run", side_effect=FileNotFoundError("claude"))
+    with pytest.raises(claude_cli.ClaudeSessionError, match="could not run"):
+        claude_cli.check_cli_version()
+
+
+def test_old_cli_never_launches_and_writes_no_row(mocker):
+    mocker.patch.object(claude_cli.runs, "assert_under_ceiling")
+    mocker.patch.object(claude_cli.creds, "keychain_get", return_value="sk-test")
+    record = mocker.patch.object(claude_cli, "record_run")
+    run = _version_proc(mocker, "2.1.228 (Claude Code)")
+    with pytest.raises(claude_cli.ClaudeSessionError, match="too old"):
+        _call()
+    assert run.call_count == 1                 # only `claude --version`, no session
+    assert run.call_args.args[0] == ["claude", "--version"]
+    record.assert_not_called()
+
+
+def test_error_result_message_names_failure_not_success():
+    pattern = r"session failed \(success\): Not logged in"
+    with pytest.raises(claude_cli.ClaudeSessionError, match=pattern):
+        claude_cli.parse_result(_ok(is_error=True, result="Not logged in"))

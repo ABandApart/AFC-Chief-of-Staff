@@ -2,7 +2,7 @@
 
 <doc:meta>
   <doc:type>Spike spec (minimal test software)</doc:type>
-  <doc:status>BUILT builder-side 2026-10-05 (branch `claude-session-spike`; V1 and V4 pass on the build box, V4 = 23 tests). V2 and V3 need barry-agent.</doc:status>
+  <doc:status>RUNTIME RUN 2026-10-05 with patches (V2, V3 pass; V1 failed as written). Fixes for the two blocking findings on the branch; unpatched rerun pending (barry-agent).</doc:status>
   <doc:owner>Barry Baldwin</doc:owner>
   <doc:depends_on>`ADR-0001` (Claude Code as an alternate shell); `agents/_lib/granola_client.py`; `agents/outreach/gmail.py` (OAuth service, G3 send guard)</doc:depends_on>
   <doc:size>Two new modules, tests, one ceiling entry. No schema change.</doc:size>
@@ -70,12 +70,45 @@ session's reported cost.**
 - Model: `claude-opus-5-5` by default (`--model` overrides). Budget cap: $1.00 per
   session (`--max-budget`), and a `meeting-digest` daily ceiling of $2.00.
 - Function label `meeting_digest` is new to the taxonomy.
+- **Billing: API key, not the Max subscription** (operator, 2026-10-05). `--bare`
+  reads only `ANTHROPIC_API_KEY` or an `apiKeyHelper`, and an API key outranks a
+  subscription login in `-p` mode (Claude Code authentication docs). The
+  subscription path (`claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`) was
+  rejected: it requires dropping `--bare`, it would share the operator's
+  interactive Max limits, and the docs don't settle whether a consumer plan may
+  drive unattended jobs.
+- **`agent_runs.usd_cost` is the CLI's estimate.** `total_cost_usd` is a
+  client-side estimate, not billing data (Agent SDK cost-tracking docs); the
+  authoritative figure is the Claude Console usage page.
+
+## Runtime result and corrections (2026-10-05)
+
+barry-agent ran it (`/Users/Shared/afc-richmond/PHASE-CLAUDE-SESSION-SPIKE.md`).
+With three runtime patches, it drafted a summary of 5 meetings to
+barry@aiadaptive.co for **$0.2062** (23,114 input and 4,531 output tokens,
+2 turns, 50 s). `agent_runs` row 2985 matches. Two findings changed the code:
+
+1. **Granola rejects a UTC offset in `updated_after`** (`-04:00` → 400 "Invalid
+   date"). Fixed: `granola_timestamp()` sends UTC with a `Z` suffix, and a test
+   pins the exact string. The original tests mocked the Granola call, so the
+   format was never checked.
+2. **The CLI version matters.** barry-agent's `claude` (2.1.228) rejected
+   `claude-opus-5-5`; 2.1.280 or newer is required. The flag check in §Open used
+   barry-admin's 2.1.282 and did not record a version. **Decided (operator):**
+   barry-agent updates its own CLI, and `claude_cli.check_cli_version()` refuses
+   to launch below `MIN_CLI_VERSION` (2.1.280) with a message naming the fix. A
+   refused launch spends nothing and writes no ledger row. Pointing at
+   `/opt/homebrew/bin/claude` instead was rejected because it ties the runtime to
+   barry-admin's Homebrew upgrades.
+
+Also: **the per-session cap stays at $1.00** (operator decision, about 5x the
+measured run); the dry-run list prints local time; a failed result's error text
+now reads "session failed (...)" instead of "session ended with 'success'".
 
 ## Open (S4)
 
-- **Which Google account the existing OAuth token belongs to.** The spec assumes
-  barry@aiadaptive.co (`PRD-outreach-gmail-channel.md` G1, own-domain Workspace).
-  The runner checks and refuses otherwise; the first run settles it.
+- ~~Which Google account the OAuth token belongs to.~~ **Settled 2026-10-05:**
+  `getProfile` returned barry@aiadaptive.co on the runtime run.
 - ~~Field name of the structured output.~~ **Settled 2026-10-05:** a no-key run of
   the exact command (CLI 2.1.282) accepted every flag and returned a JSON result
   with a `structured_output` field. The same run showed that an auth failure
