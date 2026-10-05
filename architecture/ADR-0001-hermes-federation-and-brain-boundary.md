@@ -193,6 +193,14 @@ stdio transport remains the default and needs no tunnel.
   Hermes optional).
 - Revisit the Hermes-as-shell option only after the boundary exists and the
   interactive capability has proven its value with our own loop.
+- **Claude Code as a headless shell — evaluated and abandoned for single-shot work
+  (2026-10-05).** A spike ran one `claude -p` session per task (last week's
+  meetings → a Gmail draft). It worked, but against direct API calls through
+  `runs.py` it adds input-token overhead (about a third more in the one measured
+  run), extra turns, CLI version and auth constraints, and only one cost total per
+  session. **Single-shot LLM work uses the API through `runs.py`.** A CLI or Agent
+  SDK shell remains an option only where a task needs multi-step tool use. The
+  spike's code is kept under the git tag `archive/claude-session-spike`.
 
 </consequences>
 
