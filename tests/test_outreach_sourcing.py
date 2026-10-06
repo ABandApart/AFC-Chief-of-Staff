@@ -590,3 +590,124 @@ def test_card_note_for_canadian_firms_only():
     assert "CASL" in ds.country_note({"country": "Canada"})
     assert ds.country_note({"country": "US"}) is None
     assert ds.country_note({}) is None
+
+
+# --- 2026-10-06 go-live fixes ------------------------------------------------------
+
+@pytest.mark.parametrize("remaining,budget,expected", [
+    (15, 20.0, 23),   # ceil(15 x 1.5)
+    (15, 3.6, 9),     # budget-bound: 3.6 // 0.40
+    (2, 20.0, 3),
+    (0, 20.0, 0),
+])
+def test_round_size(remaining, budget, expected):
+    assert run.round_size(remaining, budget) == expected
+
+
+def test_claim_ids_takes_only_verify_briefs():
+    briefs = [{"kind": "verify", "discovery_id": 5}, {"kind": "find", "segment_key": "x"},
+              {"kind": "verify", "discovery_id": 9}]
+    assert run.claim_ids(briefs) == [5, 9]
+
+
+def test_a_run_claims_only_the_rows_it_researches(mocker):
+    """The 2026-10-06 bug: 48 rows claimed, 21 researched, 27 stranded."""
+    executed = []
+    cur = mocker.MagicMock()
+    cur.execute.side_effect = lambda sql, params=None: executed.append((sql, params))
+    conn = mocker.MagicMock()
+    conn.__enter__.return_value = conn
+    conn.cursor.return_value.__enter__.return_value = cur
+    mocker.patch.object(run.db, "connection", return_value=conn)
+    for name, value in (("housekeeping", None), ("target_n", 15),
+                        ("in_list_segments", SEGMENTS), ("open_hypotheses", []),
+                        ("recent_rejects", []), ("known_by_segment", {}),
+                        ("plan_find_briefs", []), ("_finish", None)):
+        mocker.patch.object(run, name, return_value=value)
+    mocker.patch.object(run.outreach_discovery, "known_domains", return_value=set())
+    spend = iter([16.4, 20.0])                # $3.60 left, then spent out
+    mocker.patch.object(run, "group_spend_today", side_effect=lambda conn: next(spend))
+    pool = [{"id": i, "company_name": f"F{i}", "company_domain": f"f{i}.com",
+             "segment": "corporate_l_and_d", "description": "", "hypothesis_id": None}
+            for i in range(100, 112)]
+    mocker.patch.object(run, "stuck_pool", return_value=pool)
+    researched = []
+
+    def fake_process(brief, ctx, state):
+        researched.append(brief["discovery_id"])
+        return {"brief": brief, "dossier": {"no_candidate_reason": "x"}, "seen": set(),
+                "failures": ["no_candidate"]}
+    mocker.patch.object(run, "process", side_effect=fake_process)
+
+    state = run.run(dry_run=False, ignore_deadline=True)
+
+    claimed = [i for sql, params in executed if "SET sourcing_run_id" in sql for i in params[1]]
+    assert len(researched) == 9                 # what $3.60 affords
+    assert sorted(claimed) == sorted(researched)
+    assert not set(range(100, 112)) - set(researched) & set(claimed)  # 3 left unclaimed
+    assert state.stop_reason == "budget"
+
+
+def test_verify_brief_with_a_different_domain_is_a_mismatch_not_a_duplicate():
+    d = good_dossier(domain="trainingfolks.ca")
+    failures = check(d, known_domains={"trainingfolks.ca"},
+                     own_discovery_domain="trainingfolks.com")
+    assert "domain_mismatch" in failures and "duplicate" not in failures
+
+
+@pytest.mark.parametrize("code,live", [(403, True), (429, True), (401, True),
+                                       (404, False), (410, False), (500, False)])
+def test_site_refusing_a_bot_still_counts_as_live(mocker, code, live):
+    import urllib.error
+    mocker.patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
+        "https://x.com", code, "msg", {}, None))
+    assert checks.default_site_is_live("x.com") is live
+
+
+def test_unscored_rows_are_never_surfaced(mocker):
+    conn = mocker.MagicMock()
+    cur = mocker.MagicMock()
+    cur.fetchall.return_value = []
+    conn.cursor.return_value.__enter__.return_value = cur
+    outreach_discovery._eligible(conn)
+    assert "proposed_scores IS NOT NULL" in cur.execute.call_args.args[0]
+
+
+def test_passes_beyond_the_target_are_held_not_surfaced(mocker):
+    store = mocker.patch.object(run, "store")
+    mocker.patch.object(run.db, "connection", return_value=mocker.MagicMock())
+    state = run.RunState(run_id="r", target_n=3, dry_run=False)
+    outs = [{"brief": {"kind": "find", "segment_key": "corporate_l_and_d"},
+             "dossier": good_dossier(domain=f"f{i}.com"), "seen": SEEN, "failures": []}
+            for i in range(5)]
+    run._absorb(outs, {"segments": SEGMENTS, "known_domains": set()}, state)
+    assert (state.passed, state.held, state.failed) == (3, 2, 0)
+    stored = [c.kwargs["failures"] for c in store.call_args_list]
+    assert stored == [[], [], [], [run.HELD_FAILURE], [run.HELD_FAILURE]]
+
+
+def test_release_held_is_oldest_first_and_capped(mocker):
+    cur = mocker.MagicMock()
+    cur.fetchall.return_value = [(1,), (2,)]
+    conn = mocker.MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cur
+    assert run.release_held(conn, 15) == 2
+    sql, params = cur.execute.call_args.args
+    assert "ORDER BY updated_at, id LIMIT" in sql and params == (
+        run.HELD_FAILURE, run.HELD_FAILURE, 15)
+
+
+def test_released_rows_count_toward_todays_target(mocker):
+    conn = mocker.MagicMock()
+    conn.__enter__.return_value = conn
+    mocker.patch.object(run.db, "connection", return_value=conn)
+    for name, value in (("housekeeping", None), ("target_n", 15),
+                        ("in_list_segments", SEGMENTS), ("open_hypotheses", []),
+                        ("recent_rejects", []), ("known_by_segment", {}),
+                        ("_finish", None), ("release_held", 15)):
+        mocker.patch.object(run, name, return_value=value)
+    mocker.patch.object(run.outreach_discovery, "known_domains", return_value=set())
+    process = mocker.patch.object(run, "process")
+    state = run.run(dry_run=False, ignore_deadline=True)
+    assert state.passed == 15 and state.stop_reason == "target_met"
+    process.assert_not_called()                 # nothing to research today

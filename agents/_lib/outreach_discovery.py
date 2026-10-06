@@ -150,7 +150,8 @@ def _eligible(conn: object) -> list[dict[str, Any]]:
 
     The bar is R0.5 as rewritten in 0029: two verification kinds, OR cited
     evidence from two distinct registrable domains (the research agent's path).
-    A row the agent's deterministic checks failed is never eligible.
+    A row the agent's deterministic checks failed is never eligible, and neither
+    is one without proposed scores, which approval would refuse.
     """
     with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[attr-defined]
         cur.execute(
@@ -160,6 +161,9 @@ def _eligible(conn: object) -> list[dict[str, Any]]:
               AND (COALESCE(array_length(verified_on, 1), 0) >= %s
                    OR outreach_distinct_count(evidence_domains) >= %s)
               AND COALESCE(array_length(check_failures, 1), 0) = 0
+              -- Approval refuses a row without proposed scores, so do not show
+              -- one: it is a card the operator cannot act on (2026-10-06).
+              AND proposed_scores IS NOT NULL
             ORDER BY icp_fit_score DESC NULLS LAST, discovered_at
             """,
             (MIN_VERIFICATION_KINDS, MIN_VERIFICATION_KINDS),

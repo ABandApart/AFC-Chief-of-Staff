@@ -8,6 +8,7 @@ surfaced (`outreach_discovery._eligible` excludes any row with failures).
 
 from __future__ import annotations
 
+import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -80,13 +81,22 @@ def is_blocked(url: str) -> bool:
     return registrable_domain(url) in BLOCKED_DOMAINS
 
 
+# A server that answers with one of these is up but refusing an automated client
+# (bot protection, rate limiting). Counting it as down failed a live firm on
+# 2026-10-06 (Brian Tracy International).
+_LIVE_BUT_REFUSING = frozenset({401, 403, 405, 406, 429})
+
+
 def default_site_is_live(domain: str, *, timeout: int = 10) -> bool:
-    """True if the company's home page answers 2xx/3xx over HTTPS. Never raises."""
+    """True if the company's home page answers over HTTPS at all, other than
+    "not found" or a server error. Never raises."""
     try:
         req = urllib.request.Request(f"https://{domain}",
                                      headers={"User-Agent": "Mozilla/5.0 (aiadaptive-cos)"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             return 200 <= resp.status < 400
+    except urllib.error.HTTPError as exc:
+        return exc.code in _LIVE_BUT_REFUSING
     except Exception:
         return False
 
@@ -151,8 +161,14 @@ def run_checks(
     if any(u and is_blocked(u) for u in urls):
         failures.append("blocked_source")
 
-    # 5. Not already known.
-    if domain and domain in known_domains and domain != own_discovery_domain:
+    # 5. Not already known. A verify brief researches one known row, so a
+    # different domain coming back means the worker drifted to another firm (or
+    # the firm's domain changed): say that, not "duplicate" (2026-10-06,
+    # TrainingFolks).
+    if own_discovery_domain is not None:
+        if domain and domain != outreach.normalize_domain(own_discovery_domain):
+            failures.append("domain_mismatch")
+    elif domain and domain in known_domains:
         failures.append("duplicate")
 
     # 6. Geography (D6, revised 2026-10-05: US + Canada).

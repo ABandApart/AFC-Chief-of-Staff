@@ -59,8 +59,16 @@ MAX_NEW_HYPOTHESES_PER_RUN = 2
 CONCURRENCY = 4
 MAX_ROUNDS = 4
 DEADLINE = time(7, 0)
-EXPECTED_COST_PER_BRIEF = 1.00  # until measured (V6); used only to stop early
+# Measured per researched brief: $0.27 (V6), $0.35 (V7 dry run), $0.30 (first
+# real run). Sizes each round against the budget left; the group ceiling in
+# runs.py is still the hard stop. It was a $1.00 placeholder until 2026-10-06,
+# which cut rounds to a third of what the budget allowed.
+EXPECTED_COST_PER_BRIEF = 0.40
+# At most this many stuck-pool rows per round, so new-firm briefs keep a share.
 STUCK_POOL_PER_ROUND = 12
+# Briefs per round = remaining need x this, so a round of parallel workers does
+# not overshoot the floor by much (the V7 dry run passed 22 against 15).
+BRIEFS_PER_NEEDED = 1.5
 OUTREACH_GROUP = "outreach"
 # Dead-man's switch: pinged after a completed (non-dry) run, /fail on a crash.
 # Create the check on healthchecks.io as 24h period, 2h grace (weekday loop:
@@ -68,6 +76,10 @@ OUTREACH_GROUP = "outreach"
 HEARTBEAT_SLUG = "cos-sourcing"
 
 EXPLORATION_FAILURE = "exploration_share"
+# Passes beyond the day's target are stored but held off the review sheet, then
+# released at the start of the next run and counted toward its target (operator
+# decision 2026-10-06: the V7 dry run passed 22 against 15).
+HELD_FAILURE = "held_for_next_run"
 
 
 @dataclass
@@ -78,6 +90,8 @@ class RunState:
     researched: int = 0
     passed: int = 0
     passed_out_of_list: int = 0
+    held: int = 0
+    released: int = 0
     failed: int = 0
     stop_reason: str | None = None
     report: list[str] = field(default_factory=list)
@@ -190,6 +204,21 @@ def run_spend(conn: object, run_id: str) -> float:
 
 
 # --- housekeeping (§7.2, §7.3) ---------------------------------------------------
+
+
+def release_held(conn: object, limit: int) -> int:
+    """Release up to `limit` rows held by an earlier run, oldest first, so they
+    surface today and count toward today's target. Returns how many."""
+    with conn.cursor() as cur:  # type: ignore[attr-defined]
+        cur.execute(
+            "UPDATE outreach_discoveries "
+            "SET check_failures = array_remove(check_failures, %s) "
+            "WHERE id IN (SELECT id FROM outreach_discoveries "
+            "             WHERE reviewed_at IS NULL AND %s = ANY(check_failures) "
+            "             ORDER BY updated_at, id LIMIT %s) "
+            "RETURNING id",
+            (HELD_FAILURE, HELD_FAILURE, limit))
+        return len(cur.fetchall())
 
 
 def housekeeping(conn: object) -> None:
@@ -464,6 +493,20 @@ def process(brief: dict[str, Any], ctx: dict[str, Any], state: RunState) -> dict
             "failures": failures}
 
 
+def round_size(remaining: int, budget_left: float) -> int:
+    """How many briefs to run this round (pure): enough for the remaining need,
+    with some slack for failures, and no more than the budget left affords."""
+    # Round first: 3.6 // 0.4 is 8.0 in floating point, not 9.
+    affordable = math.floor(round(budget_left / EXPECTED_COST_PER_BRIEF, 6))
+    return max(0, min(affordable, math.ceil(remaining * BRIEFS_PER_NEEDED)))
+
+
+def claim_ids(briefs: list[dict[str, Any]]) -> list[int]:
+    """Pool rows to claim for this run: the verify briefs that will run (pure)."""
+    return [b["discovery_id"] for b in briefs
+            if b["kind"] == "verify" and b.get("discovery_id") is not None]
+
+
 def deadline_passed(now: datetime | None = None) -> bool:
     now = now or datetime.now().astimezone()
     return now.time() >= DEADLINE
@@ -490,6 +533,12 @@ def run(*, dry_run: bool = False, ignore_deadline: bool = False) -> RunState:
                 cur.execute("INSERT INTO outreach_sourcing_runs (run_id, target_n) "
                             "VALUES (%s, %s)", (run_id, need))
     state = RunState(run_id=run_id, target_n=need, dry_run=dry_run)
+    if not dry_run:
+        with db.connection() as conn:
+            state.released = release_held(conn, need)
+        state.passed = state.released
+        if state.released:
+            state.report.append(f"released {state.released} candidate(s) held by an earlier run")
     logger.info("run %s: aiming for %d candidates (%d testing hypotheses)",
                 run_id, need, testing)
 
@@ -503,21 +552,16 @@ def run(*, dry_run: bool = False, ignore_deadline: bool = False) -> RunState:
             break
         with db.connection() as conn:
             budget_left = runs.CEILING_GROUPS[OUTREACH_GROUP][0] - group_spend_today(conn)
-            stuck = [r for r in stuck_pool(conn, STUCK_POOL_PER_ROUND + len(state.tried_ids))
-                     if r["id"] not in state.tried_ids][:STUCK_POOL_PER_ROUND]
-        state.tried_ids |= {r["id"] for r in stuck}
         if budget_left < EXPECTED_COST_PER_BRIEF:
             state.stop_reason = "budget"
             break
+        round_cap = round_size(remaining, budget_left)
+        with db.connection() as conn:
+            stuck = [r for r in stuck_pool(conn, STUCK_POOL_PER_ROUND + len(state.tried_ids))
+                     if r["id"] not in state.tried_ids][:min(STUCK_POOL_PER_ROUND, round_cap)]
 
         briefs = verify_briefs(stuck)
-        if not dry_run and stuck:
-            # Claim them so a later round (or tomorrow) does not redo them.
-            with db.connection() as conn, conn.cursor() as cur:
-                cur.execute("UPDATE outreach_discoveries SET sourcing_run_id = %s "
-                            "WHERE id = ANY(%s) AND sourcing_run_id IS NULL",
-                            (run_id, [r["id"] for r in stuck]))
-        want_new = max(0, math.ceil(remaining * 1.5) - len(briefs))
+        want_new = max(0, round_cap - len(briefs))
         if want_new:  # re-planned each round, so the floor never rests on round 1
             slots = math.floor(state.target_n * EXPLORATION_SHARE)
             try:
@@ -542,11 +586,21 @@ def run(*, dry_run: bool = False, ignore_deadline: bool = False) -> RunState:
             briefs += find[:want_new]
             state.report.append(f"round {round_no}: planned {len(find)} new-firm brief(s), "
                                 f"{len(new_specs)} new hypothesis(es)")
-        affordable = max(1, int(budget_left // EXPECTED_COST_PER_BRIEF))
-        briefs = briefs[:affordable]
+        briefs = briefs[:round_cap]
         if not briefs:
             state.stop_reason = state.stop_reason or "no_briefs"
             break
+
+        # Claim only the stuck rows that will actually run this round. Claiming
+        # before the cut stranded every row the cut dropped: stuck_pool() never
+        # offers a claimed row again (27 rows on 2026-10-06, repaired by hand).
+        claimed = claim_ids(briefs)
+        state.tried_ids |= set(claimed)
+        if not dry_run and claimed:
+            with db.connection() as conn, conn.cursor() as cur:
+                cur.execute("UPDATE outreach_discoveries SET sourcing_run_id = %s "
+                            "WHERE id = ANY(%s) AND sourcing_run_id IS NULL",
+                            (run_id, claimed))
 
         with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
             outcomes = list(pool.map(lambda b: process(b, ctx, state), briefs))
@@ -580,7 +634,11 @@ def _absorb(outcomes: list[dict[str, Any]], ctx: dict[str, Any], state: RunState
         if not failures and is_explore and state.passed_out_of_list >= explore_cap:
             failures.append(EXPLORATION_FAILURE)
         label = found.get("company_name") or brief.get("company_name") or "?"
-        if failures:
+        if not failures and state.passed >= state.target_n:
+            failures = [HELD_FAILURE]
+            state.held += 1
+            state.report.append(f"⏸ {label}: passed, held for the next run")
+        elif failures:
             state.failed += 1
             state.report.append(f"✗ {label}: {', '.join(failures)}")
         else:

@@ -174,6 +174,11 @@ The orchestrator runs rounds until either:
 2. the day's budget is spent, or
 3. the 07:00 deadline arrives.
 
+**Passes beyond N are held** (operator decision 2026-10-06): stored with the
+`held_for_next_run` marker, kept off the sheet, released oldest-first at the next
+run's start, and counted toward that day's N. Each round runs about 1.5 briefs per
+candidate still needed, capped by the budget left.
+
 If it stops short of N, it posts one line to `#outreach` saying how many it found,
 why it stopped, and what it spent. It never surfaces a candidate that failed a
 check to reach the number.
