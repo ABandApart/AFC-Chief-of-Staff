@@ -60,6 +60,12 @@ For **market discovery and company profiling** (sourcing candidate firms across 
 For **autonomous outreach sourcing** (a research agent with web search and subagents surfacing ten approvable candidates a day; one-click approval replacing Gate 0 → classify → CLI scoring → Gate 1; hypotheses for candidates outside the current list):
 → [`PRD-outreach-autonomous-sourcing.md`](./PRD-outreach-autonomous-sourcing.md) — BUILT builder-side 2026-10-05; loop disabled pending V6 (D2, Google API, deferred)
 
+For the **Q4 2026 OKRs** (targets for the north star, each KR mapped to its table, and every data gap — mismatches, KRs without data, data the dashboard omits):
+→ [`15-okrs-q4-2026.md`](./15-okrs-q4-2026.md) — DRAFT 2026-10-05; targets marked *(proposed)* await confirmation
+
+For **outcome attribution** (the `clients` table, `outcomes.client_id` and `attributed_target_id`, and the `/outcome` company field that makes KR3 computable):
+→ [`PRD-outcome-attribution.md`](./PRD-outcome-attribution.md) — increment 1 APPLIED 2026-10-05; increment 2 BUILT, not deployed
+
 For the **outreach workflow as a picture** (six diagrams — read this before 35-):
 → [`37-outreach-workflow.md`](./37-outreach-workflow.md)
 

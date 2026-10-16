@@ -3,14 +3,15 @@
 -- =============================================================================
 -- Run via:  psql "$DB_URL" -f migrations/verify_schema.sql
 -- Or paste into Supabase SQL Editor.
--- Expects 27 tables and 2 extensions. Reports FAIL lines if anything missing.
+-- Expects 35 tables and 2 extensions. Reports FAIL lines if anything missing.
 -- (Baseline 0001 was 18 with `facts`; 0006 dropped `facts`, and 0003/0005/0007
 -- added `capture_messages` + `playbook_publications` + `channel_state`
 -- → 18 - 1 + 3 = 20; 0009 added `tool_invocations` → 21; 0013 added the six
 -- `outreach_*` tables → 27; 0018/0019/0022/0025 added `outreach_discoveries`,
 -- `outreach_segment_scores`, `outreach_icp_models`, `gmail_channel_state` → 31;
 -- 0029 added `outreach_hypotheses`, `outreach_segments`, `outreach_sourcing_runs`
--- → 34. 0017 was never used; 0028 belongs to the unmerged Phase 10 branch.)
+-- → 34; 0030 added `clients` → 35. 0017 was never used; 0028 belongs to the
+-- unmerged Phase 10 branch.)
 -- =============================================================================
 
 \echo
@@ -21,13 +22,14 @@ SELECT
 FROM pg_extension;
 
 \echo
-\echo '=== Expected tables (34) ==='
+\echo '=== Expected tables (35) ==='
 WITH expected(name) AS (VALUES
     ('agent_runs'),
     ('approval_queue'),
     ('buffer_posts'),
     ('capture_messages'),
     ('channel_state'),
+    ('clients'),
     ('content_items'),
     ('content_pipeline'),
     ('dashboard'),
@@ -205,6 +207,29 @@ SELECT
     CASE WHEN to_regclass('outreach_sourcing_runs') IS NOT NULL
          THEN 'OK   outreach_sourcing_runs present'
          ELSE 'MISSING outreach_sourcing_runs' END AS runs_status;
+
+\echo
+\echo '=== Outcome attribution (migration 0030) ==='
+SELECT
+    CASE WHEN EXISTS (SELECT FROM information_schema.columns
+                      WHERE table_name = 'outcomes' AND column_name = 'client_id')
+         THEN 'OK   outcomes.client_id present'
+         ELSE 'FAIL outcomes.client_id missing — check migration 0030' END AS client_id_status,
+    CASE WHEN EXISTS (SELECT FROM information_schema.columns
+                      WHERE table_name = 'outcomes' AND column_name = 'attributed_target_id')
+         THEN 'OK   outcomes.attributed_target_id present'
+         ELSE 'FAIL outcomes.attributed_target_id missing — check migration 0030' END AS target_link_status,
+    CASE WHEN (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'clients') = 'barry_agent'
+         THEN 'OK   clients owned by barry_agent'
+         ELSE 'FAIL clients not owned by barry_agent — runtime writes will fail' END AS clients_owner_status;
+
+\echo
+\echo '=== Contract outcomes need a client (migration 0031) ==='
+SELECT
+    CASE WHEN EXISTS (SELECT FROM pg_constraint
+                      WHERE conname = 'outcomes_engagement_has_client_ck')
+         THEN 'OK   outcomes_engagement_has_client_ck present'
+         ELSE 'MISSING outcomes_engagement_has_client_ck — apply 0031 with the /outcome cog deploy' END AS contract_client_status;
 
 \echo
 \echo '=== Summary ==='
