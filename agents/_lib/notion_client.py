@@ -158,7 +158,7 @@ class NotionClient:
         raise NotionError(f"{method} {path} still rate-limited after {MAX_RETRIES} attempts",
                           status=429, code="rate_limited")
 
-    # --- endpoints used by N1; later increments add pages/blocks/data sources ---
+    # --- endpoints -------------------------------------------------------------------
 
     def me(self) -> dict[str, Any]:
         """The integration's bot user — the cheapest authenticated call."""
@@ -182,6 +182,75 @@ class NotionClient:
             if not resp.get("has_more") or not resp.get("next_cursor"):
                 return
             body["start_cursor"] = resp["next_cursor"]
+
+    def iter_block_children(self, block_id: str) -> Iterator[dict[str, Any]]:
+        """Direct children of a page or block, following cursors.
+
+        Child pages and databases appear as `child_page` / `child_database` blocks
+        whose id is the page or database id.
+        """
+        cursor: str | None = None
+        while True:
+            path = f"/blocks/{block_id}/children?page_size={PAGE_SIZE}"
+            if cursor:
+                path += f"&start_cursor={cursor}"
+            resp = self.request("GET", path)
+            yield from resp.get("results", [])
+            cursor = resp.get("next_cursor")
+            if not resp.get("has_more") or not cursor:
+                return
+
+    def create_page(self, parent: dict[str, Any], properties: dict[str, Any]) -> dict[str, Any]:
+        """Create a page. `parent` is `{"page_id": …}` for a sub-page or
+        `{"type": "data_source_id", "data_source_id": …}` for a database row."""
+        return self.request("POST", "/pages", {"parent": parent, "properties": properties})
+
+    def create_database(
+        self, parent_page_id: str, title: str, properties: dict[str, Any],
+        *, description: str = "",
+    ) -> dict[str, Any]:
+        """Create a full-page database under a page. Since 2025-09-03 the schema
+        lives on the database's first data source (`initial_data_source`); the
+        response's `data_sources[0].id` is what rows and relations point at."""
+        body: dict[str, Any] = {
+            "parent": {"type": "page_id", "page_id": parent_page_id},
+            "title": rich_text(title),
+            "is_inline": False,
+            "initial_data_source": {"properties": properties},
+        }
+        if description:
+            body["description"] = rich_text(description)
+        return self.request("POST", "/databases", body)
+
+    def retrieve_database(self, database_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/databases/{database_id}")
+
+    def retrieve_data_source(self, data_source_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/data_sources/{data_source_id}")
+
+    def update_data_source(self, data_source_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+        """Add, rename, or reconfigure properties (keyed by current name or id)."""
+        return self.request("PATCH", f"/data_sources/{data_source_id}", {"properties": properties})
+
+    def iter_query(
+        self, data_source_id: str, *, filter: dict[str, Any] | None = None
+    ) -> Iterator[dict[str, Any]]:
+        """Every row (page) of a data source, following cursors."""
+        body: dict[str, Any] = {"page_size": PAGE_SIZE}
+        if filter:
+            body["filter"] = filter
+        while True:
+            resp = self.request("POST", f"/data_sources/{data_source_id}/query", body)
+            yield from resp.get("results", [])
+            if not resp.get("has_more") or not resp.get("next_cursor"):
+                return
+            body["start_cursor"] = resp["next_cursor"]
+
+
+def rich_text(text: str) -> list[dict[str, Any]]:
+    """A rich-text array for plain text, split at the API's 2000-character limit."""
+    return [{"type": "text", "text": {"content": text[i:i + 2000]}}
+            for i in range(0, len(text), 2000)] or [{"type": "text", "text": {"content": ""}}]
 
 
 def title_of(obj: dict[str, Any]) -> str:

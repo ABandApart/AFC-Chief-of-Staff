@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`): client, CLI check, migration 0032 applied; `cli.notion_check` pending a barry-agent run. N2–N6 not started. All decisions settled 2026-10-16 (N-D8…N-D12). Blocked on a Notion integration token (human keychain step).</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`): client, CLI check, migration 0032 applied; `cli.notion_check` pending a barry-agent run. N2 setup command BUILT 2026-10-16 (`cli.notion_setup`), not yet run; the OKR pull is not started. N3–N6 not started. All decisions settled 2026-10-16 (N-D8…N-D12). Blocked on a Notion integration token (human keychain step).</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -120,6 +120,15 @@ Metrics with no data source yet (selling hours, reply time, recurring pains) are
 **Verification:**
 1. Pure tests: Notion property → row mapping; validation flags for each malformed case; archive on disappearance.
 2. Runtime: add an initiative in Notion, and within one cycle it appears in `okr_initiatives`. Retire it, and `archived_at` is set.
+
+**Build notes — setup command (2026-10-16):**
+- `cli.notion_setup` (logic in `agents/notion/setup.py`, schema in `agents/notion/okr_schema.py`) creates the page "OKRs — Master" under the shared root, then Objectives, Key Results, and Initiatives in link order. Relations are two-way. The reverse sides are renamed to "Key Results" (on Objectives) and "Initiatives" (on Key Results).
+- **Idempotent and non-destructive:** it creates only what's missing. An existing database is never edited: a missing property is reported as DRIFT and the command exits 1. `--dry-run` only reads.
+- **Ids** are recorded in `notion_sync` with `entity_table = 'notion_schema'` (keys `okr_master_page`, `okr_objectives`, `okr_key_results`, `okr_initiatives`), not in a repo file, so the runtime checkout stays clean.
+- **`--seed-q4`** enters the 4 objectives and 16 KRs from `15-okrs-q4-2026.md` §1, only into an empty Objectives database. Two targets are left blank on purpose: Cold sequences live (the cap changed to 150) and LLM spend per month (no budget yet). Selling hours, reply time, recurring pains, and the product spec use `manual`.
+- **Confirmed against the API reference (2026-10-16):** databases are created with `initial_data_source.properties`, rows use parent `data_source_id`, and relations reference a `data_source_id`. **The API can't set a relation's "limit 1 page"**, so the command prints it as a manual step. The OKR pull must still reject a page with more than one link.
+- **Tests:** 21 in `tests/test_notion_setup.py` against a fake workspace (fresh, re-run, dry run, drift, root missing or ambiguous, seed, and schema), plus 4 client endpoint tests.
+- **Not yet verified against live Notion.** The fake models Notion's auto-named reverse relation. The real name it uses is unconfirmed, but the rename finds the property by its target, not its name.
 
 ## N3 — Task Tinder updates
 

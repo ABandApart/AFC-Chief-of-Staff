@@ -194,3 +194,40 @@ def test_content_hash_ignores_key_order():
 
 def test_content_hash_changes_with_content():
     assert nc.content_hash({"a": 1}) != nc.content_hash({"a": 2})
+
+
+# --- N2 endpoints ---------------------------------------------------------------------
+
+
+def test_create_database_puts_schema_on_initial_data_source():
+    opener = _Script({"id": "db", "data_sources": [{"id": "ds"}]})
+    _client(opener).create_database("page-1", "Objectives", {"Name": {"title": {}}},
+                                    description="You own this.")
+    body = json.loads(opener.requests[0].data)
+    assert body["parent"] == {"type": "page_id", "page_id": "page-1"}
+    assert body["initial_data_source"] == {"properties": {"Name": {"title": {}}}}
+    assert body["title"][0]["text"]["content"] == "Objectives"
+    assert body["description"][0]["text"]["content"] == "You own this."
+    assert "properties" not in body  # 2025-09-03+: schema lives on the data source
+
+
+def test_iter_block_children_follows_cursor_in_query_string():
+    opener = _Script(
+        {"results": [{"id": "a"}], "has_more": True, "next_cursor": "c2"},
+        {"results": [{"id": "b"}], "has_more": False, "next_cursor": None},
+    )
+    assert [b["id"] for b in _client(opener).iter_block_children("p")] == ["a", "b"]
+    assert opener.requests[1].full_url.endswith("start_cursor=c2")
+    assert opener.requests[0].get_method() == "GET"
+
+
+def test_iter_query_posts_to_data_source():
+    opener = _Script({"results": [{"id": "r"}], "has_more": False})
+    assert [r["id"] for r in _client(opener).iter_query("ds-1")] == ["r"]
+    assert opener.requests[0].full_url.endswith("/data_sources/ds-1/query")
+
+
+def test_rich_text_splits_at_2000_characters():
+    parts = nc.rich_text("x" * 4500)
+    assert [len(p["text"]["content"]) for p in parts] == [2000, 2000, 500]
+    assert nc.rich_text("") == [{"type": "text", "text": {"content": ""}}]
