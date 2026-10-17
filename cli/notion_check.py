@@ -2,7 +2,7 @@
 
     uv run python -m cli.notion_check
 
-Authenticates with keychain `notion-token`, then lists every page and data
+Authenticates with keychain `notion-api-token`, then lists every page and data
 source shared with the integration. N1's verification: the
 "AFC Richmond Chief-of-Staff" page must appear. Run as barry-agent (the keychain
 item lives there). Read-only — it changes nothing in Notion.
@@ -30,7 +30,7 @@ def main() -> int:
     except RuntimeError as e:
         print(f"FAIL  {e}")
         print("      Store it as barry-agent: security add-generic-password "
-              "-a \"$USER\" -s notion-token -T \"\" -U -w")
+              "-a \"$USER\" -s notion-api-token -T \"\" -U -w")
         return 1
 
     try:

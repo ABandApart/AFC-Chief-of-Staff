@@ -63,7 +63,7 @@ Rev 1 kept every system of record in Postgres. Rev 2 deliberately moves **three 
 
 | Component | Responsibility |
 |---|---|
-| `agents/_lib/notion_client.py` | Thin stdlib `urllib` REST client, matching `granola_client.py` (see N1 build notes). Token from keychain `notion-token`. Retries on 429 and 529 honoring `Retry-After`. Budget of about 3 requests/second. |
+| `agents/_lib/notion_client.py` | Thin stdlib `urllib` REST client, matching `granola_client.py` (see N1 build notes). Token from keychain `notion-api-token`. Retries on 429 and 529 honoring `Retry-After`. Budget of about 3 requests/second. |
 | `notion_sync` table | Maps `(entity_table, entity_id)` to `notion_page_id`. Stores `content_hash` (to skip unchanged pushes), `last_pushed_at`, and `last_pulled_at`. |
 | `agents/notion/okr_pull.py` | Polls the master OKR databases into `okr_objectives`, `okr_key_results`, and `okr_initiatives`. |
 | `agents/notion/publish.py` | Pushes the To-Do, dashboard, and Content Review projections. Idempotent via `notion_sync`. |
@@ -80,7 +80,7 @@ Every loop run writes an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost
 **Outcome:** `uv run python -m cli.notion_check` authenticates as barry-agent and lists the pages shared with the integration. `notion_sync` exists and is owned by `barry_agent`.
 
 - Create a Notion **internal integration** with Read, Update, and Insert content capabilities. Share only the parent page "AFC Richmond Chief-of-Staff".
-- Keychain item `notion-token`, stored as a human step in barry-agent's GUI session. Add it to `scripts/keychain_setup.sh` and `scripts/keychain_verify.sh`.
+- Keychain item `notion-api-token`, stored as a human step in barry-agent's GUI session. Add it to `scripts/keychain_setup.sh` and `scripts/keychain_verify.sh`.
 - Migration: `notion_sync`.
 - `notion_client.py` with pure unit tests: request shaping, 429 backoff, hash stability.
 
@@ -91,7 +91,7 @@ Every loop run writes an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost
 - **Version pinned: `Notion-Version: 2026-03-11`**, confirmed latest against developers.notion.com on 2026-10-16. It removes `archived` in favor of `in_trash` (affects the N5 cull) and replaces block `after` with a `position` object that supports `start` (affects N6).
 - **Limits confirmed:** 180 requests/minute (about 3/s) per connection on non-Business plans. 429 *and* 529 carry `Retry-After`. 100 elements per array. 2000 characters per rich-text item.
 - **Search** filters on `page` or `data_source` (the 2025-09-03 split). `cli.notion_check` lists both.
-- **Done:** `notion_client.py` (18 unit tests), `cli/notion_check.py`, migration 0032 (scratch-tested, applied to `aiadaptive_cos`; `verify_schema.sql` clean for it), `notion-token` added to both keychain scripts.
+- **Done:** `notion_client.py` (18 unit tests), `cli/notion_check.py`, migration 0032 (scratch-tested, applied to `aiadaptive_cos`; `verify_schema.sql` clean for it), `notion-api-token` added to both keychain scripts.
 - **Pending:** run `uv run python -m cli.notion_check` as barry-agent once the token is stored.
 
 ## N2 — Master OKR document
@@ -232,6 +232,7 @@ The operator adds the same text to a claude.ai Project's instructions, so every 
 - **No Notion → Postgres sync beyond the owned fields:** OKR definitions, Done, and Decision. Edits to mirrored fields in Notion are overwritten.
 - **No Notion MCP in the CoS runtime.** Scheduled jobs use the REST client so they stay in the ledger. The operator's claude.ai connector is separate.
 - **No webhooks in v1.** Polling meets every latency target without a new public endpoint.
+- **Notion content as context for Keeley is deferred.** The operator wants Keeley to use Notion content as context, but has not chosen a method. Ingesting it into the knowledge base (cognee) is *not* assumed. Nothing in N1–N6 reads Notion page content for an agent. (Operator, 2026-10-16.)
 - **No interest-score learning in v1** (N5).
 
 ## S4. Decisions
@@ -245,6 +246,7 @@ The operator adds the same text to a claude.ai Project's instructions, so every 
 | N-S3 | Master OKR document = three linked Notion databases, separate from the dashboard. |
 | N-S4 | Each initiative belongs to exactly one KR. Each task has at most one initiative. |
 | N-S5 | Initiatives are assigned with `/initiative` (type-ahead), on cards from any source and on open tasks. |
+| N-S14 | **This spec stands alone.** No content from `PRD-notion-channel.md` (unmerged branch `phase-10-icp-intelligence`, 2026-09-15) is used: not its ingest design, its drafting model, its decisions, or its probes. The keychain item name `notion-api-token` is kept because the operator chose it, not inherited. (Operator, 2026-10-16.) |
 | N-S13 | **Initiative ownership is split by layer (N-D11).** The *list* of initiatives is defined and maintained only in the Notion master Initiatives database. A task's *assignment* is made only in Discord (`/initiative`, or `initiative:` on `/todo`), picking from that list. Discord can't create, rename, or retire an initiative. The Notion To-Do Initiative property is a read-only mirror. |
 | N-S6 | Accepted tasks push to a Notion To-Do database. Done is ticked in Notion. The 16 existing accepted tasks are backfilled. |
 | N-S7 | Drafting happens in claude.ai or the desktop app via the Notion connector. One page per article, a toggle H2 per revision with its number, and a header naming the latest revision and its status (Drafting / Ready / Published). |

@@ -2,7 +2,7 @@
 
 Thin, dependency-free client over the Notion API (`https://api.notion.com/v1`),
 following `granola_client.py`: stdlib `urllib`, the token passed in by the
-caller (read once from keychain `notion-token`), and the retry/throttle logic
+caller (read once from keychain `notion-api-token`), and the retry/throttle logic
 injectable so it unit-tests without network.
 
 Pinned to **`Notion-Version: 2026-03-11`** (confirmed latest against the docs
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.notion.com/v1"
 NOTION_VERSION = "2026-03-11"
-KEYCHAIN_ITEM = "notion-token"
+KEYCHAIN_ITEM = "notion-api-token"
 
 MIN_INTERVAL = 0.35  # seconds between requests: ~2.9/s, under the 3/s average
 MAX_RETRIES = 5
