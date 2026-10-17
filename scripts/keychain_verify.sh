@@ -18,6 +18,7 @@ ITEMS=(
     "anthropic-key-nate-shelley"
     "anthropic-key-higgins"
     "discord-bot-token"
+    "notion-token"
 )
 
 # github-personal-token is optional (only if cloning via HTTPS rather than SSH).

@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). Not started. All decisions settled 2026-10-16 (N-D8…N-D12). Blocked on a Notion integration token (human keychain step).</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`): client, CLI check, migration 0032 applied; `cli.notion_check` pending a barry-agent run. N2–N6 not started. All decisions settled 2026-10-16 (N-D8…N-D12). Blocked on a Notion integration token (human keychain step).</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -63,7 +63,7 @@ Rev 1 kept every system of record in Postgres. Rev 2 deliberately moves **three 
 
 | Component | Responsibility |
 |---|---|
-| `agents/_lib/notion_client.py` | Thin `httpx` REST client. Token from keychain `notion-token`. Retries on 429 honoring `Retry-After`. Budget of about 3 requests/second. |
+| `agents/_lib/notion_client.py` | Thin stdlib `urllib` REST client, matching `granola_client.py` (see N1 build notes). Token from keychain `notion-token`. Retries on 429 and 529 honoring `Retry-After`. Budget of about 3 requests/second. |
 | `notion_sync` table | Maps `(entity_table, entity_id)` to `notion_page_id`. Stores `content_hash` (to skip unchanged pushes), `last_pushed_at`, and `last_pulled_at`. |
 | `agents/notion/okr_pull.py` | Polls the master OKR databases into `okr_objectives`, `okr_key_results`, and `okr_initiatives`. |
 | `agents/notion/publish.py` | Pushes the To-Do, dashboard, and Content Review projections. Idempotent via `notion_sync`. |
@@ -85,6 +85,14 @@ Every loop run writes an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost
 - `notion_client.py` with pure unit tests: request shaping, 429 backoff, hash stability.
 
 **Verification:** `cli.notion_check` succeeds. Unit tests pass. `verify_schema.sql` lists `notion_sync`.
+
+**Build notes (2026-10-16):**
+- **Deviation — `urllib`, not `httpx`.** Every API client in the repo uses stdlib `urllib` (`granola_client.py`, `apollo.py`, `briefing/run.py`), and `httpx` is not a runtime dependency. The spec followed the repo, not the reverse.
+- **Version pinned: `Notion-Version: 2026-03-11`**, confirmed latest against developers.notion.com on 2026-10-16. It removes `archived` in favor of `in_trash` (affects the N5 cull) and replaces block `after` with a `position` object that supports `start` (affects N6).
+- **Limits confirmed:** 180 requests/minute (about 3/s) per connection on non-Business plans. 429 *and* 529 carry `Retry-After`. 100 elements per array. 2000 characters per rich-text item.
+- **Search** filters on `page` or `data_source` (the 2025-09-03 split). `cli.notion_check` lists both.
+- **Done:** `notion_client.py` (18 unit tests), `cli/notion_check.py`, migration 0032 (scratch-tested, applied to `aiadaptive_cos`; `verify_schema.sql` clean for it), `notion-token` added to both keychain scripts.
+- **Pending:** run `uv run python -m cli.notion_check` as barry-agent once the token is stored.
 
 ## N2 — Master OKR document
 
@@ -256,7 +264,7 @@ None (2026-10-16).
 |---|---|
 | The Notion API might not create database views or chart views. | Verify before N2. If unsupported, `cli.notion_setup` prints a one-time manual checklist. Properties and data stay API-managed. |
 | Recent Notion API versions changed the database model ("data sources"). | Pin `Notion-Version` and record the version in this spec at N1. |
-| The claude.ai Notion connector might not create **toggleable** headings, or insert above an existing block. | Test at N6 before writing the instructions. Fallback: append revisions at the bottom, oldest first, with the header callout still naming the latest. |
+| The claude.ai Notion connector might not create **toggleable** headings, or insert above an existing block. The REST API can (`position: start`, confirmed 2026-10-16), but the connector is a separate tool. | Test at N6 before writing the instructions. Fallback: append revisions at the bottom, oldest first, with the header callout still naming the latest. |
 | A relation "limit 1" setting might not be settable through the API. | Set it by hand in the master databases. `okr_pull` also rejects pages with more than one KR. |
 | Rate limits (about 3 requests/second). | Hash-skip unchanged pages. Weekly volume is small: about 40 dashboard writes, 70 Tartt pages, and a handful of to-dos. |
 | The operator edits a mirrored field in Notion. | The next push overwrites it (S2). Each database's description says which fields are yours. |
