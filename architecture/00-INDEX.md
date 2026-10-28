@@ -66,6 +66,9 @@ For the **Q4 2026 OKRs** (targets for the north star, each KR mapped to its tabl
 For **outcome attribution** (the `clients` table, `outcomes.client_id` and `attributed_target_id`, and the `/outcome` company field that makes KR3 computable):
 → [`PRD-outcome-attribution.md`](./PRD-outcome-attribution.md) — increment 1 APPLIED 2026-10-05; increment 2 BUILT, not deployed
 
+For the **Notion integration** (master OKR document with initiatives, `/initiative` + `/todo` on Task Tinder, Notion to-do list, dashboard, Tartt review, long-form writing workflow):
+→ [`PRD-notion-integration.md`](./PRD-notion-integration.md) — DRAFT rev 2, 2026-10-16; build order N1→N2→N3→N4→N6→N5; all decisions settled
+
 For the **outreach workflow as a picture** (six diagrams — read this before 35-):
 → [`37-outreach-workflow.md`](./37-outreach-workflow.md)
 

@@ -43,6 +43,7 @@ ITEMS=(
     "anthropic-key-nate-shelley|Anthropic key for Nate Shelley (Phase 10 — ICP signal synthesis)"
     "anthropic-key-higgins|Anthropic key for Higgins (Phase 11 — weekly dashboard)"
     "discord-bot-token|Discord bot token for the AFC Richmond CoS application (Phase 3.1)"
+    "notion-api-token|Notion internal integration API key (PRD-notion-integration.md N1)"
     "github-personal-token|GitHub PAT — optional, only if cloning via HTTPS; skip if using shared SSH key"
 )
 
