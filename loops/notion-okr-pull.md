@@ -2,7 +2,7 @@
 name: notion-okr-pull
 schedule: "*/15 * * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.notion.okr_pull
 description: Pull the Notion master OKR databases into okr_objectives, okr_key_results, okr_initiatives (PRD-notion-integration.md N2).
 ---
@@ -22,8 +22,12 @@ own file, `notion-<job>.md`. N3 and N4 add theirs beside this one.
 3 paged queries per cycle, well under the rate limit), writes to the three
 `okr_*` tables, one `agent_runs` row per cycle (`agent_name='notion-sync'`,
 `usd_cost=0`), and at most one #system notice per malformed page per day.
-**Ships `enabled: false`** per `loops/README.md`; flip it once a manual run looks
-right.
+It shipped `enabled: false` per `loops/README.md`.
+
+**ACTIVATED 2026-10-28** (operator go-ahead, H2 in `PHASE-NOTION-N2.md`). Flipped
+after barry-agent's live checks passed: a clean dry run, a real run that cached 4
+objectives and 16 KRs, an idempotent re-run, and the add, fix, and delete check on
+a test initiative, including its #system notice.
 
 Health check any time:
 
