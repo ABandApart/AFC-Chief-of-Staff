@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`): client, CLI check, migration 0032 applied; `cli.notion_check` pending a barry-agent run. N2 setup command BUILT 2026-10-16 (`cli.notion_setup`), not yet run; the OKR pull is not started. N3–N6 not started. All decisions settled 2026-10-16 (N-D8…N-D12). Blocked on a Notion integration token (human keychain step).</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`): client, CLI check, migration 0032 applied; `cli.notion_check` pending a barry-agent run. N2 setup command BUILT 2026-10-16 (`cli.notion_setup`), not yet run; the OKR pull is not started. N3–N6 not started. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28. Blocked on a Notion integration token (human keychain step).</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -106,7 +106,7 @@ Every loop run writes an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost
 | **Key Results** | Name (title), Objective (relation, limit 1), **Metric** (select from the fixed list below), Target (number), Unit (select: count, $, %, hours), Direction (Higher is better / Lower is better), Manual value (number, used only when Metric = `manual`), Status (Active / Retired) |
 | **Initiatives** | Name (title), Key Result (relation, **limit 1** — operator, 2026-10-16), Status (Active / Paused / Done), Owner (person, optional) |
 
-**Metric list.** The Metric select offers only the ids `kr_metrics.py` implements. A select can't hold a typo, so a KR can't silently miss its query. The first list comes from `15-okrs-q4-2026.md` §1:
+**Metric list.** The Metric select offers only the ids `kr_metrics.py` implements, so picking from the list can't produce a typo. Notion still lets an editor type a new option into a select, so `okr_pull` must reject unknown ids (below). The first list comes from `15-okrs-q4-2026.md` §1:
 
 `engagements_signed`, `median_engagement_value`, `project_to_maintenance_rate`, `cold_sequences_live`, `touches_on_schedule_rate`, `sequences_completed`, `conversations_opened`, `calls_booked`, `proposals_sent`, `followups_on_time_rate`, `agent_run_success_rate`, `llm_spend_month`, and `manual`.
 
@@ -129,6 +129,9 @@ Metrics with no data source yet (selling hours, reply time, recurring pains) are
 - **Confirmed against the API reference (2026-10-16):** databases are created with `initial_data_source.properties`, rows use parent `data_source_id`, and relations reference a `data_source_id`. **The API can't set a relation's "limit 1 page"**, so the command prints it as a manual step. The OKR pull must still reject a page with more than one link.
 - **Tests:** 21 in `tests/test_notion_setup.py` against a fake workspace (fresh, re-run, dry run, drift, root missing or ambiguous, seed, and schema), plus 4 client endpoint tests.
 - **Not yet verified against live Notion.** The fake models Notion's auto-named reverse relation. The real name it uses is unconfirmed, but the rename finds the property by its target, not its name.
+- **Known gaps (review, 2026-10-28):**
+  - A seed that fails partway can't be resumed. `_seed` skips whenever Objectives has any rows, so a re-run won't finish it. Fix: match existing rows by name and create only the missing objectives and KRs.
+  - The drift check compares property names only. It doesn't report a Metric select that lacks an id added to `METRICS` later. Fix: report missing select options as drift too.
 
 ## N3 — Task Tinder updates
 
@@ -143,7 +146,7 @@ Metrics with no data source yet (selling hours, reply time, recurring pains) are
 - **`/todo text:<…> initiative:<type-ahead, optional> due:<optional>`** writes a pending `task_candidates` row (`source_type='operator'`, confidence 1.0). It posts to #task-tinder like any card, because a to-do written today may not be a priority yet (N-D10). Accept, decline, and defer work unchanged.
 - **Cards and checklist:** the Task Tinder embed gains an "Initiative" field. Each #tasks checklist line ends with `· <initiative>` or `· Unassigned`. Both redraw after `/initiative`.
 
-**Notion To-Do database.** One row per task. Properties: Task (title), Initiative (relation), Key Result (rollup through Initiative), **Done** (checkbox, operator-owned), Due (date), Source (select: discovery / outreach / inbound / operator), Created (date), CoS id (number). Title, **Initiative**, Source, and Due are overwritten from Postgres. Done is never overwritten. Initiative is display-only here: assignment happens in Discord (N-D11). The database description says so.
+**Notion To-Do database.** One row per task. Properties: Task (title), Initiative (relation), Key Result (rollup through Initiative), **Done** (checkbox, operator-owned), Due (date), Source (select: discovery / outreach / inbound / operator), Created (date), CoS id (number). Title, **Initiative**, Source, and Due are overwritten from Postgres. Done is never overwritten. Initiative is display-only here: assignment happens in Discord (N-D11). The database description says so. The Initiative relation is one-way (`single_property`), so the master Initiatives database gains no reverse property (see N4).
 
 **Neutral titles (N-D9).** A task whose source names a prospect never sends its real title. `outreach_stale_signal` tasks push as "Outreach follow-up · open in NocoDB", and `inbound_lead` tasks as "Inbound lead follow-up · open in Discord". Each title is suffixed with the CoS id so rows stay distinguishable. The real text stays in Postgres and Discord. A pure test asserts that no title for those sources contains the source text.
 
@@ -161,18 +164,68 @@ Metrics with no data source yet (selling hours, reply time, recurring pains) are
 
 **Outcome:** S1.4. Layout: the draft `~/dashboard-preview/cos-dashboard-preview.html` (2026-10-05), with one structural change. The scorecard nests **Objective → Key Result → Initiatives**.
 
-- **Page "Q4 2026 Dashboard"** (separate from the master document). It has header properties, 4 stat callouts, a "Needs your attention" callout, and linked database views.
-- **KR Scorecard database** (CoS-owned mirror): one row per active KR. Current, Target, Progress (bar), Status, Note, Updated. Objective and initiatives come from the master relations.
-- **Initiatives rollup:** each initiative shows open and done to-do counts, computed from Postgres and written to a mirror property. Initiatives with no open to-dos are flagged "Idle".
-- **Weekly Snapshots database:** one row per week, one number per charted metric. It feeds the trend charts. Run success and spend are backfilled from 2026-07-27.
+**Verify before build.** Check whether the API can create linked database views and chart views (see Risks). N2 didn't need views, so this wasn't checked there. If the API can't, the N4 setup prints a one-time manual checklist, as `cli.notion_setup` does for relation limits. Record the result in the N4 build notes.
+
+**Notion side.**
+- **Page "<quarter> Dashboard"**, for example "Q4 2026 Dashboard" (separate from the master document). It has header properties, 4 stat callouts, a "Needs your attention" callout, and linked database views. It shows only KRs whose Objective has the current Quarter and Status Active.
+- **KR Scorecard database** (CoS-owned mirror): one row per active KR. Key Result (relation), Objective (rollup through Key Result), Initiatives (rollup through Key Result), Current, Target, Progress (bar), Status, Note, Updated.
+- **Initiative Status database** (CoS-owned mirror): one row per active initiative. Initiative (relation), Key Result (rollup), Open to-dos, Done to-dos, Idle (checkbox: no open to-dos). The CoS can't write counts into the master Initiatives database, because the operator owns it (N-S1).
+- **One-way relations only.** Every relation from a CoS-owned database into a master database is created as `single_property`, so Notion adds no reverse property to the operator's databases. The same rule applies to the N3 To-Do Initiative relation. The Key Result rollup on To-Do still works through it.
+- **Weekly Snapshots database** (CoS-owned mirror): one row per week, one number property per charted KR. It feeds the trend charts. It mirrors `okr_snapshots`.
 - **"Needs your attention": counts only** (operator, 2026-10-16). For example, "3 outreach touches unsent — open NocoDB". No company names. The link opens only on the tailnet.
-- **Higgins Discord summary** (operator, 2026-10-16): 5 lines to #dashboard, covering north-star KRs, the worst KR, attention counts, and system health, plus the Notion link. This replaces the full text report in `80-telemetry-layer.md`. That doc gets updated in the N4 change.
-- **Early-quarter rule:** a cumulative KR at 0 shows "Too early" until day 15 of the quarter. Without this rule, it scores Off track from day 1.
+- **Higgins Discord summary** (operator, 2026-10-16): 5 lines to #dashboard, covering north-star KRs, the worst KR, attention counts, and system health, plus the Notion link. The worst KR is the Off track KR with the lowest score (see Scoring), or the lowest At risk KR if none is Off track. This replaces the full text report in `80-telemetry-layer.md`. That doc gets updated in the N4 change.
+
+**Metric registry.** `_lib/kr_metrics.py` declares a *kind* and a *window* for every metric id, so scoring never depends on a property the operator could set wrong. A **cumulative** metric counts events inside its window and grows over time. A **point** metric is a level or rate measured at push time.
+
+| Metric id | Kind | Window | Source (`15-okrs-q4-2026.md` §1) |
+|---|---|---|---|
+| `engagements_signed` | cumulative | quarter to date | KR1 |
+| `median_engagement_value` | point | engagements signed this quarter | KR2 |
+| `project_to_maintenance_rate` | point | rolling 90 days | KR3 |
+| `cold_sequences_live` | point | at push time | KR2.1 |
+| `touches_on_schedule_rate` | point | touches whose window closed this quarter | KR2.2 |
+| `sequences_completed` | cumulative | quarter to date | KR2.3 |
+| `conversations_opened` | cumulative | quarter to date, from status transitions (gap M3) | KR2.4 |
+| `calls_booked` | cumulative | quarter to date, from status transitions (gap M2, M3) | KR2.5 |
+| `proposals_sent` | cumulative | quarter to date | KR2.6 |
+| `followups_on_time_rate` | point | follow-ups whose deadline fell this quarter | KR4.1 |
+| `agent_run_success_rate` | point | last 7 days | KR4.2 |
+| `llm_spend_month` | cumulative | calendar month to date | KR4.3 |
+| `manual` | point | the KR's Manual value | any |
+
+A metric returns `no_data` when its window holds no rows to measure (for example, a median with no signed engagements, or a rate with an empty denominator).
+
+**Scoring** (thresholds settled, N-S15). Statuses match the dashboard preview.
+
+| Status | Rule |
+|---|---|
+| ⚪ No data | The metric returned `no_data`, or the KR is `manual` with a blank Manual value. |
+| 🔧 Set target | Target is blank. Current still shows. |
+| ⏳ Too early | A cumulative, Higher-is-better KR before day 15 of its window that would otherwise score At risk or Off track. Without this rule, every cumulative KR scores Off track in week 1. |
+| 🟢 On track | Score ≥ 1.0. |
+| 🟡 At risk | 0.9 ≤ score < 1.0 for a point KR. 0.7 ≤ score < 1.0 for a cumulative KR. |
+| 🔴 Off track | Below At risk. |
+
+The **score** compares Current to where it must be now:
+- **Cumulative, Higher is better:** Current ÷ (Target × elapsed share of the window). The window is the quarter, or the month for `llm_spend_month`.
+- **Cumulative, Lower is better:** (Target × elapsed share of the window) ÷ Current. On track when spend is at or under the prorated budget.
+- **Point, Higher is better:** Current ÷ Target.
+- **Point, Lower is better:** Target ÷ Current.
+- **Lower is better with Current at 0:** On track, with no division.
+
+**Progress** (the bar) is Current ÷ Target, capped at 100%, for Higher-is-better KRs. For Lower-is-better KRs, Progress stays blank, because a fuller bar would read as worse. Status carries the judgment.
+
+**CoS side.**
+- **Migration `okr_snapshots`:** `week_start DATE` (a Monday), `okr_key_result_id BIGINT NOT NULL REFERENCES okr_key_results(id)`, `metric TEXT`, `value NUMERIC` (NULL for `no_data`), `target NUMERIC`, `status TEXT`, `computed_at TIMESTAMPTZ`, and `UNIQUE (week_start, okr_key_result_id)`. Owned by `barry_agent`. It also stores `metric` because the operator can rebind a KR to another metric mid-quarter.
+- **Monday 07:00 push:** compute every active KR through `kr_metrics`, upsert one `okr_snapshots` row per KR for the week that just ended, then push the scorecard, initiative status, and snapshot rows to Notion. A re-run in the same week overwrites that week's rows and changes nothing else.
+- **Backfill:** a one-time `cli.notion_backfill_snapshots` computes `agent_run_success_rate` and `llm_spend_month` for each week from 2026-07-27. It attaches each row to the KR currently bound to that metric, with `target` and `status` NULL, because no target existed then. It needs the N2 OKR pull to have run.
+- **Quarter rollover:** on the first push of a new quarter, the N4 setup creates that quarter's dashboard page. The previous page stays and stops updating. `okr_pull` accepts any Quarter value of the form `YYYY-Qn`, not only the options `cli.notion_setup` created.
 
 **Verification:**
-1. Pure tests: each metric against fixture rows, including the `no_data` path and the early-quarter rule.
-2. Parity: after a push, every Current matches `kr_metrics` output.
+1. Pure tests: each metric against fixture rows, including the `no_data` path. Each status rule, including Too early on day 14 and day 15, Set target, both Lower-is-better formulas, and a blank Progress for Lower is better.
+2. Parity: after a push, every Current matches `kr_metrics` output, and every row in `okr_snapshots` for that week matches the scorecard.
 3. A second push with no data change makes 0 page updates.
+4. Schema: after N4 setup, the master Key Results and Initiatives databases have no new properties.
 
 ## N5 — Tartt review (top 10 per day)
 
@@ -263,17 +316,18 @@ The operator adds the same text to a claude.ai Project's instructions, so every 
 | N-S9 | Build order: N1 → N2 → N3 → N4 → N6 → N5 (N-D8: time-to-value). |
 | N-S10 | Writing structure: Articles (parents) + Derivatives (linked short-form and video pages), each with the page convention in N6. Articles carry an optional Initiative relation (N-D12). |
 | N-S11 | To-dos that name a prospect push to Notion with neutral titles (N-D9). Extended from outreach to inbound-lead to-dos, which name a prospect too. |
+| N-S15 | **KR status thresholds (N-D13, operator, 2026-10-28).** On track at score ≥ 1.0. At risk from 0.9 for point KRs and from 0.7 for cumulative KRs, which swing more week to week. Too early covers any cumulative KR that would score At risk or Off track before day 15, not only a KR at 0. Lower-is-better KRs show no Progress bar. |
 | N-S12 | `/todo` posts a Task Tinder card. It doesn't skip acceptance, because a new to-do may not be a priority yet (N-D10). |
 
 ### Open
 
-None (2026-10-16).
+None (2026-10-28).
 
 ## Risks and verify-before-build
 
 | Risk | Mitigation |
 |---|---|
-| The Notion API might not create database views or chart views. | Verify before N2. If unsupported, `cli.notion_setup` prints a one-time manual checklist. Properties and data stay API-managed. |
+| The Notion API might not create database views or chart views. | Verify before N4 (N2 creates no views, so the check moved there). If unsupported, the N4 setup prints a one-time manual checklist. Properties and data stay API-managed. |
 | Recent Notion API versions changed the database model ("data sources"). | Pin `Notion-Version` and record the version in this spec at N1. |
 | The claude.ai Notion connector might not create **toggleable** headings, or insert above an existing block. The REST API can (`position: start`, confirmed 2026-10-16), but the connector is a separate tool. | Test at N6 before writing the instructions. Fallback: append revisions at the bottom, oldest first, with the header callout still naming the latest. |
 | A relation "limit 1" setting might not be settable through the API. | Set it by hand in the master databases. `okr_pull` also rejects pages with more than one KR. |
