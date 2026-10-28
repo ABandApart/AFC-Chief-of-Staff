@@ -227,6 +227,15 @@ def test_iter_query_posts_to_data_source():
     assert opener.requests[0].full_url.endswith("/data_sources/ds-1/query")
 
 
+def test_update_page_patches_only_the_given_properties():
+    opener = _Script({"id": "pg"})
+    _client(opener).update_page("pg-1", {"Done": {"checkbox": True}})
+    req = opener.requests[0]
+    assert req.get_method() == "PATCH"
+    assert req.full_url.endswith("/pages/pg-1")
+    assert json.loads(req.data) == {"properties": {"Done": {"checkbox": True}}}
+
+
 def test_rich_text_splits_at_2000_characters():
     parts = nc.rich_text("x" * 4500)
     assert [len(p["text"]["content"]) for p in parts] == [2000, 2000, 500]

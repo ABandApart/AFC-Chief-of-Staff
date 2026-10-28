@@ -205,6 +205,10 @@ class NotionClient:
         `{"type": "data_source_id", "data_source_id": …}` for a database row."""
         return self.request("POST", "/pages", {"parent": parent, "properties": properties})
 
+    def update_page(self, page_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+        """Set some properties of a page or database row; the others are left as they are."""
+        return self.request("PATCH", f"/pages/{page_id}", {"properties": properties})
+
     def create_database(
         self, parent_page_id: str, title: str, properties: dict[str, Any],
         *, description: str = "",

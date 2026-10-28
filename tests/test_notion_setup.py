@@ -78,8 +78,11 @@ class FakeNotion:
     def update_data_source(self, data_source_id, properties):
         self.writes.append(("update_data_source", data_source_id, properties))
         props = self.sources[data_source_id]["properties"]
-        for old, change in properties.items():
-            props[change["name"]] = props.pop(old)
+        for key, change in properties.items():
+            if "name" in change:  # a rename
+                props[change["name"]] = props.pop(key)
+            else:  # a new property, such as the To-Do rollup
+                props[key] = {"type": next(iter(change)), **change}
 
     def iter_query(self, data_source_id, *, filter=None):
         return iter(self.rows.get(data_source_id, []))
@@ -105,13 +108,13 @@ def test_fresh_creates_master_page_and_three_linked_databases():
     fake = FakeNotion()
     result, recorded = _run(fake)
     created = [w[1] for w in fake.writes if w[0] == "create_database"]
-    assert created == ["Objectives", "Key Results", "Initiatives"]
+    assert created == ["Objectives", "Key Results", "Initiatives", "To-Do"]
     kr_props = fake.sources[fake.ds_of("Key Results")]["properties"]
     init_props = fake.sources[fake.ds_of("Initiatives")]["properties"]
     assert kr_props["Objective"]["relation"]["data_source_id"] == fake.ds_of("Objectives")
     assert init_props["Key Result"]["relation"]["data_source_id"] == fake.ds_of("Key Results")
     assert set(recorded) == {"okr_master_page", "okr_objectives", "okr_key_results",
-                             "okr_initiatives"}
+                             "okr_initiatives", "todo_database"}
     assert not result.drift
 
 
@@ -136,7 +139,7 @@ def test_rerun_creates_nothing():
     before = len(fake.writes)
     result, recorded = _run(fake)
     assert len(fake.writes) == before
-    assert len(recorded) == 4
+    assert len(recorded) == 5
     assert not result.drift
 
 
@@ -145,7 +148,7 @@ def test_dry_run_writes_nothing_and_records_nothing():
     result, recorded = _run(fake, dry_run=True)
     assert fake.writes == []
     assert recorded == {}
-    assert sum(line.startswith("PLAN") for line in result.lines) == 4  # page + 3 databases
+    assert sum(line.startswith("PLAN") for line in result.lines) == 5  # page + 4 databases
 
 
 def test_drift_is_reported_not_fixed():
@@ -156,6 +159,52 @@ def test_drift_is_reported_not_fixed():
     result, _ = _run(fake)
     assert result.drift == {"Key Results": ["Metric"]}
     assert len(fake.writes) == before
+
+
+# --- To-Do database (N3) -------------------------------------------------------------
+
+
+def _todo_ds(fake):
+    db_id = next(b["id"] for b in fake.children[ROOT]
+                 if b["type"] == "child_database" and b["child_database"]["title"] == "To-Do")
+    return fake.databases[db_id]["data_sources"][0]["id"]
+
+
+def test_todo_database_sits_under_the_root_with_a_one_way_initiative_relation():
+    fake = FakeNotion()
+    result, recorded = _run(fake)
+    props = fake.sources[_todo_ds(fake)]["properties"]
+    rel = props["Initiative"]["relation"]
+    assert rel["data_source_id"] == fake.ds_of("Initiatives")
+    assert rel["type"] == "single_property"
+    # One-way: the operator's Initiatives database gains no reverse column.
+    init_props = fake.sources[fake.ds_of("Initiatives")]["properties"]
+    assert not any(p.get("relation", {}).get("data_source_id") == _todo_ds(fake)
+                   for p in init_props.values() if isinstance(p, dict))
+    assert props["Key Result"]["rollup"]["relation_property_name"] == "Initiative"
+    assert {"Done", "Due", "Source", "Created", "CoS id", "Task"} <= set(props)
+    assert recorded["todo_database"]
+
+
+def test_todo_database_drift_is_reported():
+    fake = FakeNotion()
+    _run(fake)
+    del fake.sources[_todo_ds(fake)]["properties"]["Key Result"]
+    result, _ = _run(fake)
+    assert result.drift == {"To-Do": ["Key Result"]}
+
+
+def test_todo_rollup_failure_becomes_a_manual_step():
+    from agents._lib.notion_client import NotionError
+
+    class NoRollup(FakeNotion):
+        def update_data_source(self, data_source_id, properties):
+            if "Key Result" in properties and "name" not in properties["Key Result"]:
+                raise NotionError("validation_error", status=400)
+            super().update_data_source(data_source_id, properties)
+
+    result, _ = _run(NoRollup())
+    assert any(line.startswith("TODO  add the Key Result rollup") for line in result.lines)
 
 
 # --- root page -----------------------------------------------------------------------

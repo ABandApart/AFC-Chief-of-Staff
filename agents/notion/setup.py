@@ -8,6 +8,8 @@ Idempotent and non-destructive. On each run it:
    that order, because each links to the one before it;
 4. renames the reverse side of each two-way relation ("Key Results" on
    Objectives, "Initiatives" on Key Results);
+   4b. finds or creates the To-Do database (N3) under the root page, beside the
+   master page, with a one-way relation to Initiatives and a Key Result rollup;
 5. records the page and database ids in `notion_sync` (via `record`);
 6. with `seed`, enters the Q4 2026 objectives and KRs, only if Objectives is empty;
    with `resume_seed`, creates only the seed rows whose names are missing, to
@@ -24,8 +26,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agents._lib.notion_client import title_of
+from agents._lib.notion_client import NotionError, title_of
 from agents.notion import okr_schema as s
+from agents.notion import todo_schema as todo
 
 ROOT_PAGE_TITLE = "AFC Richmond Chief-of-Staff"
 SYNC_TABLE = "notion_schema"  # notion_sync.entity_table for setup-created objects
@@ -151,6 +154,9 @@ def run_setup(
             r.say(f"PLAN  rename the {target} → {name} back-relation to "
                   f"{s.BACK_RELATION_NAMES[name]!r}")
 
+    # 4b. the To-Do database (N3), under the root page beside the master page
+    _todo_database(client, r, root, source_ids.get(s.INITIATIVES), dry_run)
+
     # 5. record ids
     if not dry_run:
         for key, notion_id in r.ids.items():
@@ -165,6 +171,38 @@ def run_setup(
     for step in MANUAL_STEPS:
         r.say(f"      - {step}")
     return r
+
+
+def _todo_database(client: Any, r: SetupResult, root: str, initiatives_ds: str | None,
+                   dry_run: bool) -> None:
+    """Find or create the To-Do database (N3). Like the master databases, an
+    existing one is never edited: a missing column is reported as drift."""
+    name = todo.DATABASE_TITLE
+    existing = _children(client, root, "child_database").get(name)
+    if existing:
+        r.ids[todo.SCHEMA_KEY] = existing
+        ds_id = _data_source_id(client.retrieve_database(existing))
+        props = client.retrieve_data_source(ds_id).get("properties") or {}
+        missing = [p for p in todo.REQUIRED if p not in props]
+        if missing:
+            r.drift[name] = missing
+            r.say(f"DRIFT {name}: missing {', '.join(missing)} (not changed)")
+        else:
+            r.say(f"OK    found database {name!r} ({existing})")
+        return
+    if dry_run or initiatives_ds is None:
+        r.say(f"PLAN  create database {name!r} with {len(todo.REQUIRED)} properties")
+        return
+    created = client.create_database(root, name, todo.properties(initiatives_ds),
+                                     description=todo.DESCRIPTION)
+    r.ids[todo.SCHEMA_KEY] = created["id"]
+    r.say(f"NEW   created database {name!r} ({created['id']})")
+    try:
+        client.update_data_source(_data_source_id(created), todo.ROLLUP)
+        r.say(f"NEW   added the Key Result rollup to {name!r}")
+    except NotionError as e:
+        r.say(f"TODO  add the Key Result rollup to {name!r} by hand: Rollup → relation "
+              f"Initiative → property Key Result → Show original ({e})")
 
 
 def _seed(client: Any, r: SetupResult, source_ids: dict[str, str], dry_run: bool,

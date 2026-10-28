@@ -58,6 +58,17 @@ def test_task_from_candidate_maps_fields_links_followup_and_keeps_provenance():
     assert task["source_candidate_id"] == 42
     assert task["status"] == "open"
     assert task["follow_up_id"] == 7
+    assert task["okr_initiative_id"] is None and task["due_date"] is None
+
+
+def test_task_from_candidate_carries_the_initiative_and_due_date():
+    from datetime import date
+
+    task = task_tinder.task_from_candidate(
+        {**CANDIDATE, "okr_initiative_id": 3, "due_date": date(2026, 11, 15)},
+        owner="barry", follow_up_id=7)
+    assert task["okr_initiative_id"] == 3
+    assert task["due_date"] == date(2026, 11, 15)
 
 
 def _mock_db(mocker):
@@ -99,3 +110,19 @@ def test_list_undelivered_joins_the_stored_source_url(mocker):
     assert "LEFT JOIN content_items" in sql
     assert "ci.content_node = tc.source_ref" in sql
     assert "ci.url AS source_url" in sql
+
+
+def test_list_undelivered_carries_the_initiative_label(mocker):
+    cur = _mock_db(mocker)
+    task_tinder.list_undelivered()
+    sql, _ = cur.execute.call_args.args
+    assert "LEFT JOIN okr_initiatives i ON i.id = tc.okr_initiative_id" in sql
+    assert "initiative_name" in sql
+
+
+def test_decide_returns_the_initiative_and_due_date_for_promote(mocker):
+    cur = _mock_db(mocker)
+    cur.fetchone.return_value = None
+    task_tinder.decide(5, "accept")
+    sql = cur.execute.call_args.args[0]
+    assert "okr_initiative_id" in sql and "due_date" in sql

@@ -24,6 +24,7 @@ from typing import Any
 from psycopg.rows import dict_row
 
 from agents._lib import db
+from agents._lib.initiatives import LABEL_COLS
 
 # Surface only reasonably-confident candidates (discovery ones are ≥0.55). Below
 # this a candidate stays pending but isn't posted to #task-tinder.
@@ -78,7 +79,8 @@ def task_from_candidate(
     """Map an accepted `task_candidate` → the `tasks` row to insert (pure).
 
     Linked to its `follow_up` (`follow_up_id`); `source_candidate_id` keeps the
-    provenance link back to the candidate.
+    provenance link back to the candidate. The card's initiative and due date
+    carry over (`PRD-notion-integration.md` N3).
     """
     return {
         "title": candidate["proposed_action"],
@@ -87,12 +89,15 @@ def task_from_candidate(
         "source_candidate_id": candidate["id"],
         "status": "open",
         "follow_up_id": follow_up_id,
+        "okr_initiative_id": candidate.get("okr_initiative_id"),
+        "due_date": candidate.get("due_date"),
     }
 
 
 # --- DB reads/writes (runtime; the cog calls these off the event loop) --------
 
-_CANDIDATE_COLS = "id, proposed_action, source_type, source_ref, evidence_text, confidence"
+_CANDIDATE_COLS = ("id, proposed_action, source_type, source_ref, evidence_text, confidence, "
+                   "okr_initiative_id, due_date")
 # Same columns, qualified with the `tc` alias for the content_items join in
 # list_undelivered (both tables have an `id`, so the list query must qualify).
 _CANDIDATE_COLS_Q = ", ".join(f"tc.{c.strip()}" for c in _CANDIDATE_COLS.split(","))
@@ -111,19 +116,36 @@ def list_undelivered(min_confidence: float = MIN_CONFIDENCE) -> list[dict[str, A
     source URL as `source_url`. The join resolves for content `discovery`
     candidates (their `source_ref` is a `content_items.content_node`); other
     source types leave `source_url` NULL, and the card renders without a link
-    (`PRD-tasktinder-refinements.md` Increment 2).
+    (`PRD-tasktinder-refinements.md` Increment 2). Also carries the initiative
+    label columns (`initiatives.LABEL_COLS`, N3).
     """
     with db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            f"SELECT {_CANDIDATE_COLS_Q}, ci.url AS source_url "
+            f"SELECT {_CANDIDATE_COLS_Q}, ci.url AS source_url, {LABEL_COLS} "
             "FROM task_candidates tc "
             "LEFT JOIN content_items ci ON ci.content_node = tc.source_ref "
+            "LEFT JOIN okr_initiatives i ON i.id = tc.okr_initiative_id "
             "WHERE tc.status = 'pending' AND tc.discord_message_id IS NULL "
             "AND tc.source_type <> %s AND tc.confidence >= %s "
             "ORDER BY tc.confidence DESC, tc.created_at",
             (_OUTREACH_RESCORE, min_confidence),
         )
         return cur.fetchall()
+
+
+def card_row(candidate_id: int) -> dict[str, Any] | None:
+    """One posted, still-pending candidate with everything `build_card` shows, so
+    the card can be redrawn after `/initiative` (N3). None once it is decided."""
+    with db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"SELECT {_CANDIDATE_COLS_Q}, tc.discord_message_id, ci.url AS source_url, "
+            f"{LABEL_COLS} FROM task_candidates tc "
+            "LEFT JOIN content_items ci ON ci.content_node = tc.source_ref "
+            "LEFT JOIN okr_initiatives i ON i.id = tc.okr_initiative_id "
+            "WHERE tc.id = %s AND tc.status = 'pending'",
+            (candidate_id,),
+        )
+        return cur.fetchone()
 
 
 def list_pending_posted() -> list[dict[str, Any]]:
@@ -196,9 +218,10 @@ def promote(candidate: dict[str, Any], *, owner: str) -> dict[str, int]:
         task = task_from_candidate(candidate, owner=owner, follow_up_id=follow_up_id)
         cur.execute(
             "INSERT INTO tasks (title, description, owner, source_candidate_id, "
-            "                   status, follow_up_id) "
+            "                   status, follow_up_id, okr_initiative_id, due_date) "
             "VALUES (%(title)s, %(description)s, %(owner)s, %(source_candidate_id)s, "
-            "        %(status)s, %(follow_up_id)s) RETURNING id",
+            "        %(status)s, %(follow_up_id)s, %(okr_initiative_id)s, %(due_date)s) "
+            "RETURNING id",
             task,
         )
         task_id = cur.fetchone()[0]

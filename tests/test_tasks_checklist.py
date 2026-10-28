@@ -87,19 +87,48 @@ def test_format_line_open_shows_checkbox_due_and_escalation():
         {"id": 1, "title": "Email Alex", "status": "open",
          "due_date": "2026-09-12", "escalation_level": 2}
     )
-    assert line == "☐ Email Alex  · due 2026-09-12 · esc 2"
+    assert line == "☐ Email Alex  · due 2026-09-12 · esc 2 · Unassigned"
 
 
 def test_format_line_open_without_meta_is_just_the_title():
-    assert tc.format_line({"id": 1, "title": "Ping Sam", "status": "open"}) == "☐ Ping Sam"
+    assert tc.format_line({"id": 1, "title": "Ping Sam", "status": "open"}) == (
+        "☐ Ping Sam  · Unassigned")
 
 
 def test_format_line_completed_is_struck_through():
     line = tc.format_line({"id": 2, "title": "Done thing", "status": "completed"})
-    assert line == "☑ ~~Done thing~~"
+    assert line == "☑ ~~Done thing~~  · Unassigned"
     assert tc.is_done({"status": "completed"}) is True
     assert tc.is_done({"status": "open"}) is False
 
 
 def test_format_line_tolerates_a_missing_title():
-    assert tc.format_line({"id": 9, "status": "open"}) == "☐ task #9"
+    assert tc.format_line({"id": 9, "status": "open"}) == "☐ task #9  · Unassigned"
+
+
+def test_format_line_ends_with_the_initiative_label():
+    row = {"id": 3, "title": "Draft the deck", "status": "open",
+           "initiative_name": "Proposal template", "initiative_status": "Active",
+           "initiative_gone": False}
+    assert tc.format_line(row) == "☐ Draft the deck  · Proposal template"
+    assert tc.format_line({**row, "initiative_status": "Paused"}).endswith(
+        "· Proposal template (paused)")
+
+
+def test_list_checklist_joins_the_initiative(mocker):
+    cur = _mock_db(mocker, fetchall=[])
+    tc.list_checklist()
+    sql = cur.execute.call_args.args[0]
+    assert "LEFT JOIN okr_initiatives i ON i.id = t.okr_initiative_id" in sql
+    assert "initiative_name" in sql
+
+
+def test_complete_and_reopen_move_the_follow_up_in_the_same_statement(mocker):
+    cur = _mock_db(mocker, fetchone=(7,))
+    tc.complete_task(7)
+    sql = cur.execute.call_args.args[0]
+    assert "UPDATE follow_ups SET status = 'completed', completed_at = now()" in sql
+    assert "SELECT follow_up_id FROM t" in sql
+    tc.reopen_task(7)
+    sql = cur.execute.call_args.args[0]
+    assert "UPDATE follow_ups SET status = 'open', completed_at = NULL" in sql

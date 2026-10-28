@@ -21,7 +21,7 @@ import logging
 import discord
 from discord.ext import commands, tasks
 
-from agents._lib import task_tinder
+from agents._lib import initiatives, task_tinder
 from agents.discord_bot.config import OPERATOR_DISCORD_ID, TASK_TINDER_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,10 @@ def build_card(candidate: dict) -> discord.Embed:
     src = candidate.get("source_type", "?")
     conf = candidate.get("confidence", 0) or 0
     embed.add_field(name="Source", value=f"{src} · confidence {conf:.2f}", inline=False)
+    # N3: every card shows its initiative, or "Unassigned". Set with /initiative.
+    embed.add_field(name="Initiative", value=initiatives.label(candidate), inline=False)
+    if candidate.get("due_date"):
+        embed.add_field(name="Due", value=str(candidate["due_date"]), inline=False)
     # The stored source URL, when one resolves for this card (Increment 2). A card
     # with no resolvable URL renders without a link — no empty field.
     if candidate.get("source_url"):
@@ -155,6 +159,21 @@ class TaskTinderCog(commands.Cog):
             logger.info("task_tinder: posted card for candidate #%s", cid)
         except Exception:
             logger.exception("task_tinder: failed to post card for #%s", cid)
+
+    async def refresh_card(self, candidate_id: int) -> bool:
+        """Redraw a posted card in place (after `/initiative`). The buttons are left
+        as they are. False when the card is decided, unposted, or gone."""
+        row = await asyncio.to_thread(task_tinder.card_row, candidate_id)
+        channel = self.bot.get_channel(TASK_TINDER_CHANNEL_ID)
+        if row is None or not row.get("discord_message_id") or channel is None:
+            return False
+        try:
+            await channel.get_partial_message(int(row["discord_message_id"])).edit(
+                embed=build_card(row))
+        except discord.HTTPException:
+            logger.exception("task_tinder: failed to redraw card #%s", candidate_id)
+            return False
+        return True
 
     # --- decision handling -----------------------------------------------
 

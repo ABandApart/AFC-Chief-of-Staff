@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). **N1 and N2 complete.** N3–N6 not started. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). **N1 and N2 complete.** N3 BUILT 2026-10-28 (branch `notion-integration`; migration 0034 applied; loop `notion-todo-sync` shipped disabled), not yet deployed. N4–N6 not started. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -35,7 +35,7 @@ When N1–N6 are done:
 
 1. **Master OKRs:** a KR or initiative added or edited in Notion appears in the CoS (`/initiative` type-ahead and the dashboard) within 15 minutes. A KR whose Metric the CoS can't compute is flagged in Discord #system, not silently shown as zero.
 2. **Initiatives:** every Task Tinder card and every #tasks checklist line shows its initiative, or "Unassigned". `/initiative` sets or changes it, with type-ahead over active initiatives.
-3. **To-dos:** within 5 minutes of accepting a card (including a `/todo` card), it is a row in the Notion To-Do database. Within 15 minutes of ticking Done in Notion, `tasks.status = 'done'`, and the #tasks checklist no longer lists it. All 16 tasks accepted before N3 are in Notion as Unassigned.
+3. **To-dos:** within 5 minutes of accepting a card (including a `/todo` card), it is a row in the Notion To-Do database. Within 15 minutes of ticking Done in Notion, `tasks.status = 'completed'`, and the #tasks checklist no longer lists it. A task checked off in #tasks shows Done in Notion within 5 minutes (N-S16). All 16 tasks accepted before N3 are in Notion as Unassigned.
 4. **Dashboard:** every Monday by 07:15, the dashboard shows each KR's value, target, progress, and status, matching `kr_metrics` at that time. Under each KR, it lists that KR's initiatives with their open and done to-do counts. Higgins has posted the Discord summary with the page link.
 5. **Tartt:** each day by 06:30, the day's top 10 articles by `interest_score` are in Content Review. A Decision set in Notion reaches `content_items` within 20 minutes.
 6. **Writing:** each article has exactly one page. The page's header block names the latest draft and its status. Each draft sits under a toggle H2 that carries its revision number. Claude in claude.ai can read an article page and add a new draft that follows this convention, using only the instructions page.
@@ -52,7 +52,7 @@ Rev 1 kept every system of record in Postgres. Rev 2 deliberately moves **three 
 | Objective, KR, and initiative definitions and KR targets | **Notion** master OKR databases | Postgres cache (`okr_*` tables), read-only, refreshed by polling |
 | KR current values and history | Postgres (`_lib/kr_metrics.py`, `okr_snapshots`) | Notion dashboard, read-only mirror |
 | Task existence, title, source, and initiative | Postgres `tasks` | Notion To-Do, mirror |
-| **Task completion** | **Notion To-Do `Done`** | Postgres `tasks.status`, written by the poller |
+| **Task completion** | **Either side; the latest change wins** (N-S16): Notion To-Do `Done` or the #tasks checklist | Postgres `tasks.status` is the record the CoS reads; the sync moves Done both ways |
 | Article decision (Keep, Dismiss, Research this) | Notion Content Review `Decision` (input) | Postgres `content_items.engagement_type` (record) |
 | Article metadata, score, summary | Postgres `content_items` | Notion Content Review, mirror |
 | **Article drafts** | **Notion Articles pages** | None. The CoS doesn't copy drafts. |
@@ -170,6 +170,19 @@ Metrics with no data source yet (selling hours, reply time, recurring pains) are
 **Verification:**
 1. Pure tests: type-ahead choice builders, including the 25-choice cap and 100-character truncation. Candidate → task initiative copy. Done/undone transitions. Checklist line rendering.
 2. Runtime smoke test: `/todo` with an initiative creates a To-Do row showing that initiative. `/initiative` on a pending card updates the card embed. Accepting it creates the To-Do row. Ticking Done closes `tasks` and the follow-up, and the checklist drops the line. The backfill shows 16 Unassigned rows, and running it again adds none.
+
+**Build notes (2026-10-28):**
+- **Migration 0034** (applied to `aiadaptive_cos`; `verify_schema.sql` updated): `okr_initiative_id` on `task_candidates` and `tasks`, `task_candidates.due_date`, and `notion_sync.synced_done`. `source_type = 'operator'` needs no DDL: the column has no CHECK.
+- **Spec gap closed — `/todo due:` had nowhere to live.** Candidates had no due date, so 0034 adds one and accept copies it to `tasks.due_date`, as it does the initiative.
+- **Spec correction — status vocabulary.** `tasks` uses `open` and `completed`, not `done`. `follow_ups` had no closed value, so it uses `completed` with `completed_at`.
+- **Follow-ups move with their task from both surfaces.** `tasks_checklist.complete_task` and `reopen_task` now close and reopen the linked follow-up in the same statement. Before N3, the #tasks Done button left the follow-up open. The Notion path calls the same two functions.
+- **Discord:** `agents/discord_bot/cogs/initiatives.py` adds `/initiative` and `/todo` (operator-only, type-aheads from `agents/_lib/initiatives.py`). The Task Tinder card gains Initiative and Due fields and redraws after `/initiative`. Each checklist line ends with its initiative or "Unassigned". A label reads "(paused)", "(done)", or "(retired)" when the initiative is paused, finished, or removed or malformed in Notion. The spec named "(retired)" and "(paused)"; Initiatives have no Retired status, so "(done)" covers Done.
+- **Notion:** `cli.notion_setup` now also creates "To-Do" under the root page, beside "OKRs — Master", with a one-way Initiative relation and the Key Result rollup. The rollup is added in a second call; if Notion refuses it, setup prints it as a manual step. Its id is recorded as `todo_database`.
+- **Deviation — one 5-minute job, no immediate push.** `agents/notion/todo_sync.py` (loop `notion-todo-sync`, **shipped `enabled: false`**) merges Done and pushes rows in one pass every 5 minutes, which meets both S1.3 times. The bot makes no Notion calls, so an accept reaches Notion on the next cycle rather than at once.
+- **Deviation — no `cli.notion_backfill_tasks`.** The first sync run creates a row for every existing task, as Unassigned, and re-running creates none (`notion_sync`). A row deleted in Notion is recreated; a row added by hand in Notion is left alone.
+- **Done merge (N-S16):** `todo_schema.merge_done` compares Postgres, Notion, and `synced_done`. With one boolean per side, the side that differs from the last agreed value is the side that changed. A side flipped and flipped back between two syncs counts as unchanged.
+- **Tests:** 36 new or changed (`test_initiatives.py`, `test_todo_sync.py`, setup, checklist, Task Tinder, and cog), including the neutral-title guard. The SQL ran against a schema copy of `aiadaptive_cos`: `/todo`, refusal of a paused initiative, card label and redraw query, `/initiative` set and clear, accept copying initiative and due date, check-off and reopen moving the follow-up, the "(paused)" label, and sync create, skip, and a Notion tick completing the task and its follow-up.
+- **Pending:** live setup of the To-Do database, the runtime smoke test, and the bot restart (barry-agent, `PHASE-NOTION-N3.md`).
 
 ## N4 — Dashboard
 
@@ -328,6 +341,7 @@ The operator adds the same text to a claude.ai Project's instructions, so every 
 | N-S10 | Writing structure: Articles (parents) + Derivatives (linked short-form and video pages), each with the page convention in N6. Articles carry an optional Initiative relation (N-D12). |
 | N-S11 | To-dos that name a prospect push to Notion with neutral titles (N-D9). Extended from outreach to inbound-lead to-dos, which name a prospect too. |
 | N-S15 | **KR status thresholds (N-D13, operator, 2026-10-28).** On track at score ≥ 1.0. At risk from 0.9 for point KRs and from 0.7 for cumulative KRs, which swing more week to week. Too early covers any cumulative KR that would score At risk or Off track before day 15, not only a KR at 0. Lower-is-better KRs show no Progress bar. |
+| N-S16 | **Completion from both surfaces, latest change wins (operator, 2026-10-28).** The #tasks checklist keeps its Done button, and the Notion To-Do Done box also completes a task. The sync compares both with the value they last agreed on; the side that changed wins. The CoS therefore writes Done in Notion, which amends N-S6 ("Done is ticked in Notion") and N-S1 (Notion owned completion alone). |
 | N-S12 | `/todo` posts a Task Tinder card. It doesn't skip acceptance, because a new to-do may not be a priority yet (N-D10). |
 
 ### Open

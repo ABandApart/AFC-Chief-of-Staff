@@ -79,3 +79,16 @@ def test_build_card_omits_source_link_when_absent():
          "confidence": 0.7, "source_url": None}
     )
     assert not any(f.name == "Source link" for f in card.fields)
+
+
+def test_build_card_shows_the_initiative_or_unassigned():
+    base = {"id": 3, "proposed_action": "Write the post", "source_type": "operator",
+            "confidence": 1.0}
+    card = cog.build_card(base)
+    assert {f.name: f.value for f in card.fields}["Initiative"] == "Unassigned"
+    card = cog.build_card({**base, "initiative_name": "Webinar series",
+                           "initiative_status": "Active", "initiative_gone": False,
+                           "due_date": "2026-11-15"})
+    fields = {f.name: f.value for f in card.fields}
+    assert fields["Initiative"] == "Webinar series"
+    assert fields["Due"] == "2026-11-15"

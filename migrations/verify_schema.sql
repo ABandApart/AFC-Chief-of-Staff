@@ -252,6 +252,15 @@ SELECT t AS okr_table,
 FROM (VALUES ('okr_objectives'), ('okr_key_results'), ('okr_initiatives')) AS v(t);
 
 \echo
+\echo '=== Task initiatives and To-Do sync (migration 0034) ==='
+SELECT tbl || '.' || col AS n3_column,
+    CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = tbl AND column_name = col)
+         THEN 'OK' ELSE 'FAIL missing — apply migration 0034' END AS n3_status
+FROM (VALUES ('task_candidates', 'okr_initiative_id'), ('task_candidates', 'due_date'),
+             ('tasks', 'okr_initiative_id'), ('notion_sync', 'synced_done')) AS v(tbl, col);
+
+\echo
 \echo '=== Summary ==='
 SELECT
     (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public') AS total_tables,

@@ -15,6 +15,11 @@ pinned by `tests/test_tasks_checklist_separation.py`.
 **Operator decisions (2026-09-10):** a completed task shows struck-through for
 `ARCHIVE_AFTER`, then drops off the list ("archive"); check-off is reversible
 (uncheck reopens); the list is ordered most-escalated then soonest-due.
+
+**Notion N3 (2026-10-28):** each line ends with its initiative or "Unassigned".
+Completing or reopening a task does the same to its linked follow-up, whether the
+change comes from this checklist or from the Notion To-Do Done box (N-S16: both
+controls work, and the latest change wins; `agents/notion/todo_sync.py`).
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from typing import Any
 
 from psycopg.rows import dict_row
 
-from agents._lib import db
+from agents._lib import db, initiatives
 
 # A completed task stays on the list struck-through for this window, then archives
 # out (drops on the next rebuild). Reversible while shown: uncheck reopens it.
@@ -39,7 +44,8 @@ ARCHIVE_AFTER = "24 hours"
 # wants pagination across multiple pinned messages (PRD Increment 3 open decision).
 MAX_ROWS = 12
 
-_COLS = "t.id, t.title, t.status, t.due_date, t.completed_at, fu.escalation_level"
+_COLS = ("t.id, t.title, t.status, t.due_date, t.completed_at, fu.escalation_level, "
+         + initiatives.LABEL_COLS)
 
 
 def list_checklist(limit: int = MAX_ROWS) -> list[dict[str, Any]]:
@@ -55,6 +61,7 @@ def list_checklist(limit: int = MAX_ROWS) -> list[dict[str, Any]]:
         cur.execute(
             f"SELECT {_COLS} FROM tasks t "
             "LEFT JOIN follow_ups fu ON fu.id = t.follow_up_id "
+            "LEFT JOIN okr_initiatives i ON i.id = t.okr_initiative_id "
             "WHERE t.status = 'open' "
             "   OR (t.status = 'completed' AND t.completed_at >= now() - %s::interval) "
             "ORDER BY (t.status = 'open') DESC, "
@@ -76,13 +83,17 @@ def count_open() -> int:
 
 
 def complete_task(task_id: int) -> int | None:
-    """Idempotently mark an open task complete. Returns the id, or None if it was
-    not open (the double-click no-op — the `WHERE status='open'` gate is the
-    authority, mirroring the Task Tinder decide/promote pattern)."""
+    """Idempotently mark an open task complete, and close its open follow-up.
+    Returns the id, or None if it was not open (the double-click no-op — the
+    `WHERE status='open'` gate is the authority, mirroring the Task Tinder
+    decide/promote pattern). One statement, so the two never disagree."""
     with db.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE tasks SET status = 'completed', completed_at = now() "
-            "WHERE id = %s AND status = 'open' RETURNING id",
+            "WITH t AS (UPDATE tasks SET status = 'completed', completed_at = now() "
+            "           WHERE id = %s AND status = 'open' RETURNING id, follow_up_id), "
+            "f AS (UPDATE follow_ups SET status = 'completed', completed_at = now() "
+            "      WHERE id IN (SELECT follow_up_id FROM t) AND status = 'open') "
+            "SELECT id FROM t",
             (task_id,),
         )
         row = cur.fetchone()
@@ -90,13 +101,16 @@ def complete_task(task_id: int) -> int | None:
 
 
 def reopen_task(task_id: int) -> int | None:
-    """Idempotently reopen a completed task (the uncheck / undo). Returns the id,
-    or None if it was not completed. Clears `completed_at` so it re-sorts as open
-    and leaves the recently-completed window."""
+    """Idempotently reopen a completed task (the uncheck / undo), and its follow-up.
+    Returns the id, or None if it was not completed. Clears `completed_at` so it
+    re-sorts as open and leaves the recently-completed window."""
     with db.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE tasks SET status = 'open', completed_at = NULL "
-            "WHERE id = %s AND status = 'completed' RETURNING id",
+            "WITH t AS (UPDATE tasks SET status = 'open', completed_at = NULL "
+            "           WHERE id = %s AND status = 'completed' RETURNING id, follow_up_id), "
+            "f AS (UPDATE follow_ups SET status = 'open', completed_at = NULL "
+            "      WHERE id IN (SELECT follow_up_id FROM t) AND status = 'completed') "
+            "SELECT id FROM t",
             (task_id,),
         )
         row = cur.fetchone()
@@ -113,14 +127,17 @@ def format_line(row: dict[str, Any]) -> str:
     """One checklist line's text (the Section's TextDisplay).
 
     Completed: `☑ ~~title~~` (struck-through). Open: `☐ title` with a trailing
-    `· due <date>` / `· esc <n>` when present. Never raises on a missing title.
+    `· due <date>` / `· esc <n>` when present. Both end with `· <initiative>` or
+    `· Unassigned` (N3). Never raises on a missing title.
     """
     title = str(row.get("title") or f"task #{row['id']}")
+    tag = initiatives.label(row)
     if is_done(row):
-        return f"☑ ~~{title}~~"
+        return f"☑ ~~{title}~~  · {tag}"
     meta = []
     if row.get("due_date"):
         meta.append(f"due {row['due_date']}")
     if row.get("escalation_level"):
         meta.append(f"esc {row['escalation_level']}")
-    return f"☐ {title}" + (f"  · {' · '.join(meta)}" if meta else "")
+    meta.append(tag)
+    return f"☐ {title}  · {' · '.join(meta)}"
