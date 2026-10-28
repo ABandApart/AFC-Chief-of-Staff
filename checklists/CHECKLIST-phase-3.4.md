@@ -20,24 +20,24 @@ until 3.3 closes and `PHASE-3.4.md` becomes the active coordination file.
       log synced command count
 - [x] `tests/test_outcomes.py`: 8 parse-helper / type tests; suite 42/42
 - [x] All modules import clean (discord modal/command classes load without a connection)
-- [ ] builder-side commit pushed  ← in progress
+- [x] builder-side commit pushed
 
 ## Runtime-side (barry-agent — after 3.3 closes)
 
-- [ ] **[BARRY-AGENT]** `git pull` + `uv sync`; run bot
-- [ ] **AC1**: `/outcome` appears in the guild with the type dropdown (check the synced-count log line)
-- [ ] **AC2**: selecting a type opens the modal
-- [ ] **AC3**: submit writes an `outcomes` row (type + description [+ value])
-- [ ] **AC4**: blank value → null; non-number → ephemeral error, no row
-- [ ] **AC5**: linked fact id → `attributed_fact_id` set; bad id → friendly error
-- [ ] **AC6**: ephemeral confirmation shown
-- [ ] **AC7**: `uv run pytest tests/test_outcomes.py` passes
+- [x] **[BARRY-AGENT]** `git pull` + `uv sync`; run bot
+- [x] **AC1**: `/outcome` appears in the guild with the type dropdown (check the synced-count log line)
+- [x] **AC2**: selecting a type opens the modal
+- [x] **AC3**: submit writes an `outcomes` row (type + description [+ value])
+- [x] **AC4**: blank value → null; non-number → ephemeral error, no row
+- [x] **AC5**: linked fact id → `attributed_fact_id` set; bad id → friendly error
+- [x] **AC6**: ephemeral confirmation shown
+- [x] **AC7**: `uv run pytest tests/test_outcomes.py` passes
 
 ## Done
 
-- [ ] All 7 acceptance criteria checked
-- [ ] **[BARRY-ADMIN]** final commit "Phase 3.4: /outcome online"
-- [ ] Pushed; memory updated; PHASE-3.5.md created
+- [x] All 7 acceptance criteria checked
+- [x] **[BARRY-ADMIN]** final commit "Phase 3.4: /outcome online"
+- [x] Pushed; memory updated; PHASE-3.5.md created
 
 ## Notes / issues encountered
 
@@ -50,4 +50,11 @@ until 3.3 closes and `PHASE-3.4.md` becomes the active coordination file.
   if the command doesn't register or the modal misbehaves, capture the exact
   symptom; it's likely a sync/scope detail, fixable quickly.
 
--
+- **Reconciled 2026-10-28 (barry-admin):** this checklist went stale after the
+  phase closed. All 7 ACs passed at the 3.4 close and were re-verified live in
+  the 2026-07 refactor re-validation (`PHASE-REFACTOR-2026-07.md` handback:
+  /recall + /outcome end to end, value parsing, FK rejection of a bogus fact
+  id). Two ACs describe behavior since superseded: the refactor's R12 moved the
+  fact link from modal free-text to a command param with autocomplete, and the
+  3.7 cognee migration (0006) dropped `facts`, so `/outcome` now records with
+  no fact link at all. The ticks record what was true when 3.4 closed.

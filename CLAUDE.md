@@ -67,5 +67,10 @@ restart, or a real LLM call is barry-agent's, handed over through
 `/Users/Shared/afc-richmond/` — write a phase file, point `CURRENT-PHASE.txt` at
 it, then `chmod 666` the file and `chmod 777` the directory.
 
+Database commands written **for barry-agent** must spell
+`psql -U barry_agent aiadaptive_cos`: the OS username `barry-agent` (hyphen) is
+not the PG role `barry_agent` (underscore), so a bare `psql aiadaptive_cos`
+fails from that profile (found during the N2 checks, 2026-10-28).
+
 Keychain writes are a **human** step in barry-agent's GUI session; the autonomous
 agent cannot answer the login-keychain prompt.
