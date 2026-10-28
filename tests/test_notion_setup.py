@@ -45,8 +45,12 @@ class FakeNotion:
                 {"type": "child_page", "id": pid, "child_page": {"title": title}})
             self.children[pid] = []
         else:
+            # Notion returns title text as `plain_text`; the request carries `text.content`.
+            stored = {k: ({"type": "title", "title": [
+                {"plain_text": t["text"]["content"]} for t in v["title"]]} if "title" in v else v)
+                for k, v in properties.items()}
             self.rows.setdefault(parent["data_source_id"], []).append(
-                {"id": pid, "properties": properties})
+                {"id": pid, "properties": stored})
         return {"id": pid}
 
     def create_database(self, parent_page_id, title, properties, *, description=""):
@@ -190,6 +194,67 @@ def test_seed_skips_when_objectives_not_empty():
     result, _ = _run(fake, seed=True)
     assert len(fake.writes) == before
     assert any(line.startswith("SKIP") for line in result.lines)
+
+
+def test_drift_reports_a_missing_metric_option():
+    fake = FakeNotion()
+    _run(fake)
+    options = fake.sources[fake.ds_of("Key Results")]["properties"]["Metric"]["select"]["options"]
+    options[:] = [o for o in options if o["name"] != "calls_booked"]
+    result, _ = _run(fake)
+    assert result.drift == {"Key Results": ["Metric option 'calls_booked'"]}
+
+
+def test_extra_operator_options_are_not_drift():
+    fake = FakeNotion()
+    _run(fake)
+    props = fake.sources[fake.ds_of("Objectives")]["properties"]
+    props["Quarter"]["select"]["options"].append({"name": "2027-Q2"})
+    result, _ = _run(fake)
+    assert not result.drift
+
+
+def _interrupt_seed(fake):
+    """A seed that died after the first objective and two of its KRs."""
+    _run(fake, seed=True)
+    obj_ds, kr_ds = fake.ds_of("Objectives"), fake.ds_of("Key Results")
+    first = fake.rows[obj_ds][0]["id"]
+    fake.rows[obj_ds] = fake.rows[obj_ds][:1]
+    fake.rows[kr_ds] = [k for k in fake.rows[kr_ds]
+                        if k["properties"]["Objective"]["relation"][0]["id"] == first][:2]
+
+
+def test_resume_seed_creates_only_missing_rows_and_links_them():
+    fake = FakeNotion()
+    _interrupt_seed(fake)
+    result, _ = _run(fake, resume_seed=True)
+    objectives = fake.rows[fake.ds_of("Objectives")]
+    krs = fake.rows[fake.ds_of("Key Results")]
+    n_krs = sum(len(o["krs"]) for o in s.Q4_SEED)
+    assert len(objectives) == len(s.Q4_SEED)
+    assert len(krs) == n_krs
+    names = [k["properties"]["Name"]["title"][0]["plain_text"] for k in krs]
+    assert len(set(names)) == n_krs  # no duplicates
+    assert {k["properties"]["Objective"]["relation"][0]["id"] for k in krs} == {
+        o["id"] for o in objectives}
+    assert f"NEW   seeded {len(s.Q4_SEED) - 1} objectives and {n_krs - 2} KRs" in "\n".join(
+        result.lines)
+
+
+def test_resume_seed_on_a_complete_seed_writes_nothing():
+    fake = FakeNotion()
+    _run(fake, seed=True)
+    before = len(fake.writes)
+    result, _ = _run(fake, resume_seed=True)
+    assert len(fake.writes) == before
+    assert any("already present" in line for line in result.lines)
+
+
+def test_plain_seed_after_interruption_points_to_resume():
+    fake = FakeNotion()
+    _interrupt_seed(fake)
+    result, _ = _run(fake, seed=True)
+    assert any("--resume-seed" in line for line in result.lines)
 
 
 def test_seed_dry_run_writes_nothing():

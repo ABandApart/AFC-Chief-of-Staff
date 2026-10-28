@@ -9,10 +9,12 @@ Idempotent and non-destructive. On each run it:
 4. renames the reverse side of each two-way relation ("Key Results" on
    Objectives, "Initiatives" on Key Results);
 5. records the page and database ids in `notion_sync` (via `record`);
-6. with `seed`, enters the Q4 2026 objectives and KRs, only if Objectives is empty.
+6. with `seed`, enters the Q4 2026 objectives and KRs, only if Objectives is empty;
+   with `resume_seed`, creates only the seed rows whose names are missing, to
+   finish a seed that failed partway.
 
 It never rewrites a database that already exists: the operator owns them (N-S1).
-Missing properties are reported, not fixed. The Notion client and the recorder
+Missing properties and select options are reported, not fixed. The Notion client and the recorder
 are injected, so the whole flow unit-tests without network or database.
 """
 
@@ -82,6 +84,7 @@ def run_setup(
     root_id: str | None = None,
     dry_run: bool = False,
     seed: bool = False,
+    resume_seed: bool = False,
 ) -> SetupResult:
     r = SetupResult()
     root = root_id or _find_root(client, ROOT_PAGE_TITLE)
@@ -112,7 +115,7 @@ def run_setup(
             db_id = existing[name]
             ds_id = _data_source_id(client.retrieve_database(db_id))
             props = client.retrieve_data_source(ds_id).get("properties") or {}
-            missing = s.missing_properties(name, props)
+            missing = s.missing_properties(name, props) + s.missing_options(name, props)
             if missing:
                 r.drift[name] = missing
                 r.say(f"DRIFT {name}: missing {', '.join(missing)} (not changed — you own it)")
@@ -155,8 +158,8 @@ def run_setup(
         r.say(f"OK    recorded {len(r.ids)} ids in notion_sync ({SYNC_TABLE})")
 
     # 6. optional seed
-    if seed:
-        _seed(client, r, source_ids, dry_run)
+    if seed or resume_seed:
+        _seed(client, r, source_ids, dry_run, resume=resume_seed)
 
     r.say("TODO  by hand in Notion (the API can't set relation limits):")
     for step in MANUAL_STEPS:
@@ -164,27 +167,39 @@ def run_setup(
     return r
 
 
-def _seed(client: Any, r: SetupResult, source_ids: dict[str, str], dry_run: bool) -> None:
+def _seed(client: Any, r: SetupResult, source_ids: dict[str, str], dry_run: bool,
+          *, resume: bool = False) -> None:
     n_krs = sum(len(o["krs"]) for o in s.Q4_SEED)
     obj_ds, kr_ds = source_ids.get(s.OBJECTIVES), source_ids.get(s.KEY_RESULTS)
     if not obj_ds or not kr_ds:
         r.say(f"PLAN  seed {len(s.Q4_SEED)} objectives and {n_krs} KRs once the databases exist")
         return
-    if next(iter(client.iter_query(obj_ds)), None) is not None:
-        r.say("SKIP  seed: Objectives already has rows (seeding runs only into an empty database)")
+    # Title → page id of what's already there. Without `resume`, any row stops the
+    # seed: names the operator has since edited can't be matched safely.
+    have_obj = {title_of(p): p["id"] for p in client.iter_query(obj_ds)}
+    if have_obj and not resume:
+        r.say("SKIP  seed: Objectives already has rows (seeding runs only into an empty "
+              "database). To finish a seed that failed partway, use --resume-seed.")
+        return
+    have_kr = {title_of(p) for p in client.iter_query(kr_ds)} if resume else set()
+    todo = [(o, [k for k in o["krs"] if k[0] not in have_kr]) for o in s.Q4_SEED]
+    new_obj = sum(1 for o, _ in todo if o["objective"] not in have_obj)
+    new_kr = sum(len(krs) for _, krs in todo)
+    if not new_obj and not new_kr:
+        r.say("OK    seed: every seed objective and KR is already present")
         return
     if dry_run:
-        r.say(f"PLAN  seed {len(s.Q4_SEED)} objectives and {n_krs} KRs")
+        r.say(f"PLAN  seed {new_obj} objectives and {new_kr} KRs")
         return
-    for obj in s.Q4_SEED:
-        obj_id = client.create_page(
+    for obj, krs in todo:
+        obj_id = have_obj.get(obj["objective"]) or client.create_page(
             {"type": "data_source_id", "data_source_id": obj_ds},
             s.objective_row(obj["objective"], obj["order"]),
         )["id"]
-        for name, metric, target, unit, direction in obj["krs"]:
+        for name, metric, target, unit, direction in krs:
             client.create_page(
                 {"type": "data_source_id", "data_source_id": kr_ds},
                 s.kr_row(name, obj_id, metric, target, unit, direction),
             )
-    r.say(f"NEW   seeded {len(s.Q4_SEED)} objectives and {n_krs} KRs (blank targets: "
+    r.say(f"NEW   seeded {new_obj} objectives and {new_kr} KRs (blank targets: "
           "Cold sequences live, LLM spend per month — set them in Notion)")

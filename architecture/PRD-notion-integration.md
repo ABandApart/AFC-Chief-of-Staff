@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`): client, CLI check, migration 0032 applied; `cli.notion_check` pending a barry-agent run. N2 setup command BUILT 2026-10-16 (`cli.notion_setup`), not yet run; the OKR pull is not started. N3–N6 not started. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28. Blocked on a Notion integration token (human keychain step).</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied, loop `notion-okr-pull` shipped disabled), first live run pending barry-agent. N3–N6 not started. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -68,7 +68,7 @@ Rev 1 kept every system of record in Postgres. Rev 2 deliberately moves **three 
 | `agents/notion/okr_pull.py` | Polls the master OKR databases into `okr_objectives`, `okr_key_results`, and `okr_initiatives`. |
 | `agents/notion/publish.py` | Pushes the To-Do, dashboard, and Content Review projections. Idempotent via `notion_sync`. |
 | `agents/notion/pull.py` | Polls To-Do `Done` and Content Review `Decision` changes. |
-| `loops/notion-sync.md` | Scheduler entries. OKR pull and Done/Decision pull every 15 minutes. To-do push every 5 minutes, plus immediately on accept (best effort). Dashboard push Monday 07:00, attention refresh daily 07:00, Tartt push daily 06:15. |
+| `loops/notion-<job>.md` | Scheduler entries, one manifest per job because the loader allows one command per manifest (N2 build notes). N2: `notion-okr-pull`. OKR pull and Done/Decision pull every 15 minutes. To-do push every 5 minutes, plus immediately on accept (best effort). Dashboard push Monday 07:00, attention refresh daily 07:00, Tartt push daily 06:15. |
 | `_lib/kr_metrics.py` | The single implementation of every metric, keyed by metric id. Higgins and the dashboard both read it. |
 
 Every loop run writes an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=0`), so KR4.2 counts it and Ted watches it.
@@ -128,10 +128,21 @@ Metrics with no data source yet (selling hours, reply time, recurring pains) are
 - **`--seed-q4`** enters the 4 objectives and 16 KRs from `15-okrs-q4-2026.md` §1, only into an empty Objectives database. Two targets are left blank on purpose: Cold sequences live (the cap changed to 150) and LLM spend per month (no budget yet). Selling hours, reply time, recurring pains, and the product spec use `manual`.
 - **Confirmed against the API reference (2026-10-16):** databases are created with `initial_data_source.properties`, rows use parent `data_source_id`, and relations reference a `data_source_id`. **The API can't set a relation's "limit 1 page"**, so the command prints it as a manual step. The OKR pull must still reject a page with more than one link.
 - **Tests:** 21 in `tests/test_notion_setup.py` against a fake workspace (fresh, re-run, dry run, drift, root missing or ambiguous, seed, and schema), plus 4 client endpoint tests.
-- **Not yet verified against live Notion.** The fake models Notion's auto-named reverse relation. The real name it uses is unconfirmed, but the rename finds the property by its target, not its name.
-- **Known gaps (review, 2026-10-28):**
-  - A seed that fails partway can't be resumed. `_seed` skips whenever Objectives has any rows, so a re-run won't finish it. Fix: match existing rows by name and create only the missing objectives and KRs.
-  - The drift check compares property names only. It doesn't report a Metric select that lacks an id added to `METRICS` later. Fix: report missing select options as drift too.
+- **Verified live 2026-10-28** (barry-agent, `PHASE-NOTION-N1.md` A4): page, three databases, both reverse-relation renames, 4 `notion_sync` ids, and the Q4 seed; a second run changed nothing. The two relation limits are still a manual step (H5).
+- **Known gaps (review, 2026-10-28), closed 2026-10-28:**
+  - A seed that failed partway couldn't be resumed. `--resume-seed` now creates only the seed objectives and KRs whose names are missing, linked to the existing objectives. Plain `--seed-q4` still refuses a non-empty database, because names the operator has edited can't be matched safely, and its SKIP line points to `--resume-seed`.
+  - The drift check compared property names only. It now also reports a select option the spec requires and the database lacks (for example, a Metric id added to `METRICS` later). Options the operator added are not drift.
+
+**Build notes — OKR pull (2026-10-28):**
+- **Migration 0033** (applied to `aiadaptive_cos`; `verify_schema.sql` updated, 39 tables): `okr_objectives`, `okr_key_results`, `okr_initiatives`, each keyed by `notion_page_id` with a BIGSERIAL `id` for N3 and N4 to reference. Owned by `barry_agent`.
+- **`agents/notion/okr_pull.py`** reads all three databases each cycle and upserts them in one transaction, parents first. KR → objective and initiative → KR links resolve to row ids.
+- **Deviation — malformed pages are cached, not dropped.** The spec says `okr_pull` "rejects" a page with more than one link. A rejected page is stored with the reason in `problem`, and consumers read only `problem IS NULL AND archived_at IS NULL`. Dropping it instead would make a broken page look deleted. Problems: no link, more than one link, a link outside the linked database, a blank or unknown Metric, and a blank or malformed Quarter (`YYYY-Qn`, any year, per the rev 2.1 rollover rule).
+- **Notices:** due pages are batched into one #system message per cycle, at most once per page per day (`problem_notified_on`, local date), and only marked notified when Discord accepts the post. Fixing a page clears both columns.
+- **Archiving:** `archived_at` is set when a page leaves its database and, for Objectives and KRs, when Status is Retired. It clears when the page returns. Initiatives keep Paused and Done as statuses, because N3 shows them on linked tasks.
+- **Deviation — run ledger.** Each run writes its `agent_runs` row through `agents/notion/ledger.py`, not `runs.agent_run`. That wrapper runs the LLM spend breaker, which would stop a free loop whenever system spend crossed $25/day.
+- **Deviation — one manifest per job:** `loops/notion-okr-pull.md`, every 15 minutes, **shipped `enabled: false`** per `loops/README.md`. Activation is free: Notion reads, cache writes, and #system notices.
+- **Tests:** 15 in `tests/test_okr_pull.py` (parsing, every validation case, notices, the Notion read) and 5 more in `tests/test_notion_setup.py` (option drift, resume). The upsert, archive, and notice SQL was run against a scratch database built from 0033 through five cycles: retire and un-retire, delete and return, a daily re-notice, a fix clearing the flag, and an empty database.
+- **Pending (barry-agent):** a dry run and a manual run against live Notion, then the runtime verification below.
 
 ## N3 — Task Tinder updates
 

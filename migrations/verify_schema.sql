@@ -3,14 +3,15 @@
 -- =============================================================================
 -- Run via:  psql "$DB_URL" -f migrations/verify_schema.sql
 -- Or paste into Supabase SQL Editor.
--- Expects 36 tables and 2 extensions. Reports FAIL lines if anything missing.
+-- Expects 39 tables and 2 extensions. Reports FAIL lines if anything missing.
 -- (Baseline 0001 was 18 with `facts`; 0006 dropped `facts`, and 0003/0005/0007
 -- added `capture_messages` + `playbook_publications` + `channel_state`
 -- → 18 - 1 + 3 = 20; 0009 added `tool_invocations` → 21; 0013 added the six
 -- `outreach_*` tables → 27; 0018/0019/0022/0025 added `outreach_discoveries`,
 -- `outreach_segment_scores`, `outreach_icp_models`, `gmail_channel_state` → 31;
 -- 0029 added `outreach_hypotheses`, `outreach_segments`, `outreach_sourcing_runs`
--- → 34; 0030 added `clients` → 35; 0032 added `notion_sync` → 36. 0017 was never used; 0028 belongs to the
+-- → 34; 0030 added `clients` → 35; 0032 added `notion_sync` → 36; 0033 added
+-- `okr_objectives`, `okr_key_results`, `okr_initiatives` → 39. 0017 was never used; 0028 belongs to the
 -- unmerged Phase 10 branch.)
 -- =============================================================================
 
@@ -22,7 +23,7 @@ SELECT
 FROM pg_extension;
 
 \echo
-\echo '=== Expected tables (36) ==='
+\echo '=== Expected tables (39) ==='
 WITH expected(name) AS (VALUES
     ('agent_runs'),
     ('approval_queue'),
@@ -40,6 +41,9 @@ WITH expected(name) AS (VALUES
     ('interest_signals'),
     ('meeting_transcripts'),
     ('notion_sync'),
+    ('okr_initiatives'),
+    ('okr_key_results'),
+    ('okr_objectives'),
     ('outcomes'),
     ('outreach_discoveries'),
     ('outreach_evidence'),
@@ -238,6 +242,14 @@ SELECT
     CASE WHEN (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'notion_sync') = 'barry_agent'
          THEN 'OK   notion_sync owned by barry_agent'
          ELSE 'FAIL notion_sync missing or not owned by barry_agent — check migration 0032' END AS notion_sync_status;
+
+\echo
+\echo '=== OKR cache (migration 0033) ==='
+SELECT t AS okr_table,
+    CASE WHEN (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = t) = 'barry_agent'
+         THEN 'OK   ' || t || ' owned by barry_agent'
+         ELSE 'FAIL ' || t || ' missing or not owned by barry_agent — check migration 0033' END AS okr_status
+FROM (VALUES ('okr_objectives'), ('okr_key_results'), ('okr_initiatives')) AS v(t);
 
 \echo
 \echo '=== Summary ==='

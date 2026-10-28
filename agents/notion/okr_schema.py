@@ -135,6 +135,22 @@ def missing_properties(name: str, existing: dict[str, Any]) -> list[str]:
     return [p for p in properties_for(name, "x") if p not in existing]
 
 
+def missing_options(name: str, existing: dict[str, Any]) -> list[str]:
+    """Select options the spec requires that an existing database lacks (pure).
+
+    Catches a Metric id added to `METRICS` after the database was created. Extra
+    options the operator added are fine and not reported.
+    """
+    out = []
+    for prop, cfg in properties_for(name, "x").items():
+        if "select" not in cfg or prop not in existing:
+            continue
+        have = {o.get("name") for o in (existing[prop].get("select") or {}).get("options", [])}
+        out += [f"{prop} option {o['name']!r}" for o in cfg["select"]["options"]
+                if o["name"] not in have]
+    return out
+
+
 # --- optional Q4 2026 seed (15-okrs-q4-2026.md §1) --------------------------------
 # Targets marked (proposed) there are entered as-is: once in Notion, the operator
 # owns and edits them. None = left blank on purpose (the reason is in the comment).

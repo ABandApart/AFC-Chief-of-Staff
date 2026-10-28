@@ -3,6 +3,7 @@
     uv run python -m cli.notion_setup --dry-run      # read-only: print the plan
     uv run python -m cli.notion_setup                # create what's missing
     uv run python -m cli.notion_setup --seed-q4      # …and enter the Q4 2026 OKRs once
+    uv run python -m cli.notion_setup --resume-seed  # finish a seed that failed partway
 
 Under the shared page "AFC Richmond Chief-of-Staff" it creates the page
 "OKRs — Master" with three linked databases: Objectives, Key Results, and
@@ -43,13 +44,16 @@ def main() -> int:
                         help="read only: print what would be created")
     parser.add_argument("--seed-q4", action="store_true",
                         help="enter the Q4 2026 objectives and KRs (only into an empty database)")
+    parser.add_argument("--resume-seed", action="store_true",
+                        help="create only the seed rows whose names are missing "
+                             "(after a seed failed partway)")
     parser.add_argument("--root-id", help="id of the shared root page, if its title is ambiguous")
     args = parser.parse_args()
 
     try:
         result = run_setup(
             NotionClient.from_keychain(), record=_record, root_id=args.root_id,
-            dry_run=args.dry_run, seed=args.seed_q4,
+            dry_run=args.dry_run, seed=args.seed_q4, resume_seed=args.resume_seed,
         )
     except (RuntimeError, SetupError, NotionError) as e:
         print(f"FAIL  {e}")
