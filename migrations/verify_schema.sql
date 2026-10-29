@@ -3,7 +3,7 @@
 -- =============================================================================
 -- Run via:  psql "$DB_URL" -f migrations/verify_schema.sql
 -- Or paste into Supabase SQL Editor.
--- Expects 39 tables and 2 extensions. Reports FAIL lines if anything missing.
+-- Expects 40 tables and 2 extensions. Reports FAIL lines if anything missing.
 -- (Baseline 0001 was 18 with `facts`; 0006 dropped `facts`, and 0003/0005/0007
 -- added `capture_messages` + `playbook_publications` + `channel_state`
 -- → 18 - 1 + 3 = 20; 0009 added `tool_invocations` → 21; 0013 added the six
@@ -11,7 +11,8 @@
 -- `outreach_segment_scores`, `outreach_icp_models`, `gmail_channel_state` → 31;
 -- 0029 added `outreach_hypotheses`, `outreach_segments`, `outreach_sourcing_runs`
 -- → 34; 0030 added `clients` → 35; 0032 added `notion_sync` → 36; 0033 added
--- `okr_objectives`, `okr_key_results`, `okr_initiatives` → 39. 0017 was never used; 0028 belongs to the
+-- `okr_objectives`, `okr_key_results`, `okr_initiatives` → 39; 0035 added
+-- `okr_snapshots` → 40. 0017 was never used; 0028 belongs to the
 -- unmerged Phase 10 branch.)
 -- =============================================================================
 
@@ -23,7 +24,7 @@ SELECT
 FROM pg_extension;
 
 \echo
-\echo '=== Expected tables (39) ==='
+\echo '=== Expected tables (40) ==='
 WITH expected(name) AS (VALUES
     ('agent_runs'),
     ('approval_queue'),
@@ -44,6 +45,7 @@ WITH expected(name) AS (VALUES
     ('okr_initiatives'),
     ('okr_key_results'),
     ('okr_objectives'),
+    ('okr_snapshots'),
     ('outcomes'),
     ('outreach_discoveries'),
     ('outreach_evidence'),
@@ -259,6 +261,13 @@ SELECT tbl || '.' || col AS n3_column,
          THEN 'OK' ELSE 'FAIL missing — apply migration 0034' END AS n3_status
 FROM (VALUES ('task_candidates', 'okr_initiative_id'), ('task_candidates', 'due_date'),
              ('tasks', 'okr_initiative_id'), ('notion_sync', 'synced_done')) AS v(tbl, col);
+
+\echo
+\echo '=== OKR snapshots (migration 0035) ==='
+SELECT
+    CASE WHEN (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'okr_snapshots') = 'barry_agent'
+         THEN 'OK   okr_snapshots owned by barry_agent'
+         ELSE 'FAIL okr_snapshots missing or not owned by barry_agent — check migration 0035' END AS okr_snapshots_status;
 
 \echo
 \echo '=== Summary ==='

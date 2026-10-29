@@ -236,6 +236,24 @@ class NotionClient:
         """Add, rename, or reconfigure properties (keyed by current name or id)."""
         return self.request("PATCH", f"/data_sources/{data_source_id}", {"properties": properties})
 
+    def append_blocks(self, block_id: str, children: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Append blocks to a page or block; returns the created blocks, in order."""
+        return self.request("PATCH", f"/blocks/{block_id}/children",
+                            {"children": children}).get("results", [])
+
+    def update_block(self, block_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Replace a block's content, e.g. `{"callout": {"rich_text": [...]}}`."""
+        return self.request("PATCH", f"/blocks/{block_id}", body)
+
+    def create_view(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Create a database view (views API, 2026-03-19). `body` carries
+        `data_source_id`, `name`, `type`, and exactly one of `database_id` (add to
+        an existing database block) or `create_database` (a new linked block)."""
+        return self.request("POST", "/views", body)
+
+    def retrieve_view(self, view_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/views/{view_id}")
+
     def iter_query(
         self, data_source_id: str, *, filter: dict[str, Any] | None = None
     ) -> Iterator[dict[str, Any]]:

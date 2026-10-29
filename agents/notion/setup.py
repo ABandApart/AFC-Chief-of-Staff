@@ -10,6 +10,10 @@ Idempotent and non-destructive. On each run it:
    Objectives, "Initiatives" on Key Results);
    4b. finds or creates the To-Do database (N3) under the root page, beside the
    master page, with a one-way relation to Initiatives and a Key Result rollup;
+   4c. finds or creates the dashboard's KR Scorecard, Initiative Status, and Weekly
+   Snapshots databases (N4) under the root page, with one-way relations into the
+   master databases, and then the current quarter's dashboard page
+   (`dashboard_page.ensure_page`);
 5. records the page and database ids in `notion_sync` (via `record`);
 6. with `seed`, enters the Q4 2026 objectives and KRs, only if Objectives is empty;
    with `resume_seed`, creates only the seed rows whose names are missing, to
@@ -27,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agents._lib.notion_client import NotionError, title_of
+from agents.notion import dashboard_schema as dash
 from agents.notion import okr_schema as s
 from agents.notion import todo_schema as todo
 
@@ -88,6 +93,7 @@ def run_setup(
     dry_run: bool = False,
     seed: bool = False,
     resume_seed: bool = False,
+    dashboard: Callable[..., None] | None = None,
 ) -> SetupResult:
     r = SetupResult()
     root = root_id or _find_root(client, ROOT_PAGE_TITLE)
@@ -157,11 +163,19 @@ def run_setup(
     # 4b. the To-Do database (N3), under the root page beside the master page
     _todo_database(client, r, root, source_ids.get(s.INITIATIVES), dry_run)
 
+    # 4c. the dashboard databases (N4); the page needs their ids, so it comes after
+    # the ids are recorded (step 5)
+    dash_sources = dashboard_databases(client, r, root, source_ids.get(s.KEY_RESULTS),
+                                       source_ids.get(s.INITIATIVES), dry_run)
+
     # 5. record ids
     if not dry_run:
         for key, notion_id in r.ids.items():
             record(key, notion_id)
         r.say(f"OK    recorded {len(r.ids)} ids in notion_sync ({SYNC_TABLE})")
+
+    if dashboard is not None:
+        dashboard(client, r, root, dash_sources, dry_run)
 
     # 6. optional seed
     if seed or resume_seed:
@@ -203,6 +217,52 @@ def _todo_database(client: Any, r: SetupResult, root: str, initiatives_ds: str |
     except NotionError as e:
         r.say(f"TODO  add the Key Result rollup to {name!r} by hand: Rollup → relation "
               f"Initiative → property Key Result → Show original ({e})")
+
+
+def dashboard_databases(client: Any, r: SetupResult, root: str, key_results_ds: str | None,
+                        initiatives_ds: str | None, dry_run: bool) -> dict[str, str]:
+    """Find or create the three dashboard databases (N4). Returns name → data
+    source id for the ones that exist. Like To-Do, an existing one is never edited."""
+    existing = _children(client, root, "child_database")
+    sources: dict[str, str] = {}
+    targets = {dash.SCORECARD: key_results_ds, dash.INITIATIVE_STATUS: initiatives_ds,
+               dash.SNAPSHOTS: "none needed"}
+    for name in dash.DATABASES:
+        if name in existing:
+            r.ids[dash.SCHEMA_KEYS[name]] = existing[name]
+            ds_id = _data_source_id(client.retrieve_database(existing[name]))
+            sources[name] = ds_id
+            props = client.retrieve_data_source(ds_id).get("properties") or {}
+            missing = [p for p in dash.required(name) if p not in props]
+            if missing:
+                r.drift[name] = missing
+                r.say(f"DRIFT {name}: missing {', '.join(missing)} (not changed)")
+            else:
+                r.say(f"OK    found database {name!r} ({existing[name]})")
+            continue
+        if dry_run or targets[name] is None:
+            r.say(f"PLAN  create database {name!r} with {len(dash.required(name))} properties")
+            continue
+        if name == dash.SCORECARD:
+            props, rollups = dash.scorecard_properties(key_results_ds), dash.SCORECARD_ROLLUPS
+        elif name == dash.INITIATIVE_STATUS:
+            props, rollups = dash.initiative_status_properties(initiatives_ds), \
+                dash.INITIATIVE_ROLLUPS
+        else:
+            props, rollups = dash.snapshot_properties(), {}
+        created = client.create_database(root, name, props, description=dash.DESCRIPTIONS[name])
+        r.ids[dash.SCHEMA_KEYS[name]] = created["id"]
+        sources[name] = _data_source_id(created)
+        r.say(f"NEW   created database {name!r} ({created['id']})")
+        for prop, spec in rollups.items():
+            try:
+                client.update_data_source(sources[name], {prop: spec})
+                r.say(f"NEW   added the {prop} rollup to {name!r}")
+            except NotionError as e:
+                rel = spec["rollup"]["relation_property_name"]
+                r.say(f"TODO  add the {prop} rollup to {name!r} by hand: Rollup → relation "
+                      f"{rel} → property {prop} → Show original ({e})")
+    return sources
 
 
 def _seed(client: Any, r: SetupResult, source_ids: dict[str, str], dry_run: bool,

@@ -108,13 +108,15 @@ def test_fresh_creates_master_page_and_three_linked_databases():
     fake = FakeNotion()
     result, recorded = _run(fake)
     created = [w[1] for w in fake.writes if w[0] == "create_database"]
-    assert created == ["Objectives", "Key Results", "Initiatives", "To-Do"]
+    assert created == ["Objectives", "Key Results", "Initiatives", "To-Do", "KR Scorecard",
+                       "Initiative Status", "Weekly Snapshots"]
     kr_props = fake.sources[fake.ds_of("Key Results")]["properties"]
     init_props = fake.sources[fake.ds_of("Initiatives")]["properties"]
     assert kr_props["Objective"]["relation"]["data_source_id"] == fake.ds_of("Objectives")
     assert init_props["Key Result"]["relation"]["data_source_id"] == fake.ds_of("Key Results")
     assert set(recorded) == {"okr_master_page", "okr_objectives", "okr_key_results",
-                             "okr_initiatives", "todo_database"}
+                             "okr_initiatives", "todo_database", "kr_scorecard_database",
+                             "initiative_status_database", "weekly_snapshots_database"}
     assert not result.drift
 
 
@@ -139,7 +141,7 @@ def test_rerun_creates_nothing():
     before = len(fake.writes)
     result, recorded = _run(fake)
     assert len(fake.writes) == before
-    assert len(recorded) == 5
+    assert len(recorded) == 8
     assert not result.drift
 
 
@@ -148,7 +150,7 @@ def test_dry_run_writes_nothing_and_records_nothing():
     result, recorded = _run(fake, dry_run=True)
     assert fake.writes == []
     assert recorded == {}
-    assert sum(line.startswith("PLAN") for line in result.lines) == 5  # page + 4 databases
+    assert sum(line.startswith("PLAN") for line in result.lines) == 8  # page + 7 databases
 
 
 def test_drift_is_reported_not_fixed():
@@ -347,3 +349,41 @@ def test_back_relation_rename_cases():
     done = {"Key Results": {"type": "relation", "relation": {"data_source_id": "kr"}}}
     assert s.back_relation_rename(done, "kr", "Key Results") is None
     assert s.back_relation_rename({}, "kr", "Key Results") is None
+
+
+# --- dashboard databases (N4) -----------------------------------------------------------
+
+
+def _root_ds(fake, title):
+    db_id = next(b["id"] for b in fake.children[ROOT]
+                 if b["type"] == "child_database" and b["child_database"]["title"] == title)
+    return fake.databases[db_id]["data_sources"][0]["id"]
+
+
+def test_dashboard_databases_sit_under_the_root_with_rollups():
+    fake = FakeNotion()
+    _run(fake)
+    sc = fake.sources[_root_ds(fake, "KR Scorecard")]["properties"]
+    ini = fake.sources[_root_ds(fake, "Initiative Status")]["properties"]
+    snap = fake.sources[_root_ds(fake, "Weekly Snapshots")]["properties"]
+    assert sc["Key Result"]["relation"] == {"data_source_id": fake.ds_of("Key Results"),
+                                            "type": "single_property", "single_property": {}}
+    assert ini["Initiative"]["relation"]["type"] == "single_property"
+    assert {"Objective", "Initiatives"} <= set(sc) and "Key Result" in ini
+    assert "Agent run success %" in snap
+
+
+def test_dashboard_adds_no_property_to_the_master_databases():
+    # N4 verification 4: one-way relations only.
+    fake = FakeNotion()
+    _run(fake)
+    for name in ("Key Results", "Initiatives"):
+        props = fake.sources[fake.ds_of(name)]["properties"]
+        assert not [p for p in props if p.startswith("Related to")], name
+
+
+def test_dashboard_callback_gets_the_three_sources():
+    fake = FakeNotion()
+    seen = {}
+    _run(fake, dashboard=lambda client, r, root, sources, dry_run: seen.update(sources))
+    assert set(seen) == {"KR Scorecard", "Initiative Status", "Weekly Snapshots"}

@@ -598,6 +598,14 @@ and the only alerting in the design that survives the machine itself.
 
 <higgins_dashboard>
 
+> **Superseded for the weekly post by `PRD-notion-integration.md` N4 (built 2026-10-29).**
+> The Monday 07:00 dashboard push (`agents/notion/dashboard_push.py`, loop
+> `notion-dashboard-push`) makes no LLM call. It scores every KR through
+> `agents/_lib/kr_metrics.py`, fills the Notion "<quarter> Dashboard" page, and
+> posts 5 lines to #dashboard: north-star KRs, the worst KR, attention counts,
+> system health, and the Notion link. The format below is the original Higgins
+> design, kept for history. Nothing posts it.
+
 Higgins runs Mondays 7am. One LLM call (Claude Sonnet) to synthesize the structured query results into a readable digest. Posts to #dashboard.
 
 <dashboard_format>

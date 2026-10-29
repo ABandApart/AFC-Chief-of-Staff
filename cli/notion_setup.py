@@ -1,4 +1,4 @@
-"""Create the master OKR document in Notion (`PRD-notion-integration.md`, N2).
+"""Create the master OKR document and the dashboard in Notion (`PRD-notion-integration.md`).
 
     uv run python -m cli.notion_setup --dry-run      # read-only: print the plan
     uv run python -m cli.notion_setup                # create what's missing
@@ -7,8 +7,11 @@
 
 Under the shared page "AFC Richmond Chief-of-Staff" it creates the page
 "OKRs — Master" with three linked databases: Objectives, Key Results, and
-Initiatives. Safe to re-run: it creates only what is missing, never edits a
-database that exists, and seeds only into an empty Objectives database.
+Initiatives (N2). Beside it go the To-Do database (N3), the dashboard's KR
+Scorecard, Initiative Status, and Weekly Snapshots databases, and the current
+quarter's dashboard page with its linked views (N4). Safe to re-run: it creates
+only what is missing, never edits a database that exists, and seeds only into an
+empty Objectives database.
 
 Run as barry-agent: it needs keychain `notion-api-token` and `db-url` (the ids
 it creates are recorded in `notion_sync`, entity_table `notion_schema`).
@@ -19,10 +22,13 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import date
+from typing import Any
 
-from agents._lib import db
+from agents._lib import db, kr_metrics
 from agents._lib.notion_client import NotionClient, NotionError
-from agents.notion.setup import SYNC_TABLE, SetupError, run_setup
+from agents.notion import dashboard_page
+from agents.notion.setup import SYNC_TABLE, SetupError, SetupResult, run_setup
 
 
 def _record(key: str, notion_id: str) -> None:
@@ -36,6 +42,14 @@ def _record(key: str, notion_id: str) -> None:
             """,
             (SYNC_TABLE, key, notion_id),
         )
+
+
+def _dashboard(client: Any, r: SetupResult, root: str, sources: dict[str, str],
+               dry_run: bool) -> None:
+    quarter = kr_metrics.quarter_of(date.today())
+    lookup, record = dashboard_page.recorder(db.connection, quarter)
+    dashboard_page.ensure_page(client, root=root, quarter=quarter, sources=sources,
+                               lookup=lookup, record=record, say=r.say, dry_run=dry_run)
 
 
 def main() -> int:
@@ -54,6 +68,7 @@ def main() -> int:
         result = run_setup(
             NotionClient.from_keychain(), record=_record, root_id=args.root_id,
             dry_run=args.dry_run, seed=args.seed_q4, resume_seed=args.resume_seed,
+            dashboard=_dashboard,
         )
     except (RuntimeError, SetupError, NotionError) as e:
         print(f"FAIL  {e}")

@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4–N6 not started. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 not yet applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N5–N6 not started. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -250,6 +250,28 @@ The **score** compares Current to where it must be now:
 2. Parity: after a push, every Current matches `kr_metrics` output, and every row in `okr_snapshots` for that week matches the scorecard.
 3. A second push with no data change makes 0 page updates.
 4. Schema: after N4 setup, the master Key Results and Initiatives databases have no new properties.
+
+**Build notes (2026-10-29):**
+- **Verify before build — done.** Notion's views API (`POST /v1/views`, launched 2026-03-19, covered by the pinned `2026-03-11`) creates linked database blocks, table views with filters and sorts, and chart views (`chart_type: line`). Callouts update in place (`PATCH /v1/blocks/{id}`). So the setup creates every view, and no manual checklist is needed. Notion's changelog (2026-08-13) records a fixed bug where a view saved without its filter, so setup reads each view back and prints `WARN` if the filter is missing. The live setup run confirms the response shapes (`PHASE-NOTION-N4.md`).
+- **Migration 0035** (`okr_snapshots`, as specified; `week_start` is checked to be a Monday). Not yet applied. `verify_schema.sql` expects 40 tables.
+- **`agents/_lib/kr_metrics.py`:** the registry, windows, `compute`, and scoring as specified. Rates are percentages (0–100), matching the targets in Notion. Counts and sums never return no_data; a median or rate with an empty denominator does.
+  - `touches_on_schedule_rate` leaves out a touch skipped before its window closed: a skip is a decision, not a miss.
+  - `project_to_maintenance_rate` links each engagement to a later `maintenance_converted` through `client_id` (0030).
+  - `calls_booked` adds `/outcome` calls only when they have no outreach target, so nothing counts twice (gap M2).
+  - A quarter-window metric stops at its quarter's last day (`clamp`).
+  - `llm_spend_month` at Monday 00:00 on the 1st reports the full previous month.
+- **Which quarter a week belongs to:** the quarter its Monday falls in. So the week that spans a quarter's end closes that quarter, and the new quarter's page is built by the first push whose week starts in it (rollover).
+- **Notion layout.** `cli.notion_setup` creates KR Scorecard, Initiative Status, and Weekly Snapshots under the root page, beside To-Do, then the current quarter's page (`agents/notion/dashboard_page.py`).
+  - **Spec addition — every row carries a Quarter.** The page's tables filter on it, so a past quarter's page keeps its own rows after rollover.
+  - **Deviation — the trend charts are unfiltered.** They span every week, so the backfilled July–September weeks show. The 4 charts are agent run success, LLM spend, engagements signed, and sequences completed. Weekly Snapshots has a column for each of the other computed metrics, to chart by hand.
+  - **Spec gap — the 4 stat callouts were unnamed.** They are north star, pipeline, follow-through, and system health, following the preview.
+  - **Not built from the preview:** the outreach funnel table and the data-gaps notes. The spec doesn't list them.
+- **Attention counts** (N-S8): sourced companies awaiting review, touches unsent past their window, overdue follow-ups, Task Tinder cards awaiting a decision, and agents with a failed run in 7 days. Counts only.
+- **Discord summary:** `agents/notion/dashboard_push.py`, no LLM call. It posts only on the week's first run: a re-run finds the snapshot rows already there and skips the post. `DASHBOARD_CHANNEL_ID` in `agents/discord_bot/config.py` is 0 until the operator creates #dashboard; while it is 0 the push skips the post and says so. `80-telemetry-layer.md` marks the Higgins digest superseded.
+- **Loop `notion-dashboard-push`:** Mondays 07:00, **shipped `enabled: false`**.
+- **Backfill:** `cli.notion_backfill_snapshots`, as specified. It also writes the Weekly Snapshots rows, and it never overwrites a week that already has a row.
+- **Tests:** 53 new. `test_kr_metrics.py` covers windows, no_data, and every status rule: Too early on days 14 and 15, Set target, both Lower-is-better formulas, and the blank Progress. `test_kr_metrics_db.py` runs every metric's SQL against fixture rows in temporary tables (set `KR_METRICS_TEST_DSN`; it skips otherwise). `test_dashboard.py` covers the page build, resume, and filter warning, the hash skip (verification 3), and the summary. The setup tests cover the new databases, and verification 4: no new property on the master databases. Every metric also ran read-only against `aiadaptive_cos`.
+- **Pending:** apply 0035, live setup, backfill, first manual push, and the parity check (verification 2) (barry-agent, `PHASE-NOTION-N4.md`).
 
 ## N5 — Tartt review (top 10 per day)
 
