@@ -35,8 +35,8 @@ TASKS_CHANNEL_ID = 1547725901163143258
 
 # The #dashboard channel (PRD-notion-integration.md N4). The Monday dashboard push
 # posts a 5-line summary and the Notion link here. FAIL-CLOSED: while this is 0
-# (unset) the push skips the post and says so. Create #dashboard, then set its ID.
-DASHBOARD_CHANNEL_ID = 0
+# (unset) the push skips the post and says so.
+DASHBOARD_CHANNEL_ID = 1565400602173767680
 
 # The operator's Discord user ID — the ONLY account allowed to decide approvals
 # (B2 / PRD-b2 Amendment 1). A non-secret Snowflake, like the channel IDs above.
