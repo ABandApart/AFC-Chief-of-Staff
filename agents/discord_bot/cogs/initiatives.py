@@ -9,7 +9,8 @@
   card in #task-tinder. It does not skip acceptance: a to-do written today may not
   be a priority yet (N-D10).
 
-Initiatives are defined only in Notion; Discord only assigns them (N-S13). Both
+Initiatives are defined only in Notion. On an accepted task, a Notion edit to
+the To-Do Initiative wins over `/initiative` (N-S17). Both
 commands are operator-only. No LLM call. The pure parts and the guarded writes
 live in `agents/_lib/initiatives`.
 """

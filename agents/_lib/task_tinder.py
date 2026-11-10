@@ -226,3 +226,27 @@ def promote(candidate: dict[str, Any], *, owner: str) -> dict[str, int]:
         )
         task_id = cur.fetchone()[0]
     return {"task_id": task_id, "follow_up_id": follow_up_id}
+
+
+def create_operator_task(*, title: str, owner: str, due_date: Any, okr_initiative_id: int | None,
+                         completed: bool) -> dict[str, Any]:
+    """Create the follow_up + task for a row the operator added by hand in the Notion
+    To-Do database (N-S17). It skips the card, like an accept the operator already
+    made. It lives here so this module stays the only writer of `tasks` rows
+    (`tests/test_tasks_checklist_separation.py`). Returns `task_id`, `follow_up_id`,
+    and the task's `created_at`."""
+    status = "completed" if completed else "open"
+    with db.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO follow_ups (owner, action, status, escalation_level, completed_at) "
+            "VALUES (%s, %s, %s, 0, CASE WHEN %s THEN now() END) RETURNING id",
+            (owner, title, status, completed))
+        follow_up_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO tasks (title, owner, status, follow_up_id, okr_initiative_id, "
+            "                   due_date, completed_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END) "
+            "RETURNING id, created_at",
+            (title, owner, status, follow_up_id, okr_initiative_id, due_date, completed))
+        task_id, created_at = cur.fetchone()
+    return {"task_id": task_id, "follow_up_id": follow_up_id, "created_at": created_at}

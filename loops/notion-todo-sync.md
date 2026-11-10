@@ -9,10 +9,13 @@ description: Push tasks to the Notion To-Do database and merge its Done box (PRD
 
 # Notion To-Do sync (N3)
 
-Runs `agents/notion/todo_sync.py` every 5 minutes. Each cycle merges Done for
-every task (the side that changed since the last sync wins, N-S16), then pushes
-each task's row: title (neutral for prospect sources, N-D9), initiative, source,
-due date, created date, CoS id, and Done. An unchanged row is skipped by its hash.
+Runs `agents/notion/todo_sync.py` every 5 minutes. **Notion is the source of
+truth for each row's Task, Due, Initiative, and Done** (N-S17). Each cycle merges
+those fields one by one against the value both sides last agreed on: a Notion edit
+is copied into Postgres and never overwritten, and a Discord change reaches Notion
+only where Notion didn't change that field. The CoS writes Source, Created, and
+CoS id. A new task gets a full row (neutral title for prospect sources, N-D9), and
+a row added by hand in Notion becomes a task.
 
 The PRD schedules the push every 5 minutes and the Done pull every 15. One job
 does both every 5 minutes: the Done merge needs the same read of the To-Do

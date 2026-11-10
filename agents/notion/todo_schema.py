@@ -1,10 +1,13 @@
 """Notion To-Do database: schema, row projection, and the Done merge (N3). Pure.
 
-One row per task. The CoS writes every column except **Done**, which both sides
-can change: the operator ticks it in Notion or checks the task off in Discord's
-#tasks, and the latest change wins (N-S16). Initiative is display-only here;
-assignment happens in Discord (N-S13). The relation is one-way
-(`single_property`), so the master Initiatives database gains no column.
+One row per task. **Notion is the source of truth for the row's content**
+(N-S17, operator 2026-11-10): Task, Due, Initiative, and Done. The CoS writes a
+new row in full, then merges each of those fields on its own: an edit in Notion
+always wins, and a change made in Discord (`/initiative`, the #tasks Done button)
+reaches Notion only if that field wasn't edited in Notion since the last sync.
+The CoS still writes Source, Created, and CoS id. A row added by hand becomes a
+task. The Initiative relation is one-way (`single_property`), so the master
+Initiatives database gains no column.
 
 **Neutral titles (N-D9).** A task from an outreach or inbound source names a
 prospect, so its real title never reaches Notion: it pushes as a fixed phrase plus
@@ -25,13 +28,16 @@ SYNC_TABLE = "tasks"  # notion_sync.entity_table for To-Do rows
 # task_candidates.source_type → the To-Do Source option.
 SOURCES = {"discovery": "discovery", "outreach_stale_signal": "outreach",
            "inbound_lead": "inbound", "operator": "operator"}
+# A task imported from a row added by hand in Notion has no Task Tinder candidate.
+IMPORTED_SOURCE = "notion"
 NEUTRAL_TITLES = {"outreach_stale_signal": "Outreach follow-up · open in NocoDB",
                   "inbound_lead": "Inbound lead follow-up · open in Discord"}
 
 DESCRIPTION = (
-    "The CoS keeps this list. Tick Done here or check the task off in Discord's "
-    "#tasks: the latest change wins. Add to-dos with /todo and set initiatives with "
-    "/initiative in Discord. Edits to the other columns are overwritten."
+    "Your to-do list. Edit Task, Due, Initiative, and Done here: your edits win. "
+    "Discord's /initiative and the #tasks Done button change a row only where you "
+    "haven't edited it since the last sync. A row you add here becomes a task within "
+    "5 minutes. Source, Created, and CoS id are written by the CoS."
 )
 
 
@@ -44,8 +50,8 @@ def properties(initiatives_data_source_id: str) -> dict[str, Any]:
                                     "type": "single_property", "single_property": {}}},
         "Done": {"checkbox": {}},
         "Due": {"date": {}},
-        "Source": {"select": {"options": [{"name": n, "color": "default"}
-                                          for n in dict.fromkeys(SOURCES.values())]}},
+        "Source": {"select": {"options": [{"name": n, "color": "default"} for n in
+                                          dict.fromkeys((*SOURCES.values(), IMPORTED_SOURCE))]}},
         "Created": {"date": {}},
         "CoS id": {"number": {"format": "number"}},
     }
@@ -73,40 +79,89 @@ def _date(value: date | datetime | None) -> dict[str, Any] | None:
 
 
 def projection(task: dict[str, Any], *, done: bool) -> dict[str, Any]:
-    """Every To-Do property the CoS writes for one task.
+    """Every To-Do property, for a new row. After that, only the merge decides
+    what is written (`merge_field`).
 
     `task` carries `id`, `title`, `source_type`, `due_date`, `created_at`, and
     `initiative_page_id` (None when unassigned or the initiative left Notion).
     """
-    source = SOURCES.get(task.get("source_type") or "")
+    return {**field_props(pg_values(task, done=done), OWNED), **fact_props(task)}
+
+
+# --- the per-field merge (N-S17) -------------------------------------------------------
+
+# Fields Notion owns. Each is merged on its own against the value both sides last
+# agreed on (`notion_sync.synced_fields`). Source, Created, and CoS id stay
+# CoS-written facts.
+OWNED = ("title", "due", "initiative", "done")
+PROPERTY = {"title": "Task", "due": "Due", "initiative": "Initiative", "done": "Done"}
+
+
+def owned_fields(task: dict[str, Any]) -> tuple[str, ...]:
+    """The fields merged for this task. A prospect-source task's title is neither
+    pushed nor pulled after the row is made: its Notion title is the neutral
+    phrase, and the real title stays in Postgres (N-D9)."""
+    if task.get("source_type") in NEUTRAL_TITLES:
+        return tuple(f for f in OWNED if f != "title")
+    return OWNED
+
+
+def pg_values(task: dict[str, Any], *, done: bool) -> dict[str, Any]:
+    """The task's owned values in the form `notion_values` reads them back."""
+    due = task.get("due_date")
     page = task.get("initiative_page_id")
-    return {
-        "Task": {"title": rich_text(title_for(task))},
-        "Initiative": {"relation": [{"id": page}] if page else []},
-        "Done": {"checkbox": done},
-        "Due": {"date": _date(task.get("due_date"))},
-        "Source": {"select": {"name": source} if source else None},
-        "Created": {"date": _date(task.get("created_at"))},
-        "CoS id": {"number": task["id"]},
-    }
+    return {"title": title_for(task),
+            "due": (due.date() if isinstance(due, datetime) else due).isoformat() if due else None,
+            "initiative": [page] if page else [],
+            "done": done}
 
 
-def merge_done(pg_done: bool, notion_done: bool | None, synced: bool | None) -> str:
-    """Which side's Done to keep (N-S16, latest change wins). Returns:
+def notion_values(page: dict[str, Any]) -> dict[str, Any]:
+    """The owned values of a live To-Do row."""
+    props = page.get("properties") or {}
+    title = "".join(t.get("plain_text") or (t.get("text") or {}).get("content", "")
+                    for t in (props.get("Task") or {}).get("title") or [])
+    due = ((props.get("Due") or {}).get("date") or {}).get("start")
+    rel = [r["id"] for r in (props.get("Initiative") or {}).get("relation") or []]
+    return {"title": title, "due": due[:10] if due else None, "initiative": rel,
+            "done": bool((props.get("Done") or {}).get("checkbox"))}
 
-    - "push": Postgres wins (a new row, or the task was checked or unchecked in
-      Discord since the last sync);
-    - "pull": Notion wins (Done was ticked or unticked in Notion since then);
-    - "agree": both already match.
 
-    With one boolean per side, the side that differs from the last agreed value
-    is the side that changed. Both cannot have changed and still disagree. A side
-    flipped and flipped back between two syncs counts as unchanged.
+def merge_field(pg: Any, notion: Any, agreed: Any, *, has_agreed: bool) -> str:
+    """Which side's value to keep for one field (N-S17). Returns:
+
+    - "agree": both sides already match;
+    - "pull": take Notion's value. Notion changed since the last agreed value, or
+      there is no agreed value yet. This includes both sides changing: Notion wins;
+    - "push": take Postgres's value. Only Discord changed, so Discord fills the gap.
     """
-    if notion_done is None:
-        return "push"
-    if pg_done == notion_done:
+    if pg == notion:
         return "agree"
-    if synced is None:
-        return "push"  # a row with no agreed value yet: Postgres is the record
-    return "pull" if notion_done != synced else "push"
+    if not has_agreed or notion != agreed:
+        return "pull"
+    return "push"
+
+
+def field_props(values: dict[str, Any], fields: tuple[str, ...] | list[str]) -> dict[str, Any]:
+    """Notion properties for some owned fields."""
+    out: dict[str, Any] = {}
+    for f in fields:
+        v = values[f]
+        if f == "title":
+            out["Task"] = {"title": rich_text(v)}
+        elif f == "due":
+            out["Due"] = {"date": {"start": v} if v else None}
+        elif f == "initiative":
+            out["Initiative"] = {"relation": [{"id": i} for i in v]}
+        else:
+            out["Done"] = {"checkbox": bool(v)}
+    return out
+
+
+def fact_props(task: dict[str, Any]) -> dict[str, Any]:
+    """The CoS-written columns: Source, Created, and CoS id."""
+    source = SOURCES.get(task.get("source_type") or "") or \
+        (IMPORTED_SOURCE if task.get("imported") else None)
+    return {"Source": {"select": {"name": source} if source else None},
+            "Created": {"date": _date(task.get("created_at"))},
+            "CoS id": {"number": task["id"]}}

@@ -18,8 +18,9 @@ pinned by `tests/test_tasks_checklist_separation.py`.
 
 **Notion N3 (2026-10-28):** each line ends with its initiative or "Unassigned".
 Completing or reopening a task does the same to its linked follow-up, whether the
-change comes from this checklist or from the Notion To-Do Done box (N-S16: both
-controls work, and the latest change wins; `agents/notion/todo_sync.py`).
+change comes from this checklist or from the Notion To-Do Done box. Both controls
+work; when both change between two syncs, Notion's wins (N-S17,
+`agents/notion/todo_sync.py`).
 """
 
 from __future__ import annotations

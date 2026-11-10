@@ -1,8 +1,10 @@
 """Initiatives on Task Tinder cards and tasks (`PRD-notion-integration.md`, N3).
 
 The *list* of initiatives is defined only in Notion and cached in
-`okr_initiatives` by the OKR pull. The *assignment* of a card or task to one is
-made only in Discord, with `/initiative` or `/todo initiative:` (N-S13). This
+`okr_initiatives` by the OKR pull. A card's initiative is set in Discord, with
+`/initiative` or `/todo initiative:`. A task's can also be set in the Notion
+To-Do database, and Notion's value wins (N-S17); `/initiative` on a task reaches
+Notion only if the row's Initiative wasn't edited there since the last sync. This
 module holds the pure pieces (labels, type-ahead choices, input parsing) and the
 guarded writes; the `initiatives` cog owns the slash commands.
 

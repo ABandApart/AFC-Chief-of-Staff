@@ -35,7 +35,7 @@ When N1–N6 are done:
 
 1. **Master OKRs:** a KR or initiative added or edited in Notion appears in the CoS (`/initiative` type-ahead and the dashboard) within 15 minutes. A KR whose Metric the CoS can't compute is flagged in Discord #system, not silently shown as zero.
 2. **Initiatives:** every Task Tinder card and every #tasks checklist line shows its initiative, or "Unassigned". `/initiative` sets or changes it, with type-ahead over active initiatives.
-3. **To-dos:** within 5 minutes of accepting a card (including a `/todo` card), it is a row in the Notion To-Do database. Within 15 minutes of ticking Done in Notion, `tasks.status = 'completed'`, and the #tasks checklist no longer lists it. A task checked off in #tasks shows Done in Notion within 5 minutes (N-S16). All 16 tasks accepted before N3 are in Notion as Unassigned.
+3. **To-dos:** within 5 minutes of accepting a card (including a `/todo` card), it is a row in the Notion To-Do database. Within 15 minutes of ticking Done in Notion, `tasks.status = 'completed'`, and the #tasks checklist no longer lists it. A task checked off in #tasks shows Done in Notion within 5 minutes, unless Done was also changed in Notion (N-S16, N-S17). Within 5 minutes of editing a row's Task, Due, or Initiative in Notion, Postgres has the edit, and nothing overwrites it (N-S17). All 16 tasks accepted before N3 are in Notion as Unassigned.
 4. **Dashboard:** every Monday by 07:15, the dashboard shows each KR's value, target, progress, and status, matching `kr_metrics` at that time. Under each KR, it lists that KR's initiatives with their open and done to-do counts. Higgins has posted the Discord summary with the page link.
 5. **Tartt:** each day by 06:30, the day's top 10 articles by `interest_score` are in Content Review. A Decision set in Notion reaches `content_items` within 20 minutes.
 6. **Writing:** each article has exactly one page. The page's header block names the latest draft and its status. Each draft sits under a toggle H2 that carries its revision number. Claude in claude.ai can read an article page and add a new draft that follows this convention, using only the instructions page.
@@ -51,13 +51,13 @@ Rev 1 kept every system of record in Postgres. Rev 2 deliberately moves **three 
 |---|---|---|
 | Objective, KR, and initiative definitions and KR targets | **Notion** master OKR databases | Postgres cache (`okr_*` tables), read-only, refreshed by polling |
 | KR current values and history | Postgres (`_lib/kr_metrics.py`, `okr_snapshots`) | Notion dashboard, read-only mirror |
-| Task existence, title, source, and initiative | Postgres `tasks` | Notion To-Do, mirror |
-| **Task completion** | **Either side; the latest change wins** (N-S16): Notion To-Do `Done` or the #tasks checklist | Postgres `tasks.status` is the record the CoS reads; the sync moves Done both ways |
+| **Task content: title, due date, initiative, completion** | **Notion To-Do** (N-S17, 2026-11-10) | Postgres `tasks`, a cache the CoS reads. Discord changes (`/initiative`, the #tasks Done button) reach Notion only where Notion didn't change that field |
+| Task existence and source | Postgres `tasks` for accepted cards; a row added in Notion becomes a task (N-S17) | Notion To-Do Source, Created, and CoS id, written by the CoS |
 | Article decision (Keep, Dismiss, Research this) | Notion Content Review `Decision` (input) | Postgres `content_items.engagement_type` (record) |
 | Article metadata, score, summary | Postgres `content_items` | Notion Content Review, mirror |
 | **Article drafts** | **Notion Articles pages** | None. The CoS doesn't copy drafts. |
 
-**Why this still fits ADR-0001.** ADR-0001 rejects bidirectional sync of the *same* data between two stores. Here each field has exactly one owner. Notion owns definitions, completion, and drafts. Postgres owns everything computed. Each sync direction moves only fields its source owns, so the two systems never disagree about who is right.
+**Why this still fits ADR-0001.** ADR-0001 rejects bidirectional sync of the *same* data between two stores. Here each field has exactly one owner. Notion owns definitions, task content, and drafts. Postgres owns everything computed. Task content is the one place both sides can change a field, and the rule there is fixed: Notion is the owner, and a Discord change is applied only when Notion hasn't changed that field since the last sync (N-S17). So the two systems never disagree about who is right.
 
 ### Components
 
@@ -157,7 +157,7 @@ Metrics with no data source yet (selling hours, reply time, recurring pains) are
 - **`/todo text:<…> initiative:<type-ahead, optional> due:<optional>`** writes a pending `task_candidates` row (`source_type='operator'`, confidence 1.0). It posts to #task-tinder like any card, because a to-do written today may not be a priority yet (N-D10). Accept, decline, and defer work unchanged.
 - **Cards and checklist:** the Task Tinder embed gains an "Initiative" field. Each #tasks checklist line ends with `· <initiative>` or `· Unassigned`. Both redraw after `/initiative`.
 
-**Notion To-Do database.** One row per task. Properties: Task (title), Initiative (relation), Key Result (rollup through Initiative), **Done** (checkbox, operator-owned), Due (date), Source (select: discovery / outreach / inbound / operator), Created (date), CoS id (number). Title, **Initiative**, Source, and Due are overwritten from Postgres. Done is never overwritten. Initiative is display-only here: assignment happens in Discord (N-D11). The database description says so. The Initiative relation is one-way (`single_property`), so the master Initiatives database gains no reverse property (see N4).
+**Notion To-Do database.** One row per task. Properties: Task (title), Initiative (relation), Key Result (rollup through Initiative), **Done** (checkbox, operator-owned), Due (date), Source (select: discovery / outreach / inbound / operator), Created (date), CoS id (number). *Superseded by N-S17 (2026-11-10):* Task, Due, Initiative, and Done are Notion-owned and never overwritten; Source, Created, and CoS id are CoS-written. ~~Title, **Initiative**, Source, and Due are overwritten from Postgres. Done is never overwritten. Initiative is display-only here: assignment happens in Discord (N-D11).~~ The database description says so. The Initiative relation is one-way (`single_property`), so the master Initiatives database gains no reverse property (see N4).
 
 **Neutral titles (N-D9).** A task whose source names a prospect never sends its real title. `outreach_stale_signal` tasks push as "Outreach follow-up · open in NocoDB", and `inbound_lead` tasks as "Inbound lead follow-up · open in Discord". Each title is suffixed with the CoS id so rows stay distinguishable. The real text stays in Postgres and Discord. A pure test asserts that no title for those sources contains the source text.
 
@@ -182,7 +182,18 @@ Metrics with no data source yet (selling hours, reply time, recurring pains) are
 - **Deviation — no `cli.notion_backfill_tasks`.** The first sync run creates a row for every existing task, as Unassigned, and re-running creates none (`notion_sync`). A row deleted in Notion is recreated; a row added by hand in Notion is left alone.
 - **Done merge (N-S16):** `todo_schema.merge_done` compares Postgres, Notion, and `synced_done`. With one boolean per side, the side that differs from the last agreed value is the side that changed. A side flipped and flipped back between two syncs counts as unchanged.
 - **Tests:** 36 new or changed (`test_initiatives.py`, `test_todo_sync.py`, setup, checklist, Task Tinder, and cog), including the neutral-title guard. The SQL ran against a schema copy of `aiadaptive_cos`: `/todo`, refusal of a paused initiative, card label and redraw query, `/initiative` set and clear, accept copying initiative and due date, check-off and reopen moving the follow-up, the "(paused)" label, and sync create, skip, and a Notion tick completing the task and its follow-up.
-- **Pending:** live setup of the To-Do database, the runtime smoke test, and the bot restart (barry-agent, `PHASE-NOTION-N3.md`).
+- **Pending:** live setup of the To-Do database, the runtime smoke test, and the bot restart (barry-agent, `PHASE-NOTION-N3.md`). *(Done 2026-10-29.)*
+
+**Build notes (2026-11-10), N-S17 — Notion owns To-Do content:**
+- **Migration 0036:** `notion_sync.synced_fields` (JSONB), the title, due, initiative, and done values both sides last agreed on. Not yet applied.
+- **`todo_schema.merge_field`** replaces `merge_done`. It applies one rule to each owned field: agree when both sides match; take Notion when Notion changed or there is no agreed value yet, which includes both sides changing; otherwise push Postgres's value.
+  - Rows from before 0036 have no agreed values, so on the first sync any difference is taken from Notion. Done falls back to `synced_done`.
+- **Writes are partial.** The sync PATCHes only the fields Discord won, plus Source, Created, and CoS id when they changed. `content_hash` now covers only those three, so the first cycle after deploy rewrites them once on every row.
+- **Held values.** A Notion Initiative naming more than one page, or a page the OKR pull hasn't cached, is held: neither side changes, and it is retried each cycle. So is a blank title, because `tasks.title` is NOT NULL.
+- **Neutral titles (N-D9).** A prospect-source task's title is never merged, so an edit to it in Notion stays in Notion only.
+- **Imports.** A row with no CoS id and a title becomes a task with a follow-up: open, or completed if Done is ticked. Its initiative is mapped through `okr_initiatives`. The CoS writes Source "notion", Created, and CoS id back to the row. Blank rows wait until they have a title. A row whose CoS id matches no mapped task is left alone.
+- **Unchanged:** a row deleted in Notion is recreated from Postgres. The dashboard databases stay CoS-written: they hold computed values.
+- **Pending:** apply 0036, update the To-Do database description, the dry run, and the smoke test (barry-agent, `PHASE-NOTION-N4.md`, E5–E6).
 
 ## N4 — Dashboard
 
@@ -337,7 +348,7 @@ The operator adds the same text to a claude.ai Project's instructions, so every 
 - **No outreach or prospect data in Notion.** No contact names, emails, evidence, touches, or dossiers. The attention block shows counts only, and outreach and inbound to-dos use neutral titles.
 - **Notion decides nothing gated.** No approvals, sends, or publishes from Notion. `#approvals` (B2) stays the only gate. "Published" on an article is a status the operator sets, not an action.
 - **The CoS doesn't copy, index, or ingest drafts.** Drafts stay in Notion. Ingesting them into the brain is a later option.
-- **No Notion → Postgres sync beyond the owned fields:** OKR definitions, Done, and Decision. Edits to mirrored fields in Notion are overwritten.
+- **No Notion → Postgres sync beyond the owned fields:** OKR definitions, To-Do content (Task, Due, Initiative, Done; N-S17), and Decision. Edits to mirrored fields in Notion, such as the dashboard databases, are overwritten.
 - **No Notion MCP in the CoS runtime.** Scheduled jobs use the REST client so they stay in the ledger. The operator's claude.ai connector is separate.
 - **No webhooks in v1.** Polling meets every latency target without a new public endpoint.
 - **Notion content as context for Keeley is deferred.** The operator wants Keeley to use Notion content as context, but has not chosen a method. Ingesting it into the knowledge base (cognee) is *not* assumed. Nothing in N1–N6 reads Notion page content for an agent. (Operator, 2026-10-16.)
@@ -355,7 +366,7 @@ The operator adds the same text to a claude.ai Project's instructions, so every 
 | N-S4 | Each initiative belongs to exactly one KR. Each task has at most one initiative. |
 | N-S5 | Initiatives are assigned with `/initiative` (type-ahead), on cards from any source and on open tasks. |
 | N-S14 | **This spec stands alone.** No content from `PRD-notion-channel.md` (unmerged branch `phase-10-icp-intelligence`, 2026-09-15) is used: not its ingest design, its drafting model, its decisions, or its probes. The keychain item name `notion-api-token` is kept because the operator chose it, not inherited. (Operator, 2026-10-16.) |
-| N-S13 | **Initiative ownership is split by layer (N-D11).** The *list* of initiatives is defined and maintained only in the Notion master Initiatives database. A task's *assignment* is made only in Discord (`/initiative`, or `initiative:` on `/todo`), picking from that list. Discord can't create, rename, or retire an initiative. The Notion To-Do Initiative property is a read-only mirror. |
+| N-S13 | *Amended by N-S17: a task's initiative can also be set in Notion, and Notion wins.* **Initiative ownership is split by layer (N-D11).** The *list* of initiatives is defined and maintained only in the Notion master Initiatives database. A task's *assignment* is made only in Discord (`/initiative`, or `initiative:` on `/todo`), picking from that list. Discord can't create, rename, or retire an initiative. The Notion To-Do Initiative property is a read-only mirror. |
 | N-S6 | Accepted tasks push to a Notion To-Do database. Done is ticked in Notion. The 16 existing accepted tasks are backfilled. |
 | N-S7 | Drafting happens in claude.ai or the desktop app via the Notion connector. One page per article, a toggle H2 per revision with its number, and a header naming the latest revision and its status (Drafting / Ready / Published). |
 | N-S8 | Attention block: counts only. Higgins: short Discord summary plus the Notion link. Tartt: top 10 per day. |
@@ -363,7 +374,8 @@ The operator adds the same text to a claude.ai Project's instructions, so every 
 | N-S10 | Writing structure: Articles (parents) + Derivatives (linked short-form and video pages), each with the page convention in N6. Articles carry an optional Initiative relation (N-D12). |
 | N-S11 | To-dos that name a prospect push to Notion with neutral titles (N-D9). Extended from outreach to inbound-lead to-dos, which name a prospect too. |
 | N-S15 | **KR status thresholds (N-D13, operator, 2026-10-28).** On track at score ≥ 1.0. At risk from 0.9 for point KRs and from 0.7 for cumulative KRs, which swing more week to week. Too early covers any cumulative KR that would score At risk or Off track before day 15, not only a KR at 0. Lower-is-better KRs show no Progress bar. |
-| N-S16 | **Completion from both surfaces, latest change wins (operator, 2026-10-28).** The #tasks checklist keeps its Done button, and the Notion To-Do Done box also completes a task. The sync compares both with the value they last agreed on; the side that changed wins. The CoS therefore writes Done in Notion, which amends N-S6 ("Done is ticked in Notion") and N-S1 (Notion owned completion alone). |
+| N-S16 | *Amended by N-S17: on a conflict, Notion wins.* **Completion from both surfaces, latest change wins (operator, 2026-10-28).** The #tasks checklist keeps its Done button, and the Notion To-Do Done box also completes a task. The sync compares both with the value they last agreed on; the side that changed wins. The CoS therefore writes Done in Notion, which amends N-S6 ("Done is ticked in Notion") and N-S1 (Notion owned completion alone). |
+| N-S17 | **Notion is the source of truth for To-Do content (operator, 2026-11-10).** Notion owns each row's Task, Due, Initiative, and Done. The sync merges each field against the value both sides last agreed on (`notion_sync.synced_fields`, migration 0036): a Notion edit is copied into Postgres and never overwritten, and a Discord change (`/initiative`, the #tasks Done button) reaches Notion only if Notion didn't change that field. When both changed, Notion wins. Source, Created, and CoS id stay CoS-written. A row added by hand in Notion becomes an open task, skipping Task Tinder (amends N-S12 for Notion rows). A prospect-source task's title is never merged, so its real title stays in Postgres (N-D9). Amends N-S1, N-S13, and N-S16. |
 | N-S12 | `/todo` posts a Task Tinder card. It doesn't skip acceptance, because a new to-do may not be a priority yet (N-D10). |
 
 ### Open

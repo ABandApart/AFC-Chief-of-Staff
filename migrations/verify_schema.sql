@@ -263,6 +263,13 @@ FROM (VALUES ('task_candidates', 'okr_initiative_id'), ('task_candidates', 'due_
              ('tasks', 'okr_initiative_id'), ('notion_sync', 'synced_done')) AS v(tbl, col);
 
 \echo
+\echo '=== To-Do per-field sync state (migration 0036) ==='
+SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = 'public' AND table_name = 'notion_sync'
+                           AND column_name = 'synced_fields')
+            THEN 'OK   notion_sync.synced_fields' ELSE 'FAIL notion_sync.synced_fields missing — apply migration 0036' END AS synced_fields_status;
+
+\echo
 \echo '=== OKR snapshots (migration 0035) ==='
 SELECT
     CASE WHEN (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'okr_snapshots') = 'barry_agent'
