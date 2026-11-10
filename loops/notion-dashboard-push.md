@@ -2,7 +2,7 @@
 name: notion-dashboard-push
 schedule: "0 7 * * 1"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.notion.dashboard_push
 description: Score every active KR, snapshot the week, push the Notion dashboard, and post the #dashboard summary (PRD-notion-integration.md N4).
 ---
@@ -24,8 +24,9 @@ nothing else.
 
 **What activation starts:** nothing billable. About 20 SQL queries, a page read
 per database, and at most about 40 Notion writes a week, plus one Discord post
-and one `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=0`). It ships
-`enabled: false` per `loops/README.md`.
+and one `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=0`). It shipped
+`enabled: false` per `loops/README.md` and was enabled 2026-11-10 after the
+operator's dashboard review (N4 H3).
 
 Health check any time:
 

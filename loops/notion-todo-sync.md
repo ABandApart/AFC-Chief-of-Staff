@@ -4,7 +4,7 @@ schedule: "*/5 * * * *"
 trigger_kind: scheduled
 enabled: true
 command: uv run python -m agents.notion.todo_sync
-description: Push tasks to the Notion To-Do database and merge its Done box (PRD-notion-integration.md N3).
+description: Sync tasks with the Notion To-Do database, where Notion owns Task, Due, Initiative, and Done, and import rows added there (PRD-notion-integration.md N3, N-S17).
 ---
 
 # Notion To-Do sync (N3)
