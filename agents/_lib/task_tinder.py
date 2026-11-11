@@ -250,3 +250,29 @@ def create_operator_task(*, title: str, owner: str, due_date: Any, okr_initiativ
             (title, owner, status, follow_up_id, okr_initiative_id, due_date, completed))
         task_id, created_at = cur.fetchone()
     return {"task_id": task_id, "follow_up_id": follow_up_id, "created_at": created_at}
+
+
+def create_plan_task(*, plan_item_id: int, title: str, owner: str, due_date: Any,
+                     okr_initiative_id: int | None, description: str | None) -> int | None:
+    """Create the follow-up and task for one daily-plan item (N7) and link the item
+    to it, in one transaction. The follow-up has no deadline, so plan tasks don't
+    count toward Follow-ups closed on time (N-D15). Returns the task id, or None if
+    the item already has a task (a second run the same day). It lives here so this
+    module stays the only writer of `tasks` rows."""
+    with db.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("SELECT task_id FROM plan_items WHERE id = %s FOR UPDATE", (plan_item_id,))
+        row = cur.fetchone()
+        if row is None or row[0] is not None:
+            return None
+        cur.execute(
+            "INSERT INTO follow_ups (owner, action, status, escalation_level) "
+            "VALUES (%s, %s, 'open', 0) RETURNING id", (owner, title))
+        follow_up_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO tasks (title, description, owner, status, follow_up_id, "
+            "                   okr_initiative_id, due_date) "
+            "VALUES (%s, %s, %s, 'open', %s, %s, %s) RETURNING id",
+            (title, description, owner, follow_up_id, okr_initiative_id, due_date))
+        task_id = cur.fetchone()[0]
+        cur.execute("UPDATE plan_items SET task_id = %s WHERE id = %s", (task_id, plan_item_id))
+    return task_id

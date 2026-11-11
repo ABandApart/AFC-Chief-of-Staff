@@ -64,7 +64,7 @@ def test_prospect_sources_never_send_their_real_title():
 def test_source_labels_cover_every_option():
     options = todo.properties("ds")["Source"]["select"]["options"]
     assert [o["name"] for o in options] == ["discovery", "outreach", "inbound", "operator",
-                                            "notion"]
+                                            "notion", "plan"]
 
 
 # --- the per-field merge -------------------------------------------------------------

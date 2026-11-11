@@ -4,7 +4,9 @@
     uv run python -m agents.notion.todo_sync --dry-run   # print the plan; write nothing
 
 **Notion is the source of truth for a row's content** (N-S17): Task, Due,
-Initiative, and Done. Each cycle, for every open or completed task:
+Initiative, and Done. Each cycle, for every open, completed, or skipped task
+(`skipped` is a daily-plan task the plan replaced, N7; it shows as not Done, and
+ticking it in Notion completes it):
 
 1. **Merge.** Each of those fields is compared, on its own, between Postgres,
    Notion, and the value both last agreed on (`notion_sync.synced_fields`). An
@@ -50,12 +52,14 @@ _TASKS_SQL = """
     SELECT t.id, t.title, t.status, t.due_date, t.created_at, tc.source_type,
            t.okr_initiative_id, t.source_candidate_id IS NULL AS imported,
            CASE WHEN i.archived_at IS NULL THEN i.notion_page_id END AS initiative_page_id,
-           ns.notion_page_id, ns.content_hash, ns.synced_done, ns.synced_fields
+           ns.notion_page_id, ns.content_hash, ns.synced_done, ns.synced_fields,
+           pi.day AS planned_for, pi.minutes AS plan_minutes, pi.context AS plan_context
     FROM tasks t
     LEFT JOIN task_candidates tc ON tc.id = t.source_candidate_id
+    LEFT JOIN plan_items pi ON pi.task_id = t.id
     LEFT JOIN okr_initiatives i ON i.id = t.okr_initiative_id
     LEFT JOIN notion_sync ns ON ns.entity_table = %s AND ns.entity_id = t.id::text
-    WHERE t.status IN ('open', 'completed')
+    WHERE t.status IN ('open', 'completed', 'skipped')
     ORDER BY t.id
 """
 

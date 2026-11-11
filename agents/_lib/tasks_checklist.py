@@ -86,14 +86,17 @@ def count_open() -> int:
 def complete_task(task_id: int) -> int | None:
     """Idempotently mark an open task complete, and close its open follow-up.
     Returns the id, or None if it was not open (the double-click no-op — the
-    `WHERE status='open'` gate is the authority, mirroring the Task Tinder
-    decide/promote pattern). One statement, so the two never disagree."""
+    `WHERE status` gate is the authority, mirroring the Task Tinder
+    decide/promote pattern). One statement, so the two never disagree.
+    A `skipped` daily-plan task (N7) completes too: ticking it in Notion means the
+    operator did it after all."""
     with db.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "WITH t AS (UPDATE tasks SET status = 'completed', completed_at = now() "
-            "           WHERE id = %s AND status = 'open' RETURNING id, follow_up_id), "
+            "           WHERE id = %s AND status IN ('open', 'skipped') "
+            "           RETURNING id, follow_up_id), "
             "f AS (UPDATE follow_ups SET status = 'completed', completed_at = now() "
-            "      WHERE id IN (SELECT follow_up_id FROM t) AND status = 'open') "
+            "      WHERE id IN (SELECT follow_up_id FROM t) AND status IN ('open', 'skipped')) "
             "SELECT id FROM t",
             (task_id,),
         )

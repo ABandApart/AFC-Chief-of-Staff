@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, not built. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), and BUILT on branch `notion-n7` (migration 0037 not applied; loop `notion-plan-daily` shipped disabled). Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -348,7 +348,7 @@ The operator adds the same text to a claude.ai Project's instructions, so every 
 
 ## N7 — Daily plan
 
-**Outcome:** S1.8. Added 2026-11-11 (rev 2.2). **Proposed; not built.**
+**Outcome:** S1.8. Added 2026-11-11 (rev 2.2). **Accepted 2026-11-11 (N-S18).**
 
 **Why.** On 2026-11-11 the operator had Claude, in a separate claude.ai session, write a 4-week plan for Mon Nov 16 to Fri Dec 11, 2026 ("4-Week Plan: Nov 16 to Dec 13, 2026", a page under the root). The plan covers Social Media Phases 1–4 and the December Fifty. That session also set up a weekday 06:00 routine, which runs outside the CoS. The routine reviews the prior day, carries unchecked items forward to a new "To-Do: <date>" page, and lists today plus the previous four pages in a section it added to the Q4 dashboard. That gives the operator a second to-do list that #tasks, the To-Do database, and the dashboard's open to-do count don't see. It also gives the dashboard page a second writer that has no ledger and no tests. N7 moves the routine into the CoS and keeps the plan, which the operator authors.
 
@@ -452,6 +452,22 @@ The next To-Do sync, within 5 minutes, pushes the new tasks and Due changes to N
      - The dashboard view shows both days.
      - #tasks has the summary.
 
+**Build notes (2026-11-11):**
+- **Migration 0037** (`plans`, `plan_items`, owned by `barry_agent`; `verify_schema.sql` expects 42 tables). Not yet applied. `tasks.status` and `follow_ups.status` take `skipped` without DDL.
+- **Import:** `agents/notion/plan_import.py` (pure `parse`, plus `read_blocks` and `save`) and `cli.notion_plan_import`. Two checks beyond the spec:
+  - a day heading's minutes, as in `(240 min`, must equal its rows' sum;
+  - a heading's weekday must match its date.
+  The importer fails with every problem listed. A day with a bad row skips the minutes check, so one mistake isn't reported twice.
+- **Loop:** `agents/notion/plan_daily.py`, loop `notion-plan-daily` (Mon–Fri 06:00, **shipped `enabled: false`**). It posts only on the run that created today's tasks, so a re-run doesn't post twice. `--date` runs it as of another day, for testing.
+- **Tasks:** `task_tinder.create_plan_task` creates the follow-up and task and sets `plan_items.task_id` in one transaction. It locks the item, so a second run creates nothing. `tasks.description` holds the context. `tasks_checklist.complete_task` now also completes a `skipped` task.
+- **To-Do:** the sync reads `skipped` tasks too (shown as not Done) and joins `plan_items`. Plan tasks get Source `plan` and the Minutes, Planned for, and Context columns. Other tasks' facts and hashes are unchanged, so deploying rewrites no existing row. `cli.notion_plan_setup` adds the three columns and the `plan` option to the existing To-Do database, then adds the dashboard section. Until it runs, `cli.notion_setup` reports those columns as drift.
+- **Dashboard:** the heading goes after the attention callout through `append_blocks(…, after=)`, which uses the 2026-03-11 `position` object. The view is created after the heading, and later runs change only its filter through `notion_client.update_view`. Both ids are recorded as `dashboard_block` rows `<quarter>:plan:heading` and `<quarter>:plan:view`, which the Monday push ignores.
+- **Tests:** 31 new.
+  - `test_plan_import.py` has a fixture that copies the 2026-11-11 page's structure. It checks 19 days, 145 tasks, 4,570 min, and 7 🔻 rows totaling 355 min, all matching the page.
+  - `test_plan_daily.py` covers the pure parts. With `PLAN_TEST_DSN` set, it also runs import, two plan days, re-runs, a Saturday, a Due moved in Notion, and re-import on temp tables.
+  - The loop's and sync's SQL, the import, task creation, and carry-forward also ran on a schema copy of `aiadaptive_cos` with 0037 applied.
+- **Not verified live:** the positioned insert and `PATCH /v1/views/{id}`. barry-agent's first steps check both (`PHASE-NOTION-N7.md`).
+
 ---
 
 ## S2. Non-goals
@@ -487,17 +503,12 @@ The next To-Do sync, within 5 minutes, pushes the new tasks and Due changes to N
 | N-S15 | **KR status thresholds (N-D13, operator, 2026-10-28).** On track at score ≥ 1.0. At risk from 0.9 for point KRs and from 0.7 for cumulative KRs, which swing more week to week. Too early covers any cumulative KR that would score At risk or Off track before day 15, not only a KR at 0. Lower-is-better KRs show no Progress bar. |
 | N-S16 | *Amended by N-S17: on a conflict, Notion wins.* **Completion from both surfaces, latest change wins (operator, 2026-10-28).** The #tasks checklist keeps its Done button, and the Notion To-Do Done box also completes a task. The sync compares both with the value they last agreed on; the side that changed wins. The CoS therefore writes Done in Notion, which amends N-S6 ("Done is ticked in Notion") and N-S1 (Notion owned completion alone). |
 | N-S17 | **Notion is the source of truth for To-Do content (operator, 2026-11-10).** Notion owns each row's Task, Due, Initiative, and Done. The sync merges each field against the value both sides last agreed on (`notion_sync.synced_fields`, migration 0036): a Notion edit is copied into Postgres and never overwritten, and a Discord change (`/initiative`, the #tasks Done button) reaches Notion only if Notion didn't change that field. When both changed, Notion wins. Source, Created, and CoS id stay CoS-written. A row added by hand in Notion becomes an open task, skipping Task Tinder (amends N-S12 for Notion rows). A prospect-source task's title is never merged, so its real title stays in Postgres (N-D9). Amends N-S1, N-S13, and N-S16. |
+| N-S18 | **The daily plan runs in the CoS (N7, operator 2026-11-11).** It replaces the claude.ai routine. The operator accepted the three recommended defaults: an unfinished standing item closes as `skipped` instead of carrying forward (N-D14); plan follow-ups have no deadline, so plan tasks don't count toward Follow-ups closed on time (N-D15); and the morning summary posts to #tasks (N-D16). |
 | N-S12 | `/todo` posts a Task Tinder card. It doesn't skip acceptance, because a new to-do may not be a priority yet (N-D10). |
 
 ### Open
 
-N7 needs three decisions before it's built. Each has a recommended default.
-
-| # | Question | Recommended | What changes |
-|---|---|---|---|
-| N-D14 | Does an unfinished **standing** item (the daily 60-minute block) carry forward? | **No.** Close it as `skipped`, because today's instance replaces it. | If it carries, a missed day doubles the next day's standing block, and the copies pile up. |
-| N-D15 | Do plan tasks count toward **Follow-ups closed on time**? | **No.** Leave the follow-up `deadline` NULL. | That KR measures promises made to people. Counting about 130 plan tasks would make it a measure of plan completion, and carried tasks would pull it down. |
-| N-D16 | Where does the morning summary post? | **#tasks**, next to the checklist it changes. | #dashboard keeps only the weekly summary. |
+None (2026-11-11).
 
 ## Risks and verify-before-build
 

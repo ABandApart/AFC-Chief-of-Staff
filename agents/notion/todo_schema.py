@@ -30,6 +30,8 @@ SOURCES = {"discovery": "discovery", "outreach_stale_signal": "outreach",
            "inbound_lead": "inbound", "operator": "operator"}
 # A task imported from a row added by hand in Notion has no Task Tinder candidate.
 IMPORTED_SOURCE = "notion"
+# A task the daily plan created (N7).
+PLAN_SOURCE = "plan"
 NEUTRAL_TITLES = {"outreach_stale_signal": "Outreach follow-up · open in NocoDB",
                   "inbound_lead": "Inbound lead follow-up · open in Discord"}
 
@@ -37,7 +39,8 @@ DESCRIPTION = (
     "Your to-do list. Edit Task, Due, Initiative, and Done here: your edits win. "
     "Discord's /initiative and the #tasks Done button change a row only where you "
     "haven't edited it since the last sync. A row you add here becomes a task within "
-    "5 minutes. Source, Created, and CoS id are written by the CoS."
+    "5 minutes. Source, Created, CoS id, Minutes, Planned for, and Context are written "
+    "by the CoS."
 )
 
 
@@ -51,10 +54,21 @@ def properties(initiatives_data_source_id: str) -> dict[str, Any]:
         "Done": {"checkbox": {}},
         "Due": {"date": {}},
         "Source": {"select": {"options": [{"name": n, "color": "default"} for n in
-                                          dict.fromkeys((*SOURCES.values(), IMPORTED_SOURCE))]}},
+                                          dict.fromkeys((*SOURCES.values(), IMPORTED_SOURCE,
+                                                         PLAN_SOURCE))]}},
         "Created": {"date": {}},
         "CoS id": {"number": {"format": "number"}},
+        **PLAN_PROPERTIES,
     }
+
+
+# Added for the daily plan (N7). CoS-written, like Source. `cli.notion_plan_setup`
+# adds them, and the `plan` Source option, to a To-Do database made before N7.
+PLAN_PROPERTIES = {
+    "Minutes": {"number": {"format": "number"}},
+    "Planned for": {"date": {}},
+    "Context": {"rich_text": {}},
+}
 
 
 ROLLUP = {"Key Result": {"rollup": {"relation_property_name": "Initiative",
@@ -159,9 +173,19 @@ def field_props(values: dict[str, Any], fields: tuple[str, ...] | list[str]) -> 
 
 
 def fact_props(task: dict[str, Any]) -> dict[str, Any]:
-    """The CoS-written columns: Source, Created, and CoS id."""
-    source = SOURCES.get(task.get("source_type") or "") or \
-        (IMPORTED_SOURCE if task.get("imported") else None)
-    return {"Source": {"select": {"name": source} if source else None},
-            "Created": {"date": _date(task.get("created_at"))},
-            "CoS id": {"number": task["id"]}}
+    """The CoS-written columns: Source, Created, and CoS id, plus Minutes, Planned
+    for, and Context for a daily-plan task (N7). Other tasks don't carry the plan
+    columns, so their hash is unchanged."""
+    if task.get("planned_for"):
+        source: str | None = PLAN_SOURCE
+    else:
+        source = SOURCES.get(task.get("source_type") or "") or \
+            (IMPORTED_SOURCE if task.get("imported") else None)
+    out = {"Source": {"select": {"name": source} if source else None},
+           "Created": {"date": _date(task.get("created_at"))},
+           "CoS id": {"number": task["id"]}}
+    if task.get("planned_for"):
+        out["Minutes"] = {"number": task.get("plan_minutes")}
+        out["Planned for"] = {"date": _date(task["planned_for"])}
+        out["Context"] = {"rich_text": rich_text((task.get("plan_context") or "")[:2000])}
+    return out

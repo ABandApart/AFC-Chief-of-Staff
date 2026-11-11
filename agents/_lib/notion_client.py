@@ -236,10 +236,15 @@ class NotionClient:
         """Add, rename, or reconfigure properties (keyed by current name or id)."""
         return self.request("PATCH", f"/data_sources/{data_source_id}", {"properties": properties})
 
-    def append_blocks(self, block_id: str, children: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Append blocks to a page or block; returns the created blocks, in order."""
-        return self.request("PATCH", f"/blocks/{block_id}/children",
-                            {"children": children}).get("results", [])
+    def append_blocks(self, block_id: str, children: list[dict[str, Any]], *,
+                      after: str | None = None) -> list[dict[str, Any]]:
+        """Append blocks to a page or block; returns the created blocks, in order.
+        `after` inserts them right after that child block instead of at the end
+        (the `position` object that replaced `after` in 2026-03-11)."""
+        body: dict[str, Any] = {"children": children}
+        if after:
+            body["position"] = {"type": "after_block", "after_block": {"id": after}}
+        return self.request("PATCH", f"/blocks/{block_id}/children", body).get("results", [])
 
     def update_block(self, block_id: str, body: dict[str, Any]) -> dict[str, Any]:
         """Replace a block's content, e.g. `{"callout": {"rich_text": [...]}}`."""
@@ -253,6 +258,10 @@ class NotionClient:
 
     def retrieve_view(self, view_id: str) -> dict[str, Any]:
         return self.request("GET", f"/views/{view_id}")
+
+    def update_view(self, view_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Change a view's settings, e.g. `{"filter": …}` (views API)."""
+        return self.request("PATCH", f"/views/{view_id}", body)
 
     def iter_query(
         self, data_source_id: str, *, filter: dict[str, Any] | None = None

@@ -58,7 +58,8 @@ def test_complete_task_is_guarded_and_returns_id(mocker):
     sql, params = cur.execute.call_args.args
     assert "SET status = 'completed'" in sql
     assert "completed_at = now()" in sql
-    assert "WHERE id = %s AND status = 'open'" in sql  # the idempotency gate
+    # the idempotency gate; a skipped daily-plan task (N7) completes too
+    assert "WHERE id = %s AND status IN ('open', 'skipped')" in sql
     assert params == (7,)
 
 
