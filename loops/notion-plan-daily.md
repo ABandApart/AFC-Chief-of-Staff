@@ -2,7 +2,7 @@
 name: notion-plan-daily
 schedule: "0 6 * * 1-5"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.notion.plan_daily
 description: Carry forward unfinished plan tasks, create today's, set the dashboard's Daily plan view, and post the #tasks summary (PRD-notion-integration.md N7).
 ---
@@ -26,7 +26,8 @@ nothing, and doesn't post again.
 **What activation starts:** nothing billable. A few SQL queries, about 5 Notion
 requests a day, one Discord post, and one `agent_runs` row
 (`agent_name='notion-sync'`, `function_label='plan_daily'`, `usd_cost=0`). It
-ships `enabled: false` per `loops/README.md`.
+shipped `enabled: false` per `loops/README.md` and was enabled 2026-11-11 after
+barry-agent's live setup and import (N7 E2) and the operator's go-ahead.
 
 Health check any time:
 

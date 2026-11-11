@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), and BUILT on branch `notion-n7` (migration 0037 not applied; loop `notion-plan-daily` shipped disabled). Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -453,7 +453,7 @@ The next To-Do sync, within 5 minutes, pushes the new tasks and Due changes to N
      - #tasks has the summary.
 
 **Build notes (2026-11-11):**
-- **Migration 0037** (`plans`, `plan_items`, owned by `barry_agent`; `verify_schema.sql` expects 42 tables). Not yet applied. `tasks.status` and `follow_ups.status` take `skipped` without DDL.
+- **Migration 0037** (`plans`, `plan_items`, owned by `barry_agent`; `verify_schema.sql` expects 42 tables). Applied 2026-11-11. `tasks.status` and `follow_ups.status` take `skipped` without DDL.
 - **Import:** `agents/notion/plan_import.py` (pure `parse`, plus `read_blocks` and `save`) and `cli.notion_plan_import`. Two checks beyond the spec:
   - a day heading's minutes, as in `(240 min`, must equal its rows' sum;
   - a heading's weekday must match its date.
@@ -466,7 +466,7 @@ The next To-Do sync, within 5 minutes, pushes the new tasks and Due changes to N
   - `test_plan_import.py` has a fixture that copies the 2026-11-11 page's structure. It checks 19 days, 145 tasks, 4,570 min, and 7 🔻 rows totaling 355 min, all matching the page.
   - `test_plan_daily.py` covers the pure parts. With `PLAN_TEST_DSN` set, it also runs import, two plan days, re-runs, a Saturday, a Due moved in Notion, and re-import on temp tables.
   - The loop's and sync's SQL, the import, task creation, and carry-forward also ran on a schema copy of `aiadaptive_cos` with 0037 applied.
-- **Not verified live:** the positioned insert and `PATCH /v1/views/{id}`. barry-agent's first steps check both (`PHASE-NOTION-N7.md`).
+- **Verified live 2026-11-11** (barry-agent, `PHASE-NOTION-N7.md` E1–E2): the positioned insert placed the heading under the attention callout, `PATCH /v1/views/{id}` changed the filter, and the import matched the page (19 days, 145 tasks, 4,570 min).
 
 ---
 
