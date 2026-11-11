@@ -25,6 +25,12 @@ psql aiadaptive_cos -f migrations/verify_schema.sql
 Update `verify_schema.sql` in the same change as every migration that adds a
 table or view. It is the source of truth for what should exist.
 
+## Docent migrations
+
+`migrations/docent/` holds SQL for docent's Supabase project, not for
+`aiadaptive_cos`. Apply those in the Supabase SQL editor. See
+`architecture/PRD-docent-export.md`.
+
 ## Numbering gaps
 
 - **0017** was never used.

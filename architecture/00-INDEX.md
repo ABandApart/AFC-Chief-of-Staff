@@ -69,6 +69,9 @@ For **outcome attribution** (the `clients` table, `outcomes.client_id` and `attr
 For the **Notion integration** (master OKR document with initiatives, `/initiative` + `/todo` on Task Tinder, Notion to-do list, dashboard, Tartt review, long-form writing workflow):
 → [`PRD-notion-integration.md`](./PRD-notion-integration.md) — DRAFT rev 2, 2026-10-16; build order N1→N2→N3→N4→N6→N5; all decisions settled
 
+For the **docent export** (the nightly, allowlist-only push of themes and market segments to the operator's web app on Supabase, and its PII gate):
+→ [`PRD-docent-export.md`](./PRD-docent-export.md) — BUILT 2026-11-11; loop `docent-export` shipped disabled
+
 For the **outreach workflow as a picture** (six diagrams — read this before 35-):
 → [`37-outreach-workflow.md`](./37-outreach-workflow.md)
 

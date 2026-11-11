@@ -79,6 +79,7 @@ loop and is what the decision turns on:
 |------|------------------------|
 | `tartt-poll` | Real Gemini spend, per item, on a 6-hourly cadence |
 | `outreach-evidence` | Nothing billable — public JSON GETs, no LLM, no `agent_runs` rows, writes only `outreach_evidence` |
+| `docent-export` | Nothing billable — a few dozen rows a night to docent's Supabase database, one `agent_runs` row (`usd_cost=0`) |
 
 A loop whose activation costs nothing and whose data only accrues forward should
 be activated as soon as it works; one that spends money on every cycle deserves

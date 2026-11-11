@@ -277,6 +277,17 @@ SELECT
          ELSE 'FAIL okr_snapshots missing or not owned by barry_agent — check migration 0035' END AS okr_snapshots_status;
 
 \echo
+\echo '=== Docent export views (migration 0037) ==='
+SELECT v AS view,
+       CASE WHEN has_table_privilege('brain_reader', 'export.' || v, 'SELECT')
+            THEN 'OK' ELSE 'FAIL missing or not readable by brain_reader — apply migration 0037' END AS status
+FROM (VALUES ('themes'), ('market_segments')) AS t(v)
+WHERE to_regclass('export.' || v) IS NOT NULL
+UNION ALL
+SELECT 'export schema', 'FAIL missing — apply migration 0037'
+WHERE to_regnamespace('export') IS NULL;
+
+\echo
 \echo '=== Summary ==='
 SELECT
     (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public') AS total_tables,
