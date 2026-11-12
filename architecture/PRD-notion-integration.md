@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.3, 2026-11-12: N8 (outreach leads in Notion, and a wider intake) specified, accepted (N-S19), and BUILT, merged to `main`, and loops enabled 2026-11-12 (migrations 0038 and 0039 applied; Leads columns added; T03/T07 copy approved); it reverses containment for outreach targets and drops funding stage as an outreach criterion, by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.4, 2026-11-12: N9 (off Discord) specified, not yet accepted. Rev 2.3, 2026-11-12: N8 (outreach leads in Notion, and a wider intake) specified, accepted (N-S19), and BUILT, merged to `main`, and loops enabled 2026-11-12 (migrations 0038 and 0039 applied; Leads columns added; T03/T07 copy approved); it reverses containment for outreach targets and drops funding stage as an outreach criterion, by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -20,8 +20,9 @@ Notion becomes the operator's surface for **planning** and **writing**:
 6. **Writing.** Long-form newsletter pieces live in an Articles database, one page per article, with every draft under its own toggle heading. The operator drafts with Claude in claude.ai or the desktop app through the Notion connector. The CoS builds no code for the drafting loop itself.
 7. **Daily plan (N7, rev 2.2).** A multi-week plan written in Notion is imported once. Each weekday morning the CoS turns that day's items into tasks, carries forward unfinished ones, shows the last five plan days on the dashboard, and posts a summary to #tasks. This replaces a routine that ran outside the CoS.
 8. **Outreach leads (N8, rev 2.3).** Each outreach target is a row in the Leads database, with company background, stage, last contact, and its current message, refreshed each morning. The operator sets Status there, and starts a sequence by setting Start on.
+9. **Off Discord (N9, rev 2.4).** Task Tinder, Gate 0, re-scoring, outreach defers, outcomes, capture, feeds, the morning briefing, and alerts move to Notion. Only the #approvals gate (B2) stays on Discord.
 
-**Build order (operator, 2026-10-16):** N1 foundation → N2 master OKR document → N3 Task Tinder updates → N4 dashboard → **N6 writing → N5 Tartt review**. Time-to-value decides the tail: writing is mostly setup and is usable in days. N7 (added 2026-11-11) is proposed ahead of N5 and N6, because the plan it serves starts Mon Nov 16. N8 (added 2026-11-12) follows N7.
+**Build order (operator, 2026-10-16):** N1 foundation → N2 master OKR document → N3 Task Tinder updates → N4 dashboard → **N6 writing → N5 Tartt review**. Time-to-value decides the tail: writing is mostly setup and is usable in days. N7 (added 2026-11-11) is proposed ahead of N5 and N6, because the plan it serves starts Mon Nov 16. N8 (added 2026-11-12) follows N7, and N9 (added 2026-11-12) follows N8.
 
 ## Problem
 
@@ -44,6 +45,7 @@ When N1–N7 are done:
 7. **Containment:** no evidence text, sent or received email body, or meeting transcript text reaches Notion, and no prospect data except the outreach target fields N8 lists. *Amended by N8 (operator, 2026-11-12): outreach targets and their current templated message are copied to Leads, and outreach and inbound to-dos use real titles.*
 8. **Daily plan:** by 06:05 each plan weekday, that day's plan items are open tasks with due date today. Every unfinished non-standing item from earlier days has moved to today. Within 5 minutes they're in the To-Do database and #tasks. The dashboard's Daily plan view shows the prior four plan days and today, and #tasks has the 3-line summary.
 9. **Outreach leads:** by 06:30 each day, every outreach target is a Leads row whose fields match Postgres. A Status, Stage, Function state, or Start on set in Notion by 05:30 is in Postgres that morning. A ready candidate whose Start on is today is `in_sequence`, with its task in To-Do and its message in Leads. No gate requires a funding stage, and Gate 0 shows every verified discovery that passed its checks.
+10. **Off Discord:** every required operator step except a B2 approval can be done in Notion. A decision set in Inbox, or an Outcome, Capture, or Source row, reaches Postgres within 15 minutes. A Gate 0, re-score, Parked, or touch-defer change made in Leads or To-Do by 05:30 takes effect that morning. Each day's briefing is a Notion page by 06:05. An urgent alert reaches the operator's phone as a Notion mention.
 
 ## Architecture
 
@@ -61,6 +63,9 @@ Rev 1 kept every system of record in Postgres. Rev 2 deliberately moves **three 
 | Article metadata, score, summary | Postgres `content_items` | Notion Content Review, mirror |
 | Outreach target status after first contact, Start on, and (while `candidate`) Stage and Function state | **Notion Leads** (N8), pulled daily | Postgres `outreach_targets`, which also takes CoS status changes; on a conflict Notion wins |
 | Outreach target company, contact, touches, packets | Postgres | Notion Leads, daily mirror (N8) |
+| Task Tinder decisions (Accept, Decline, Defer) | **Notion Inbox** (N9), pulled every 15 min | Postgres `task_candidates` |
+| Gate 0 reviews, S4/S5 re-scores, Parked | **Notion Leads** (N9), pulled daily | Postgres `outreach_discoveries`, `outreach_targets` |
+| Outcomes, Capture notes, feeds and interests | **Notion** Outcomes, Capture, Sources (N9), imported | Postgres `outcomes`, the graph, `sources` |
 | **Article drafts** | **Notion Articles pages** | None. The CoS doesn't copy drafts. |
 
 **Why this still fits ADR-0001.** ADR-0001 rejects bidirectional sync of the *same* data between two stores. Here each field has exactly one owner. Notion owns definitions, task content, and drafts. Postgres owns everything computed. Task content is the one place both sides can change a field, and the rule there is fixed: Notion is the owner, and a Discord change is applied only when Notion hasn't changed that field since the last sync (N-S17). So the two systems never disagree about who is right.
@@ -77,6 +82,7 @@ Rev 1 kept every system of record in Postgres. Rev 2 deliberately moves **three 
 | `loops/notion-<job>.md` | Scheduler entries, one manifest per job because the loader allows one command per manifest (N2 build notes). N2: `notion-okr-pull`. OKR pull and Done/Decision pull every 15 minutes. To-do push every 5 minutes, plus immediately on accept (best effort). Dashboard push Monday 07:00, attention refresh daily 07:00, Tartt push daily 06:15. |
 | `agents/notion/plan_daily.py` | N7: each weekday, carries forward unfinished plan tasks, creates the day's tasks, sets the Daily plan view's dates, and posts the #tasks summary. `cli.notion_plan_import` loads a plan page into `plans` and `plan_items`. |
 | `agents/notion/leads_sync.py` | N8: `pull` (05:30) applies Leads edits and starts scheduled sequences; `push` (06:20) mirrors every outreach target to Leads. |
+| `agents/notion/inbox_sync.py` | N9: every 15 minutes, Inbox decisions, Outcomes and Capture imports, and the Sources merge. Gate 0, re-score, Parked, and defers ride the N8 Leads loops; the Briefing page is written by `morning-briefing`. |
 | `_lib/kr_metrics.py` | The single implementation of every metric, keyed by metric id. Higgins and the dashboard both read it. |
 
 Every loop run writes an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=0`), so KR4.2 counts it and Ted watches it.
@@ -652,12 +658,202 @@ Both new loops write an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=
 
 ---
 
+## N9 — Off Discord: decisions, inputs, and notices in Notion
+
+**Outcome:** S1.10. Added 2026-11-12 (rev 2.4). **Not yet accepted.**
+
+**Why.** The operator wants every required step on Notion, not Discord (2026-11-12). After N8, Discord still carries five decisions, four inputs, and three kinds of notice. On 2026-11-12, 212 Task Tinder cards were pending (177 discovery, 34 stale-signal, 1 operator), about 22 firms were eligible at Gate 0, and the briefing, #tasks summaries, and #system alerts were all Discord-only.
+
+**The inventory, and where each item goes:**
+
+| Discord process | Kind | N9 |
+|---|---|---|
+| `/todo`, `/initiative`, #tasks Done | input | Already in Notion To-Do (N3, N-S17). No change. |
+| Gate 1 Work this, Drop | decision | Already in Leads: Start on, and Status = Not a fit (N8). |
+| #outreach Contact button | notice | Dropped: it recorded intent only. N8's touch tasks hold the list. |
+| Task Tinder (#task-tinder) | decision | **Inbox** database (I1) |
+| Gate 0 review (#outreach sheet) | decision | **Leads**, Channel = Discovery (I2) |
+| Re-score stale signals (S4/S5 modal) | decision | **Leads**, S4 and S5 columns (I3) |
+| Gate 1 Watchlist | decision | **Leads**, Status = Parked becomes settable (I3) |
+| Outreach Defer (snooze a touch) | decision | **To-Do**, move the touch task's Due (I4) |
+| `/outcome` | input | **Outcomes** database (I5) |
+| #capture | input | **Capture** database (I5) |
+| Tartt control (feeds and interests in #briefing) | input | **Sources** database (I5) |
+| `/recall` | input | Not moved: Claude with the CoS's read-only tools answers instantly; a polled Notion row can't (N-D26) |
+| #briefing, #tasks summaries | notice | **Briefings** database, one page per day (I6) |
+| #system alerts | notice | Dashboard System callout, plus a comment that @-mentions the operator for urgent ones (I6) |
+| #approvals (B2) | gate | **Stays in Discord** (N-D23) |
+
+**Scope.**
+- **In:** I1–I7 below.
+- **Out:**
+  - #approvals. It is the B2 gate on anything addressed to a third party. Its security rests on Discord: an operator-ID allowlist, typed confirmation, and 2FA (`PRD-b2-approval-gate.md` A1). S2 says Notion decides nothing gated. On 2026-11-12 its only item was the `noop_echo` test.
+  - `/recall`.
+  - Deleting the Discord cogs. N9 stops their posting (I7); removing the code is later cleanup.
+  - Any LLM call. N9 adds none and removes one: Tartt control's Haiku intent parse.
+
+### The common pattern
+
+Every surface works like To-Do (N3) and Leads (N8): the CoS writes rows, the operator sets a few columns, and a poll reads them back.
+
+- **Mapping:** `notion_sync` rows keyed by `(entity_table, entity_id)`. No new tables.
+- **Merge:** operator-owned fields merge against `notion_sync.synced_fields`, and a Notion change wins (N-S17). Every other column is CoS-written and hash-skipped.
+- **Idempotent writes:** every decision goes through the existing guarded function (`task_tinder.decide`, `outreach_discovery.approve` and `decide`, `outreach_rescore.apply_rescore`, `outreach_daily_surface.defer`), each of which updates only a row still in its undecided state. A decision made in both Discord and Notion during cutover takes effect once.
+- **Operator check (N-D24):** a pulled decision is taken only if the page's `last_edited_by` is the operator's Notion user. barry-admin records that id once as `notion_sync` row `('notion_schema', 'operator_user')`. Any other editor's change is refused and reported, and the next push restores the row.
+- **Schema check:** each sync checks its database's columns and options before writing, as `leads_schema.schema_problems` does, and fails with the list.
+- **Setup:** barry-admin creates the new databases and columns once through the Notion connector, as for Leads, and records each database id in `notion_sync` (`'notion_schema'`, `'<name>_database'`). No setup CLI.
+
+### I1. Inbox (replaces Task Tinder)
+
+A new **Inbox** database under the CoS root page. One row per `task_candidates` row with `status IN ('pending', 'deferred')` and `confidence >= task_tinder.MIN_CONFIDENCE`, excluding `outreach_stale_signal` (I3) and `outreach_touch` (N8, created already accepted).
+
+| Column | Type | Written by |
+|---|---|---|
+| Item | title | CoS (`proposed_action`) |
+| Source | select | CoS (`discovery`, `inbound`, `operator`, …, as To-Do's Source) |
+| Evidence | text | CoS (`evidence_text`, cut to 2,000 characters) |
+| Confidence | number | CoS |
+| Created | date | CoS |
+| Initiative | relation to Initiatives | Operator |
+| Due | date | Operator |
+| Decision | select: Accept, Decline, Defer | Operator |
+| Defer until | date | Operator (default: today + 7, `task_tinder.DEFER_DAYS`) |
+| CoS id | number | CoS |
+
+- **Accept:** the pull sets the candidate's initiative and due date from the row, then calls `task_tinder.decide(id, "accept")` and `promote`, the path the Discord Accept button uses. The task reaches To-Do within 5 minutes through the To-Do sync, and the Inbox row is archived.
+- **Decline:** `decide(id, "decline")`; the row is archived.
+- **Defer:** `decide(id, "defer")` with the row's Defer until. **New:** when that date passes, the pull sets the candidate back to `pending` and clears Decision, so it comes back. Today a deferred card never re-surfaces (`task_tinder.py` notes it as a future enhancement).
+- **A row added by hand** in Inbox is refused; to-dos are added in To-Do (N-S17).
+- **Backlog:** the first push creates about 178 rows (177 discovery, 1 operator). The default view is grouped by Source and sorted by Confidence, newest first.
+
+### I2. Gate 0 in Leads
+
+Each morning, the Leads pull also writes the Gate 0 daily window, `outreach_discovery.list_for_review()` (up to 25, with its exploration buckets), as Leads rows with **Channel = Discovery**, mapped as `notion_sync` `('outreach_discoveries', id)`.
+
+- **CoS-written columns:** the N8 company and contact columns, plus:
+  - **ICP fit** (number).
+  - **Verification** (text): `verification_note` and the verification kinds.
+  - **Background**: the description and pain hook.
+  - **Proposed** (text): the agent's proposed scores and reasons, when present.
+- **Operator columns:**
+  - **Review:** Approve, Reject, or Defer.
+  - **Reject reason:** a select of the 9 `REJECT_REASONS`.
+  - **Name, Email, Role:** editable on Discovery rows only. The existing "Edit contact" button becomes these edits, pulled through `outreach_discovery.update_contact`.
+- **Approve:** `outreach_discovery.approve(id)`. When it promotes the firm, the CoS re-keys the same Notion page from the discovery to the new target: it changes `notion_sync` and sets Channel = Outreach. One firm stays one row. With complete proposals, the sequence starts (N8 R4). Otherwise you set Function state and Start on.
+- **Reject:** `decide(id, "reject", reason=…, note=<Next step>)`. A missing reason is refused, as in Discord, and `other` needs a note. The row's Status becomes Not a fit.
+- **Defer:** no label (OQ-H, as today). The pull clears Review, and the row stays in the window.
+- Gate 0 decisions happen at the daily pull, matching the operator's daily cadence (N8).
+
+### I3. Re-score and Watchlist in Leads
+
+- **New Leads columns:**
+  - **S4 leadership gap** and **S5 team build below** (select: 1, 3, 5): operator-owned and merged.
+  - **Signals checked** (date): CoS-written, from `signals_observed_at`.
+  - **Re-score due** (checkbox): CoS-written. It is ticked while an `outreach_stale_signal` candidate is pending for the target.
+- **Pull:** a change to S4 or S5 on a target with a pending stale-signal candidate calls `outreach_rescore.apply_rescore`, which resolves the candidate and stamps `signals_observed_at`. On any other target it writes S4 and S5 and stamps the date.
+- **Parked becomes settable:**
+  - From `candidate`, it calls `outreach_intake.decide(id, "watchlist")`, with the intake reason and an 18-month `watch_until`.
+  - From `in_sequence`, it sets `watchlist` with `stalled_reason` from Next step (refused if Next step is blank). Unsent touches are skipped, as for Not a fit.
+- The 34 pending stale-signal cards leave Task Tinder and show as Re-score due rows.
+
+### I4. Outreach defer in To-Do
+
+The To-Do sync already pulls Due edits into `tasks.due_date` (N-S17). The Leads pull adds one step:
+
+- For each open `outreach_touch` task whose Due is later than its touch's `due_date`, it calls `outreach_daily_surface.defer(touch_id, note)`. That sets `snoozed_until` to the new Due, clamped to `window_closes`.
+- The note is the target's Leads Next step, or "Due moved in Notion to <date>" (N-D25).
+- A Due past the window closing is clamped, and the #tasks line (now the Briefing, I6) says so.
+
+### I5. Inputs: Outcomes, Capture, Sources
+
+- **Outcomes database.** Columns:
+  - Outcome (title: description).
+  - Type (select: the 8 `OUTCOME_TYPES`).
+  - Value (number).
+  - Company (text, matched to a client or target domain, as `/outcome`'s type-ahead does).
+  - Date (date).
+  - CoS id (number, CoS-written).
+
+  A new row is imported into `outcomes` and stamped with its CoS id. Contract types without a matching company are refused, mirroring `outcomes_engagement_has_client_ck`. Rows are read-only after import, so KR history doesn't change silently.
+- **Capture database.** Columns:
+  - Note (title).
+  - Body (text).
+  - Ingested (checkbox, CoS-written).
+  - Result (text, CoS-written).
+
+  Each new row runs through `ingest.ingest_note`, which already de-duplicates by message hash, and is marked Ingested. Ingest is cognee work, so it runs in the 15-minute loop, not at push time.
+- **Sources database.** Columns:
+  - Name (title).
+  - Kind (select: rss, newsletter, arxiv, interest).
+  - URL.
+  - Every (hours).
+  - Active (checkbox).
+  - CoS id.
+
+  Feeds map to `sources`, where the operator owns Active, Every, and URL, and a new row is added. Interest rows go through `tartt_control.add_interest` and `remove_interest`, and unticking Active removes the interest. The first push writes today's 6 feeds and current interests.
+
+### I6. Notices: Briefings and alerts
+
+- **Briefings database:** one page per day, titled with the date, written by `morning-briefing` (06:00) instead of posting to #briefing. The page body holds the existing `format_briefing` sections. Later morning loops append to that day's page instead of posting to #tasks:
+  - the N7 plan summary;
+  - the N8 Leads pull message;
+  - the outreach counts;
+  - the Higgins summary link.
+
+  The dashboard's attention callout links today's page.
+- **System notices:** a **System** callout on the dashboard lists the last 24 hours of warnings: failed loops, OKR pull warnings, sourcing shortfalls, and N9 refusals.
+- **Urgent alerts:** a comment on today's Briefing page that @-mentions the operator. A Notion comment mention is the only push notification Notion sends to the phone. Urgent means:
+  - a loop failed twice in a row;
+  - the daily spend ceiling was hit;
+  - a Notion sync refused an edit by someone other than the operator.
+
+  `notion_client.create_comment` is new (`POST /v1/comments`).
+
+### I7. Cutover
+
+1. **Dual-run (N-D27).** Each surface goes live in Notion while its Discord cog keeps working. The guarded functions make a decision count once, whichever surface it comes from.
+2. **Switch off Discord posting, per surface,** once that surface's verification step passes. A `discord_surfaces_off` list in `agents/discord_bot/config.py` (`task_tinder`, `gate0`, `rescore`, `outreach_today`, `briefing`, `tasks_posts`) stops the cog posting new cards or messages. Its slash commands and existing buttons still work until the cogs are removed.
+3. **What stays on Discord:** #approvals and the bot's #system online message.
+
+### Loops
+
+| Loop | When | What |
+|---|---|---|
+| `notion-leads-pull` (N8) | daily 05:30 | Also: Gate 0 pulls (I2), re-score and Parked (I3), touch defers (I4) |
+| `notion-leads-push` (N8) | daily 06:20 | Also: the Gate 0 window as Discovery rows, and S4, S5, and Re-score due |
+| `notion-inbox-sync` (new) | every 15 min (N-D28) | Inbox push and pull (I1), Outcomes and Capture import, Sources merge (I5) |
+| `morning-briefing` | daily 06:00 | Writes the Briefing page (I6) |
+
+### Schema
+
+No migration. Every new mapping is a `notion_sync` row. Deferred candidates re-surface through an `UPDATE task_candidates SET status = 'pending'` in the Inbox pull, with no DDL.
+
+### Verification
+
+1. **Pure tests:** each new schema module's projection and schema check; the merge and refusal rules, including an edit by a non-operator user; Inbox decisions both ways; Discovery-to-target re-keying; the Briefing page blocks; the urgent-alert rules.
+2. **DB tests** (temp tables, as in N7 and N8):
+   - An Inbox Accept creates one task, and a second pull does nothing.
+   - A Defer whose date has passed returns to `pending`.
+   - Approve on a Discovery row re-keys its `notion_sync` row to the target.
+   - An S4 change on a Re-score due target resolves its candidate.
+   - A touch-task Due move snoozes the touch, clamped to the window.
+3. **Runtime** (barry-agent, one surface at a time):
+   - **Inbox:** about 178 rows. Accepting one puts a task in To-Do within 20 minutes.
+   - **Gate 0:** the window appears as Discovery rows. Approving one with complete proposals starts its sequence the next morning, on the same row.
+   - **Re-score:** 34 rows show Re-score due.
+   - **Inputs:** an Outcome, a Capture, and a Source added in Notion reach Postgres within 15 minutes.
+   - **Briefing:** tomorrow's Briefing page exists by 06:05 and gains the plan and Leads lines.
+   - **Alerts:** a forced loop failure posts a mention comment.
+   - **Cutover:** each Discord surface stops posting once it's listed in `discord_surfaces_off`.
+
+---
+
 ## S2. Non-goals
 
 - **No outreach evidence or correspondence in Notion.** No evidence, sent or received messages, dossiers, or discoveries. *Amended by N8 (operator, 2026-11-12): outreach targets' company and contact details and their current templated message are in Leads, and outreach and inbound to-dos use real titles.*
-- **Notion decides nothing gated.** No approvals, sends, or publishes from Notion. `#approvals` (B2) stays the only gate. "Published" on an article is a status the operator sets, not an action.
+- **Notion decides nothing gated.** No approvals, sends, or publishes from Notion. `#approvals` (B2) stays the only gate, on Discord (N9 keeps it there, N-D23). Task Tinder, Gate 0, and re-score decisions move to Notion in N9; none of them sends anything to a third party. "Published" on an article is a status the operator sets, not an action.
 - **The CoS doesn't copy, index, or ingest drafts.** Drafts stay in Notion. Ingesting them into the brain is a later option.
-- **No Notion → Postgres sync beyond the owned fields:** OKR definitions, To-Do content (Task, Due, Initiative, Done; N-S17), Decision, and a plan page, read once per import (N7). Edits to mirrored fields in Notion, such as the dashboard databases, are overwritten.
+- **No Notion → Postgres sync beyond the owned fields:** OKR definitions, To-Do content (Task, Due, Initiative, Done; N-S17), Decision, a plan page read once per import (N7), the Leads fields N8 lists, and the N9 decision and input columns. Edits to mirrored fields in Notion, such as the dashboard databases, are overwritten.
 - **No Notion MCP in the CoS runtime.** Scheduled jobs use the REST client so they stay in the ledger. The operator's claude.ai connector is separate.
 - **No webhooks in v1.** Polling meets every latency target without a new public endpoint.
 - **Notion content as context for Keeley is deferred.** The operator wants Keeley to use Notion content as context, but has not chosen a method. Ingesting it into the knowledge base (cognee) is *not* assumed. Nothing in N1–N6 reads Notion page content for an agent. (Operator, 2026-10-16.)
@@ -703,6 +899,20 @@ None for N8 (2026-11-12). The decisions N-S19 accepted, for reference:
 | N-D22 | S2 size-fit points. | **10–100 = 5, 101–250 = 3, unknown = 3, other = 1** (R3). |
 | N-D19 | Should the Leads rows include `dropped`, `opted_out`, and parked targets, or only active ones? | **All.** Marking, not deleting, is the point (operator, 2026-11-12). The Leads default view can filter them out. |
 
+### Open (N9, 2026-11-12)
+
+Each has a recommended default; accepting N9 accepts the defaults unless the operator says otherwise.
+
+| # | Question | Recommended default |
+|---|---|---|
+| N-D23 | Move #approvals (B2) to Notion too? | **No.** It is the only gate on third-party actions, its security rests on Discord identity and 2FA, and it carries no real items yet. Revisit if an outbound item type is built. |
+| N-D24 | Take pulled decisions only from the operator's Notion user (`last_edited_by`)? | **Yes.** One id recorded at setup; other editors' changes are refused and reported. |
+| N-D25 | Must a touch defer carry a note, as the Discord modal required (R3)? | **No.** The note is Leads Next step if set, else "Due moved in Notion to <date>". |
+| N-D26 | Port `/recall`? | **No.** Use Claude with the CoS's read-only brain tools; a polled Notion question row would answer minutes later. |
+| N-D27 | Run Discord and Notion side by side before switching each Discord surface off? | **Yes,** per surface, until its runtime check passes. Guarded writes make double decisions harmless. |
+| N-D28 | How often does the Inbox, Outcomes, Capture, and Sources loop run? | **Every 15 minutes.** Leads-based decisions stay daily (N8). |
+| N-D29 | Should a deferred Task Tinder item come back when its Defer until date passes? | **Yes.** Today a deferral never re-surfaces. |
+
 ## Risks and verify-before-build
 
 | Risk | Mitigation |
@@ -719,4 +929,8 @@ None for N8 (2026-11-12). The decisions N-S19 accepted, for reference:
 | A target set to Opted out or Not a fit already has an unsent Gmail draft from `outreach-gmail-draft`. | The pull skips its unsent touches, so no new drafts are made. `agents/outreach/gmail.py` can't delete a draft (checked in the build), so the #tasks message names the company whose draft to delete. |
 | Discovery re-sources an opted-out company as a new candidate. | Settled in the build: discoveries are unique by domain, the research agent excludes every target's domain, and Gate 0 now hides any discovery whose domain is already a target in any status. |
 | A Start on set after 05:30 waits a day. | Accepted: the operator asked for a daily sync. `--date` and a manual run cover urgent starts. |
+| A Notion poll replaces an instant Discord button (N9). | Accepted: Inbox and inputs within 15 minutes, Leads decisions daily (operator, 2026-11-12). |
+| Someone else in the workspace edits a decision column (N9). | N-D24: decisions are taken only from the operator's Notion user. |
+| The operator misses an urgent alert once #system stops being primary (N9). | Urgent alerts @-mention the operator in a Notion comment, which pushes to the phone. Verify at build that a comment by the integration that mentions a user sends that user a notification. |
+| The 178-row Inbox backlog is too long to triage in Notion (N9). | The default view sorts by confidence and groups by source; a later step can bulk-decline stale discovery items. |
 | The operator edits a mirrored field in Notion. | The next push overwrites it (S2). Each database's description says which fields are yours. |
