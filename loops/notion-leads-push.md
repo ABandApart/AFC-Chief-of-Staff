@@ -2,7 +2,7 @@
 name: notion-leads-push
 schedule: "20 6 * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.notion.leads_sync push
 description: Mirror every outreach target to the Notion Leads database (PRD-notion-integration.md N8).
 ---
@@ -18,7 +18,8 @@ taken first.
 
 **What activation starts:** nothing billable. About 1 Notion request per changed
 row (44 rows on 2026-11-12; the first run creates them all) and one `agent_runs`
-row (`function_label='leads_push'`). Ships `enabled: false`.
+row (`function_label='leads_push'`). Shipped `enabled: false`; enabled 2026-11-12
+on the operator's go-ahead.
 
 Health check any time:
 

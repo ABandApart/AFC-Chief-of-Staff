@@ -2,7 +2,7 @@
 name: notion-leads-pull
 schedule: "30 5 * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.notion.leads_sync pull
 description: Take Leads edits into Postgres, start the sequences scheduled with Start on, and create today's outreach tasks (PRD-notion-integration.md N8).
 ---
@@ -25,8 +25,8 @@ sequence started this morning has its first message the same day. Each run:
 
 **What activation starts:** nothing billable. A few SQL queries, one Leads query,
 and one `agent_runs` row (`agent_name='notion-sync'`, `function_label='leads_pull'`,
-`usd_cost=0`). Ships `enabled: false` per `loops/README.md`; enable after
-migration 0038, the Leads columns, and barry-agent's first push (`PHASE-NOTION-N8.md`).
+`usd_cost=0`). Shipped `enabled: false` per `loops/README.md` and was enabled 2026-11-12 on the
+operator's go-ahead, after migrations 0038 and 0039 and the Leads columns.
 
 Health check any time:
 
