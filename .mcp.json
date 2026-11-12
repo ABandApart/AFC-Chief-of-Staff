@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "afc-brain": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "agents.mcp.server"],
+      "cwd": "/Users/barry-agent/agents"
+    }
+  }
+}
