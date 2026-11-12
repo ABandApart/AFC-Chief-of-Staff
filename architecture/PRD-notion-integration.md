@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.3, 2026-11-12: N8 (outreach leads in Notion) specified, not yet accepted; it reverses containment for outreach targets by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.3, 2026-11-12: N8 (outreach leads in Notion, and a wider intake) specified, not yet accepted; it reverses containment for outreach targets and drops funding stage as an outreach criterion, by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -43,7 +43,7 @@ When N1–N7 are done:
 6. **Writing:** each article has exactly one page. The page's header block names the latest draft and its status. Each draft sits under a toggle H2 that carries its revision number. Claude in claude.ai can read an article page and add a new draft that follows this convention, using only the instructions page.
 7. **Containment:** no evidence text, sent or received email body, or meeting transcript text reaches Notion, and no prospect data except the outreach target fields N8 lists. *Amended by N8 (operator, 2026-11-12): outreach targets and their current templated message are copied to Leads, and outreach and inbound to-dos use real titles.*
 8. **Daily plan:** by 06:05 each plan weekday, that day's plan items are open tasks with due date today. Every unfinished non-standing item from earlier days has moved to today. Within 5 minutes they're in the To-Do database and #tasks. The dashboard's Daily plan view shows the prior four plan days and today, and #tasks has the 3-line summary.
-9. **Outreach leads:** by 06:30 each day, every outreach target is a Leads row whose fields match Postgres. A Status, Stage, Function state, or Start on set in Notion by 05:30 is in Postgres that morning. A ready candidate whose Start on is today is `in_sequence`, with its task in To-Do and its message in Leads.
+9. **Outreach leads:** by 06:30 each day, every outreach target is a Leads row whose fields match Postgres. A Status, Stage, Function state, or Start on set in Notion by 05:30 is in Postgres that morning. A ready candidate whose Start on is today is `in_sequence`, with its task in To-Do and its message in Leads. No gate requires a funding stage, and Gate 0 shows every verified discovery that passed its checks.
 
 ## Architecture
 
@@ -475,11 +475,13 @@ The next To-Do sync, within 5 minutes, pushes the new tasks and Due changes to N
 
 ---
 
-## N8 — Outreach leads in Notion
+## N8 — Outreach leads in Notion, and a wider intake
 
 **Outcome:** S1.9. Added 2026-11-12 (rev 2.3). **Not yet accepted.**
 
 **Why.** The operator works from Notion, but every outreach contact is visible only in Discord. NocoDB, the intended work surface (`35-outreach-crm.md` §9), isn't running. Starting a sequence needs a Discord click (Gate 1, "Work this"). The operator wants outreach targets, with their company background and current message, in the Leads database, and wants to start a sequence by scheduling it there, so the whole loop runs on the Mac Mini.
+
+Too few prospects reach the daily outreach list (operator, 2026-11-12). On 2026-11-12, 188 of 206 unreviewed discoveries had no proposed scores and so never reached Gate 0, and 20 accepted targets were stuck as candidates with no stage. Funding stage is also a hard requirement, which fits startups, not the operator's ICP of services firms with 10–250 staff. N8 therefore also removes funding stage as a criterion and widens Gate 0 (requirements R1–R5).
 
 **This reverses containment (S1.7, S2, N-S11) for outreach targets (operator, 2026-11-12).** A copy of each target's company and contact details, and its current templated message, is stored in Notion. Postgres stays the system of record. Evidence, sent message bodies, replies, and transcripts stay in Postgres.
 
@@ -490,6 +492,7 @@ The next To-Do sync, within 5 minutes, pushes the new tasks and Due changes to N
   - A daily pull of Status, Start on, Stage, and Function state.
   - Sequence start from Start on, with a task on that day's list.
   - Real titles for outreach and inbound to-dos.
+  - Funding stage removed as a requirement, S2 redefined as size fit, and Gate 0 opened to verified rows without proposed scores (R1–R5).
 - **Out:**
   - Inbound `prospects` without a target row. Roy Kent already creates a target for leads scoring 0.7 or higher.
   - The 264 `outreach_discoveries`. Gate 0 stays in Discord.
@@ -510,9 +513,9 @@ Existing columns keep their meaning. Docent rows are unchanged, and the Docent p
 | Website | url (new) | CoS | `company_url`, or `https://` + `company_domain` |
 | LinkedIn | url (new) | CoS | `contact_linkedin_url` |
 | Background | text (new) | CoS | One line from the firmographic columns (migration 0024): sector, headcount, HQ, ownership, funding total and last round, founded year |
-| Stage | select (new) | **Operator** while `candidate`, then CoS | `seed`, `series_a`, `series_b_plus`, `mature` |
+| Stage | select (new) | **Operator** while `candidate`, then CoS | `seed`, `series_a`, `series_b_plus`, `mature`, or empty. Optional and informational (R1). |
 | Function state | select (new) | **Operator** while `candidate`, then CoS | `self_covered`, `under_led`, `vacant_seat` |
-| Ready to start | checkbox (new) | CoS | No `work_blocks` reason and capacity free |
+| Ready to start | checkbox (new) | CoS | Function state set and capacity free (R1) |
 | Start on | date (new) | **Operator** | The day the sequence should start |
 | Status | status | **Operator** for the after-contact values, CoS otherwise | See the status map |
 | Last contacted | date (new) | CoS | Latest `outreach_touches.sent_at` |
@@ -521,6 +524,43 @@ Existing columns keep their meaning. Docent rows are unchanged, and the Docent p
 | Message ready | checkbox (new) | CoS | The packet's `ready` |
 | CoS id | number (new) | CoS | `outreach_targets.id` |
 | Notes, Next step | existing | Operator | Never written by the CoS |
+
+### Getting more prospects onto the list (R1–R5)
+
+The gates before this change, for reference. A prospect reaches the daily list only by passing all four:
+
+1. **Sourcing:** `outreach-discover` (daily 05:00: news queries and Apollo, 10–250 staff) or `outreach-sourcing` (the research agent, disabled since 2026-10-07; the only source of proposed scores).
+2. **Gate 0:** unreviewed, verified (two kinds, or evidence from two domains), no failed checks, and proposed stage, function state, and S2–S5. Up to 25 a day, by ICP fit.
+3. **Approval and start:** stage and function state set, capacity free.
+4. **Daily list:** a touch whose window is open and isn't sent, skipped, or snoozed.
+
+**R1. Funding stage is not a criterion (operator, 2026-11-12).**
+- Migration 0038 replaces `outreach_targets_seq_ck` so `in_sequence` requires only `function_state` and `sequence_started_at`. `stage` stays as an optional, informational column, and its value CHECK stays.
+- `outreach_intake.work_blocks` checks only `function_state`.
+- `outreach_discovery.REQUIRED_PROPOSALS` drops `stage`.
+- The research agent's dossier schema makes `stage` optional, and its prompt stops asking it to infer a funding stage for firms with no funding history.
+
+**R2. Slot 1 doesn't depend on stage.** `selector.select` uses a new `any` rule set for slot 1 when `stage` is NULL, and `config/outreach/selector.yaml` defines it:
+- an open req (`open_role_age_min: 1`) → `template-03-problem-specific-open`;
+- otherwise → `template-07-value-first-noask`.
+
+Both are already slot-1 templates in the Seed rules and neither rule needs a funding trigger. Targets that have a stage keep their current rules. `arithmetic.yaml`'s `visible_vacancy_days` is unchanged. The operator reviews both templates' copy for startup framing before deploy (N-D21).
+
+**R3. S2 measures size fit, not stage fit.**
+- S2 is computed, not proposed: from `outreach_targets.headcount`, or from the discovery's `headcount_band` through `icp.parse_headcount`.
+- Points (N-D22): 10–100 staff = 5, 101–250 = 3, unknown = 3, 1–9 or over 250 = 1. This follows `icp._HEADCOUNT_BANDS`, where unknown scores mid.
+- The column keeps its name, `s2_stage_fit`, so `v_outreach_scored`, `rescore.py`, and the CHECK don't change. Migration 0038 updates its COMMENT to say it holds size fit. Migration 0038 also recomputes S2 for existing targets in SQL from `headcount` (19 of 44 have one on 2026-11-12; the rest score 3 as unknown).
+- The 25-point score and the work (≥20) and watch (≥14) labels keep their thresholds.
+
+**R4. Gate 0 shows verified rows without proposed scores.**
+- `_eligible` drops `proposed_scores IS NOT NULL`. The verification bar and the failed-checks rule stay.
+- Approving a row with complete proposals works as now: one click accepts, promotes, and starts the sequence.
+- Approving a row without them accepts and promotes it as a `candidate` with S2 computed, and doesn't start it. It appears in Leads the next morning. The operator sets Function state (and S3–S5 if they want a score) and Start on there.
+- On 2026-11-12 this raises today's eligible rows from 15 to 22. The larger gain needs R5.
+
+**R5. Verification and scores for the rest of the pool.** 181 unreviewed rows don't meet the verification bar, including all 106 news-query rows. The research agent verifies stuck rows before researching new firms, but it ships disabled until its V6 probe passes. N8 runs V6, a `--dry-run` reviewed by the operator for accuracy and cost per candidate, and enables `outreach-sourcing` if the operator accepts it (N-D20). It stays within the $20/day outreach ceiling.
+
+**The 20 stuck targets.** After R1 each needs only a Function state, which the operator sets in Leads.
 
 ### Status map
 
@@ -563,6 +603,8 @@ Both new loops write an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=
 ### Schema (migration 0038)
 
 - `outreach_targets.start_on DATE`: the pulled Start on. Kept as a column, not in `synced_fields`, so the pull's start step is one indexed query.
+- `outreach_targets_seq_ck` replaced: `in_sequence` requires `function_state` and `sequence_started_at`, not `stage` (R1).
+- `COMMENT ON COLUMN outreach_targets.s2_stage_fit`: size fit from headcount, and a one-time recompute of existing rows (R3).
 - No other DDL. `notion_sync` already maps any table.
 
 ### Verification
@@ -573,10 +615,15 @@ Both new loops write an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=
    - A target with no `function_state` stays `candidate` and is reported.
    - Opted out on an `in_sequence` target skips its unsent touches and keeps the row.
    - The separation guard still passes.
+   - A target with `function_state` and no `stage` can enter `in_sequence`, and its slot-1 touch resolves to T03 or T07 (R1, R2).
+   - Approving a verified discovery with no proposed scores creates a `candidate` with S2 computed, and starts nothing (R4).
+   - S2 for 50 staff, 180 staff, unknown, and 400 staff is 5, 3, 3, and 1 (R3).
 3. **Runtime** (barry-agent):
    - The first push creates 44 Leads rows. A Docent row's `last_edited_time` doesn't change.
    - Setting Stage, Function state, and Start on = tomorrow for one candidate: the next morning it's Contacted, the task is in To-Do and #tasks, the Gmail draft exists, and Message is filled.
    - Setting Opted out on another row: the next morning Postgres has `opted_out`, and the row is still in Leads.
+   - After deploy, Gate 0 shows the 22 eligible rows, and one of the 20 stuck targets starts after only Function state and Start on are set.
+   - The V6 dry run's report is posted for the operator (R5).
 
 ---
 
@@ -624,6 +671,9 @@ N8 (2026-11-12). Each has a recommended default; accepting N8 accepts the defaul
 |---|---|---|
 | N-D17 | Should touches 2–5 also become tasks on the day each is due, so the To-Do list holds all outreach work? Today they appear only in the outreach briefing and as Gmail drafts. | **Yes.** `notion-leads-pull` creates a task the morning a touch is due. Ticking it Done doesn't mark the touch sent; Gmail send capture still does that. |
 | N-D18 | Do outreach task follow-ups get a deadline? | **No (NULL)**, as for plan tasks (N-D15), so Follow-ups closed on time keeps its meaning. The touch window is already tracked on `outreach_touches`. |
+| N-D20 | Enable the research agent (`outreach-sourcing`) after its V6 dry run? It's the only path that verifies the 181 rows below the bar. | **Yes, if the operator accepts the V6 report** on accuracy and cost per candidate. Otherwise it stays disabled and Gate 0 gets only R4's gain. |
+| N-D21 | Slot-1 template for a target with no stage. | **T03 with an open req, T07 otherwise** (R2), after the operator reviews their copy for startup framing. |
+| N-D22 | S2 size-fit points. | **10–100 = 5, 101–250 = 3, unknown = 3, other = 1** (R3). |
 | N-D19 | Should the Leads rows include `dropped`, `opted_out`, and parked targets, or only active ones? | **All.** Marking, not deleting, is the point (operator, 2026-11-12). The Leads default view can filter them out. |
 
 ## Risks and verify-before-build
