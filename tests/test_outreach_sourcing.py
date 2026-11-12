@@ -319,13 +319,28 @@ ROOM = {"cold_live": 10, "cold_ceiling": 150, "reengagement_live": 0,
         "reengagement_ceiling": 3}
 
 
-def test_approval_blocks_missing_proposals_and_full_capacity():
+def test_approval_blocks_only_a_start_over_capacity():
     assert outreach_discovery.approval_blocks({"proposed_scores": SCORES}, ROOM) is None
-    missing = outreach_discovery.approval_blocks({"proposed_scores": None}, ROOM)
-    assert "not proposed its scores" in missing and "Defer" in missing
-    full = outreach_discovery.approval_blocks({"proposed_scores": SCORES},
-                                              {**ROOM, "cold_live": 150})
-    assert "150/150" in full
+    # A row without proposals is accepted as a candidate (N8 R4), so it never
+    # needs a capacity slot.
+    full = {**ROOM, "cold_live": 150}
+    assert outreach_discovery.approval_blocks({"proposed_scores": None}, full) is None
+    assert "150/150" in outreach_discovery.approval_blocks({"proposed_scores": SCORES}, full)
+
+
+def test_stage_and_s2_are_not_required_proposals():
+    no_stage = {k: v for k, v in SCORES.items() if k not in ("stage", "s2_stage_fit")}
+    assert outreach_discovery.proposals_complete({"proposed_scores": no_stage})
+    assert not outreach_discovery.proposals_complete(
+        {"proposed_scores": {**no_stage, "function_state": None}})
+
+
+def test_proposal_updates_skip_empty_values_and_bad_stages():
+    row = {"proposed_scores": {**SCORES, "stage": "pre_seed", "s4_leadership_gap": None}}
+    updates = outreach_discovery.proposal_updates(row)
+    assert "stage" not in updates and "s4_leadership_gap" not in updates
+    assert "s2_stage_fit" not in updates            # computed at promote (R3)
+    assert updates["function_state"] == "self_covered"
 
 
 def _approve_harness(mocker, row, capacity=ROOM):
@@ -378,12 +393,17 @@ def test_a_blocked_approval_changes_nothing(mocker):
     conn.transaction.assert_not_called()
 
 
-def test_a_legacy_row_without_proposals_is_refused_not_stranded(mocker):
+def test_a_row_without_proposals_becomes_a_candidate_without_a_sequence(mocker):
+    # N8 R4: accepted and promoted; the operator completes it in Leads.
     row = {"id": 1, "company_name": "Acme", "reviewed_at": None, "proposed_scores": None}
-    _conn, _cur, decide, promote, _work = _approve_harness(mocker, row)
+    _conn, _cur, decide, promote, work = _approve_harness(
+        mocker, row, {**ROOM, "cold_live": 150})
     result = outreach_discovery.approve(1)
-    assert result["accepted"] is False and "Defer" in result["blocked"]
-    decide.assert_not_called()
+    assert result["accepted"] is True and result["started"] is False
+    assert "Leads" in result["blocked"]
+    decide.assert_called_once()
+    promote.assert_called_once()
+    work.assert_not_called()
 
 
 def test_approve_is_a_noop_when_already_decided(mocker):
@@ -664,13 +684,15 @@ def test_site_refusing_a_bot_still_counts_as_live(mocker, code, live):
     assert checks.default_site_is_live("x.com") is live
 
 
-def test_unscored_rows_are_never_surfaced(mocker):
+def test_unscored_rows_are_surfaced(mocker):
+    # N8 R4: verification is the bar; proposed scores are not.
     conn = mocker.MagicMock()
     cur = mocker.MagicMock()
     cur.fetchall.return_value = []
     conn.cursor.return_value.__enter__.return_value = cur
     outreach_discovery._eligible(conn)
-    assert "proposed_scores IS NOT NULL" in cur.execute.call_args.args[0]
+    sql = cur.execute.call_args.args[0]
+    assert "proposed_scores IS NOT NULL" not in sql and "check_failures" in sql
 
 
 def test_passes_beyond_the_target_are_held_not_surfaced(mocker):
@@ -711,3 +733,10 @@ def test_released_rows_count_toward_todays_target(mocker):
     state = run.run(dry_run=False, ignore_deadline=True)
     assert state.passed == 15 and state.stop_reason == "target_met"
     process.assert_not_called()                 # nothing to research today
+
+
+def test_a_dossier_without_a_stage_passes_the_checks():
+    # N8 R1: stage is optional and never inferred.
+    d = good_dossier()
+    d["proposed"] = {**d["proposed"], "stage": None}
+    assert "bad_proposals" not in checks.proposal_failures(d)

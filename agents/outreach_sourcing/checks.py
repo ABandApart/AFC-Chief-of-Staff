@@ -42,7 +42,7 @@ def proposal_failures(dossier: dict[str, Any]) -> list[str]:
     proposed = dossier.get("proposed") or {}
     scores_ok = all(proposed.get(k) in vocab.SCORE_VALUES for k in (
         "s2_stage_fit", "s3_sector_match", "s4_leadership_gap", "s5_team_build_below"))
-    if not (scores_ok and proposed.get("stage") in vocab.STAGES
+    if not (scores_ok and proposed.get("stage") in (*vocab.STAGES, None)
             and proposed.get("function_state") in vocab.FUNCTION_STATES):
         failures.append("bad_proposals")
     contact = dossier.get("contact") or {}

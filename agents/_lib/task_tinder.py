@@ -276,3 +276,43 @@ def create_plan_task(*, plan_item_id: int, title: str, owner: str, due_date: Any
         task_id = cur.fetchone()[0]
         cur.execute("UPDATE plan_items SET task_id = %s WHERE id = %s", (task_id, plan_item_id))
     return task_id
+
+
+# An outreach touch's task (N8). Its candidate is created already accepted, so the
+# To-Do sync gives it Source `outreach` and the Task Tinder queue never shows it.
+OUTREACH_TOUCH_SOURCE = "outreach_touch"
+
+
+def create_outreach_task(*, touch_id: int, title: str, owner: str, due_date: Any,
+                         evidence: str) -> int | None:
+    """Create the accepted candidate, follow-up, and task for one outreach touch
+    (N8, N-D17), in one transaction. The follow-up has no deadline (N-D18), so
+    outreach tasks don't count toward Follow-ups closed on time. Returns the task
+    id, or None if the touch already has a task (a re-run) or doesn't exist. It
+    lives here so this module stays the only writer of `tasks` rows."""
+    ref = f"touch:{touch_id}"
+    with db.connection() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("SELECT id FROM outreach_touches WHERE id = %s FOR UPDATE", (touch_id,))
+        if cur.fetchone() is None:
+            return None
+        cur.execute("SELECT 1 FROM task_candidates WHERE source_type = %s AND source_ref = %s",
+                    (OUTREACH_TOUCH_SOURCE, ref))
+        if cur.fetchone() is not None:
+            return None
+        cur.execute(
+            "INSERT INTO task_candidates (proposed_action, source_type, source_ref, "
+            "                             evidence_text, confidence, status, decided_at, "
+            "                             due_date) "
+            "VALUES (%s, %s, %s, %s, 1.0, 'accepted', now(), %s) RETURNING id",
+            (title, OUTREACH_TOUCH_SOURCE, ref, evidence, due_date))
+        candidate_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO follow_ups (owner, action, status, escalation_level) "
+            "VALUES (%s, %s, 'open', 0) RETURNING id", (owner, title))
+        follow_up_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO tasks (title, description, owner, source_candidate_id, status, "
+            "                   follow_up_id, due_date) "
+            "VALUES (%s, %s, %s, %s, 'open', %s, %s) RETURNING id",
+            (title, evidence, owner, candidate_id, follow_up_id, due_date))
+        return cur.fetchone()[0]

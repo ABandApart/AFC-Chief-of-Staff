@@ -126,6 +126,15 @@ slots:
           because: "Search running 60+ days — T19's stated condition"
         - default: template-17-scale-transition
           because: "Outgrown how the function ran at Series A (T17)"
+      # No stage (N8 R2, operator 2026-11-12): funding stage isn't a criterion,
+      # because the ICP is services firms, not startups. Neither rule needs a
+      # funding trigger.
+      any:
+        - when: {open_role_age_min: 1}
+          template: template-03-problem-specific-open
+          because: "An open req is a public signal exposing an unowned function (T03)"
+        - default: template-07-value-first-noask
+          because: "No trigger evidence yet; T07 is the no-ask entry slot 1 calls for"
     # Offered on the intake card, never auto-selected: each needs something only
     # the operator knows they have.
     alternates:

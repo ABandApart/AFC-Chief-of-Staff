@@ -58,6 +58,10 @@ Rules:
   can only infer an email from a pattern, set method to pattern_inferred. If only a
   generic inbox exists (info@, hello@), use generic_inbox. Never invent a person.
 - Proposed scores use 1, 3 or 5 only. Explain them briefly in `reasons`.
+- Funding stage is not a criterion. Set `stage` only when your sources document
+  the firm's funding rounds; otherwise set it to null. Never infer a funding stage
+  for a services firm. Propose s2_stage_fit as 3: the CoS replaces it with a
+  size score from headcount.
 - `summary` is 3 to 5 plain sentences for Barry: what the firm does, why it might
   buy, and the risk in that reading. `suggested_angle` is one sentence he may use
   when writing to them himself; it is never sent as-is.

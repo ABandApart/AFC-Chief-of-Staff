@@ -310,9 +310,11 @@ def approval_message(result: dict) -> str:
         return (f"✅ Approved **{name}** — outreach started "
                 f"({result.get('touches', 0)} touches scheduled; the first packet "
                 "and Gmail draft arrive with tomorrow's run).")
+    blocked = result.get("blocked", "unknown reason")
+    if blocked == outreach_discovery.NOT_STARTED:
+        return f"✅ Approved **{name}** and {blocked}."
     return (f"✅ Approved **{name}** and added it as a target, but the sequence did "
-            f"not start: {result.get('blocked', 'unknown reason')}. It is on the "
-            "Gate 1 card with its scores.")
+            f"not start: {blocked}. It is on the Gate 1 card with its scores.")
 
 
 def _selected(label: discord.ui.Label) -> str | None:

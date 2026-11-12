@@ -76,7 +76,8 @@ DOSSIER_SCHEMA: dict[str, Any] = _obj({
         "s3_sector_match": _SCORE,
         "s4_leadership_gap": _SCORE,
         "s5_team_build_below": _SCORE,
-        "stage": {"type": "string", "enum": list(STAGES)},
+        # Optional (N8 R1): only for a firm with a documented funding history.
+        "stage": _nullable({"type": "string", "enum": list(STAGES)}),
         "function_state": {"type": "string", "enum": list(FUNCTION_STATES)},
         "reasons": _STR,
     }),

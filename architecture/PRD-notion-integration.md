@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.3, 2026-11-12: N8 (outreach leads in Notion, and a wider intake) specified, not yet accepted; it reverses containment for outreach targets and drops funding stage as an outreach criterion, by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.3, 2026-11-12: N8 (outreach leads in Notion, and a wider intake) specified, accepted (N-S19), and BUILT on branch `notion-n8` (migration 0038 not yet applied; both loops shipped disabled); it reverses containment for outreach targets and drops funding stage as an outreach criterion, by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -477,7 +477,7 @@ The next To-Do sync, within 5 minutes, pushes the new tasks and Due changes to N
 
 ## N8 — Outreach leads in Notion, and a wider intake
 
-**Outcome:** S1.9. Added 2026-11-12 (rev 2.3). **Not yet accepted.**
+**Outcome:** S1.9. Added 2026-11-12 (rev 2.3). **Accepted 2026-11-12 with the recommended defaults (N-S19). Built 2026-11-12; see the build notes.**
 
 **Why.** The operator works from Notion, but every outreach contact is visible only in Discord. NocoDB, the intended work surface (`35-outreach-crm.md` §9), isn't running. Starting a sequence needs a Discord click (Gate 1, "Work this"). The operator wants outreach targets, with their company background and current message, in the Leads database, and wants to start a sequence by scheduling it there, so the whole loop runs on the Mac Mini.
 
@@ -587,18 +587,18 @@ The morning order matters, because `outreach-daily` (05:45) builds packets only 
    1. Checks that the Leads columns exist. A missing column fails the run and posts to #system.
    2. Pulls Status, Start on, Stage, and Function state for every row with a CoS id. Each field merges against `notion_sync.synced_fields`, as in N-S17: a Notion change is applied, and when both sides changed, Notion wins. A Status the operator can't set (New, Contacted, Parked) is rejected and reported, and the next push restores it. Stage and Function state are taken only while the target is `candidate`.
    3. Starts each sequence whose Start on is today or earlier and whose target is `candidate`. It calls `outreach_intake.decide(id, "work")`, which runs the readiness and capacity checks, sets `in_sequence`, and creates the five touches in one transaction. A target that isn't ready stays `candidate` and is reported with its reason.
-   4. For each started sequence, `task_tinder.create_outreach_task(...)` creates a task and follow-up in one transaction: title `Outreach: <company>, send touch <n>`, Due = that touch's `due_date` (or today, if later), Source `outreach`. It goes through a `task_candidates` row with `source_type = 'outreach_start'`, created already accepted, so the To-Do sync's Source mapping and the separation guard still hold. Under N-D17's default, the same step also creates a task each morning a later touch (2–5) is due.
-   5. Writes are made with `app.actor = 'notion'`, so `outreach_events` attributes them.
+   4. For each touch whose window is open and that has no task yet (N-D17), `task_tinder.create_outreach_task(...)` creates a task and follow-up in one transaction: title `Outreach: <company>, send touch <n>`, Due = that touch's `due_date` (or today, if later), Source `outreach`. It goes through a `task_candidates` row with `source_type = 'outreach_touch'` and `source_ref = 'touch:<id>'`, created already accepted, so the To-Do sync's Source mapping and the separation guard still hold.
+   5. `outreach_events` records each change with the old and new values, under the runtime role (its trigger uses `session_user`).
 2. **`outreach-daily` (05:45) and `outreach-gmail-draft` (06:00)** run unchanged, now including the new sequences.
 3. **`notion-leads-push`, daily 06:20.** Creates or updates one Leads row per target, hash-skipping unchanged rows (`notion_sync.entity_table = 'outreach_targets'`). It writes only CoS-written columns, so Notes and Next step are never touched.
-4. **`notion-plan-daily` (06:00)** adds one line to its #tasks summary when sequences started: `Outreach: 2 sequences started · 1 not ready (Acme: no function_state)`.
+4. **#tasks:** the pull posts one short message when something needs the operator: sequences started, starts refused, Leads values refused, or Gmail drafts to delete. *(Build change: the spec had `notion-plan-daily` add this line, but that loop posts only on plan days, and the pull holds the details.)*
 
 Both new loops write an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=0`).
 
 ### To-Do changes
 
 - **Real titles for outreach and inbound to-dos.** `NEUTRAL_TITLES` is removed, which reverses N-D9 and N-S11. The first sync after deploy rewrites those rows' titles, and from then on their titles merge under N-S17 like any other.
-- **Source:** `outreach_start` maps to the existing `outreach` option.
+- **Source:** `outreach_touch` maps to the existing `outreach` option.
 
 ### Schema (migration 0038)
 
@@ -624,6 +624,29 @@ Both new loops write an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=
    - Setting Opted out on another row: the next morning Postgres has `opted_out`, and the row is still in Leads.
    - After deploy, Gate 0 shows the 22 eligible rows, and one of the 20 stuck targets starts after only Function state and Start on are set.
    - The V6 dry run's report is posted for the operator (R5).
+
+**Build notes (2026-11-12):**
+- **Migration 0038** (`outreach_targets.start_on` and its index, `outreach_targets_seq_ck` without `stage`, S2 recompute, column comments; `verify_schema.sql` checks it). Not yet applied.
+- **R1–R4:**
+  - `outreach_intake.work_blocks` checks only `function_state`.
+  - `selector.select` uses slot 1's `any` rule set when `stage` is NULL, and `selector.yaml` defines it (T03 with an open req, T07 otherwise).
+  - `outreach_discovery`: `REQUIRED_PROPOSALS` is Function state and S3–S5; `approval_blocks` checks capacity only for a row that would start; `approve` copies whatever proposals exist and, without a complete set, returns `started: False` with a pointer to Leads; `promote` sets S2 from the discovery's `headcount_band` (`outreach.size_fit_from_band`).
+  - The research agent's dossier makes `stage` nullable, and its prompt says not to infer a funding stage.
+  - Gate 0 also excludes any discovery whose domain is already a target, in any status, so an opted-out firm isn't offered again. This settles the verify-before-build risk.
+- **Re-anchoring (build addition).** Every candidate on 2026-11-12 had a trigger from Aug 21 to Sep 1, so a Start on in November would have opened with slots 1–4 already closed. The pull re-anchors `trigger_date` on the start day when slot 1's window has closed, the rule migration 0023 set for Gate 0 approvals. The original trigger kind and source URL stay.
+- **Leads:** `agents/notion/leads_schema.py` (pure) and `agents/notion/leads_sync.py` (`pull`, `push`, `--dry-run`, `--date`). `DATABASE_ID` is the Leads database id; the sync fails before writing anything if a column or option in `leads_schema.COLUMNS` and `OPTIONS` is missing.
+- **Tasks:** `task_tinder.create_outreach_task` locks the touch, so a re-run creates nothing. The first pull after deploy also creates tasks for the open touches of the 11 sequences already running.
+- **To-Do:** `NEUTRAL_TITLES` removed. A row that still shows a neutral title has no agreed title, so its first sync pushes the real title rather than pulling the neutral phrase into Postgres (`todo_schema.replaces_neutral_title`).
+- **Gmail drafts:** `agents/outreach/gmail.py` can't delete a draft, so an ended sequence with an unsent draft is named in the #tasks message.
+- **Audit:** the `outreach_events` trigger records `session_user`, not an application actor, so pulled changes appear under the runtime role with their old and new values.
+- **Loops:** `notion-leads-pull` (05:30 daily) and `notion-leads-push` (06:20 daily), both **shipped `enabled: false`**.
+- **Tests:** 1,323 pass, plus `test_leads_sync.py`'s DB test with `PLAN_TEST_DSN`. Updated tests pin the new rules: no stage needed, stage-free slot 1, Gate 0 showing unscored rows, approval without proposals, size fit, and real To-Do titles.
+- **Run on a copy of `aiadaptive_cos` with 0038 applied** (dropped afterwards):
+  - A stage-free candidate with Function state and Start on started on T07, and its trigger moved from Aug 25 to the start day. Its five touches run Nov 16 to Jan 30.
+  - A candidate without Function state was reported and left as a candidate.
+  - Touch tasks: 12 created, 0 on re-run.
+  - Opted out on a live sequence skipped its 5 unsent touches and named its Gmail draft.
+  - All 44 targets planned as Leads rows; 10 carry a message.
 
 ---
 
@@ -663,11 +686,13 @@ Both new loops write an `agent_runs` row (`agent_name='notion-sync'`, `usd_cost=
 | N-S18 | **The daily plan runs in the CoS (N7, operator 2026-11-11).** It replaces the claude.ai routine. The operator accepted the three recommended defaults: an unfinished standing item closes as `skipped` instead of carrying forward (N-D14); plan follow-ups have no deadline, so plan tasks don't count toward Follow-ups closed on time (N-D15); and the morning summary posts to #tasks (N-D16). |
 | N-S12 | `/todo` posts a Task Tinder card. It doesn't skip acceptance, because a new to-do may not be a priority yet (N-D10). |
 
+| N-S19 | **Outreach leads in Notion, and a wider intake (N8, operator 2026-11-12).** Outreach targets are mirrored to Leads daily; the operator sets Status, Start on, Stage, and Function state there; Start on starts a sequence. Funding stage is not an outreach criterion, S2 is size fit, and Gate 0 shows verified rows without proposed scores. Reverses containment for outreach targets (S1.7, S2) and N-S11. Accepted with the defaults below: N-D17 yes, N-D18 no deadline, N-D19 all rows, N-D20 enable after V6 if the operator accepts it, N-D21 T03/T07 after copy review, N-D22 the R3 points. |
+
 ### Open
 
-N8 (2026-11-12). Each has a recommended default; accepting N8 accepts the defaults unless the operator says otherwise.
+None for N8 (2026-11-12). The decisions N-S19 accepted, for reference:
 
-| # | Question | Recommended default |
+| # | Question | Accepted default |
 |---|---|---|
 | N-D17 | Should touches 2–5 also become tasks on the day each is due, so the To-Do list holds all outreach work? Today they appear only in the outreach briefing and as Gmail drafts. | **Yes.** `notion-leads-pull` creates a task the morning a touch is due. Ticking it Done doesn't mark the touch sent; Gmail send capture still does that. |
 | N-D18 | Do outreach task follow-ups get a deadline? | **No (NULL)**, as for plan tasks (N-D15), so Follow-ups closed on time keeps its meaning. The touch window is already tracked on `outreach_touches`. |
@@ -689,7 +714,7 @@ N8 (2026-11-12). Each has a recommended default; accepting N8 accepts the defaul
 | A future plan page drifts from the import format. | The importer fails with a list of what it couldn't read, rather than importing part of the plan. Its dry run checks the totals against the page. |
 | The external routine keeps writing to the dashboard until cutover. | Until it's turned off, it must edit only its own blocks and never replace the page's content: a full rewrite would recreate the 20 blocks and views the weekly push updates by id, and could delete the three inline databases. It must also not add rows to the To-Do database, where each row becomes a task (N-S17). |
 | Outreach contact data is copied to Notion, a third-party service (reverses the B3 posture for this data). | Operator decision 2026-11-12. Only the fields in the N8 table go. A GDPR erasure is handled by hand on both sides. |
-| A target set to Opted out or Not a fit already has an unsent Gmail draft from `outreach-gmail-draft`. | The pull skips its unsent touches, so no new drafts are made. Verify before build whether `agents/outreach/gmail.py` can delete the existing draft; if not, the #tasks line names the draft to delete. |
-| Discovery re-sources an opted-out company as a new candidate. | Verify before build that discovery's domain dedupe matches `outreach_targets` rows in every status, including `opted_out`. |
+| A target set to Opted out or Not a fit already has an unsent Gmail draft from `outreach-gmail-draft`. | The pull skips its unsent touches, so no new drafts are made. `agents/outreach/gmail.py` can't delete a draft (checked in the build), so the #tasks message names the company whose draft to delete. |
+| Discovery re-sources an opted-out company as a new candidate. | Settled in the build: discoveries are unique by domain, the research agent excludes every target's domain, and Gate 0 now hides any discovery whose domain is already a target in any status. |
 | A Start on set after 05:30 waits a day. | Accepted: the operator asked for a daily sync. `--date` and a manual run cover urgent starts. |
 | The operator edits a mirrored field in Notion. | The next push overwrites it (S2). Each database's description says which fields are yours. |

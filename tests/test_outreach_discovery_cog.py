@@ -632,3 +632,10 @@ def test_a_failed_edit_says_nothing_changed_rather_than_pretending(mocker):
     interaction.response.send_message = AsyncMock()
     asyncio.run(modal.on_submit(interaction))
     assert "nothing changed" in interaction.response.send_message.call_args[0][0].lower()
+
+
+def test_approval_message_for_a_candidate_without_proposals_points_at_leads():
+    from agents._lib import outreach_discovery
+    text = cog.approval_message({"company_name": "Acme", "accepted": True, "started": False,
+                                 "blocked": outreach_discovery.NOT_STARTED})
+    assert "Leads" in text and "Gate 1" not in text

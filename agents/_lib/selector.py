@@ -213,14 +213,19 @@ def _matches(when: dict[str, Any], facts: dict[str, Any]) -> bool:
     return True
 
 
+# The rule set a stage-specific slot uses for a target with no stage (N8 R2).
+ANY_STAGE = "any"
+
+
 def select(
     slot: int, stage: str | None, facts: dict[str, Any], config: dict[str, Any] | None = None
 ) -> Choice:
     """Resolve the template for one slot. First matching rule wins.
 
-    `stage` may be None (genuinely unknown — migration 0014 permits it), in
-    which case slot 1 has no stage-specific rule set and this raises. Slots 2–5
-    are stage-independent, so they resolve regardless.
+    `stage` may be None: funding stage isn't an outreach criterion (N8 R1,
+    operator 2026-11-12), so a slot with stage-specific rules falls back to its
+    `any` rule set, and raises only if it has none. Slots 2–5 are
+    stage-independent, so they resolve regardless.
     """
     config = config if config is not None else _cached()[1]
     slots = config.get("slots") or {}
@@ -235,13 +240,16 @@ def select(
         alternates = (slot_config.get("alternates") or {}).get("all") or []
     else:
         if stage is None:
-            raise SelectorError(
-                f"slot {slot} is stage-specific and this target has no stage — "
-                "set one before sequencing (outreach_targets_seq_ck enforces this)"
-            )
-        # `mature` aliases onto series_b_plus rather than duplicating its rules
-        # (operator, 2026-08-14) — duplication would let the two diverge.
-        key = (config.get("stage_aliases") or {}).get(stage, stage)
+            if ANY_STAGE not in rules_by_stage:
+                raise SelectorError(
+                    f"slot {slot} is stage-specific, this target has no stage, and "
+                    f"the slot has no {ANY_STAGE!r} rule set"
+                )
+            key = ANY_STAGE
+        else:
+            # `mature` aliases onto series_b_plus rather than duplicating its rules
+            # (operator, 2026-08-14) — duplication would let the two diverge.
+            key = (config.get("stage_aliases") or {}).get(stage, stage)
         if key not in rules_by_stage:
             raise SelectorError(f"slot {slot}: no rules for stage {stage!r}")
         rules = rules_by_stage[key]

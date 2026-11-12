@@ -113,6 +113,8 @@ def plan(tasks: list[dict[str, Any]], pages: dict[str, dict[str, Any]],
         for name in todo.owned_fields(t):
             decision = todo.merge_field(pv[name], nv[name], before.get(name),
                                         has_agreed=name in before)
+            if decision == "pull" and name == "title" and todo.replaces_neutral_title(t, before):
+                decision = "push"
             if decision == "pull" and _hold(name, nv[name], initiatives):
                 decision = "hold"
             step.decisions[name] = decision

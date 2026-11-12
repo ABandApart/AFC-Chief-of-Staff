@@ -161,9 +161,12 @@ def _eligible(conn: object) -> list[dict[str, Any]]:
               AND (COALESCE(array_length(verified_on, 1), 0) >= %s
                    OR outreach_distinct_count(evidence_domains) >= %s)
               AND COALESCE(array_length(check_failures, 1), 0) = 0
-              -- Approval refuses a row without proposed scores, so do not show
-              -- one: it is a card the operator cannot act on (2026-10-06).
-              AND proposed_scores IS NOT NULL
+              -- Rows without proposed scores are shown too (N8 R4, 2026-11-12):
+              -- approving one adds a candidate the operator completes in Leads.
+              -- A firm that is already a target, in any status (opted out
+              -- included), is never offered again (N8).
+              AND NOT EXISTS (SELECT 1 FROM outreach_targets t
+                              WHERE t.company_domain = outreach_discoveries.company_domain)
             ORDER BY icp_fit_score DESC NULLS LAST, discovered_at
             """,
             (MIN_VERIFICATION_KINDS, MIN_VERIFICATION_KINDS),
@@ -734,25 +737,45 @@ def trigger_for(row: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-REQUIRED_PROPOSALS = ("stage", "function_state", "s2_stage_fit", "s3_sector_match",
-                      "s4_leadership_gap", "s5_team_build_below")
+# What a row needs for one-click approval to start its sequence. Stage is not
+# required (N8 R1) and S2 is computed from headcount (R3), not proposed.
+REQUIRED_PROPOSALS = ("function_state", "s3_sector_match", "s4_leadership_gap",
+                      "s5_team_build_below")
+# Proposed values copied to the target when present, complete or not.
+COPIED_PROPOSALS = ("stage", *REQUIRED_PROPOSALS)
+_STAGES = ("seed", "series_a", "series_b_plus", "mature")
+NOT_STARTED = ("added as a candidate without a sequence: set its Function state and "
+               "Start on in Notion Leads")
+
+
+def proposals_complete(row: dict[str, Any]) -> bool:
+    """Whether the row carries every proposal the one-click start needs (pure)."""
+    scores = row.get("proposed_scores") or {}
+    return all(scores.get(c) not in (None, "") for c in REQUIRED_PROPOSALS)
+
+
+def proposal_updates(row: dict[str, Any]) -> dict[str, Any]:
+    """The target columns to set from the row's proposals (pure). Omits empty
+    values and a stage outside the allowed set."""
+    scores = row.get("proposed_scores") or {}
+    out = {c: scores[c] for c in COPIED_PROPOSALS if scores.get(c) not in (None, "")}
+    if out.get("stage") not in _STAGES:
+        out.pop("stage", None)
+    return out
 
 
 def approval_blocks(row: dict[str, Any], capacity: dict[str, Any]) -> str | None:
     """Why this row cannot be approved right now, or None (pure).
 
     Checked BEFORE anything is written, so a refused approval changes nothing and
-    the card stays where the operator can act on it. Covers everything that would
-    otherwise strand a firm after acceptance: missing judgements (a row the
-    research agent has not completed yet) and a full live-sequence cap.
+    the card stays where the operator can act on it. Only a full live-sequence
+    cap blocks, and only for a row that would start. A row without complete
+    proposals is accepted as a candidate (N8 R4).
     """
     from agents._lib import outreach_intake  # local: intake imports packet
 
-    scores = row.get("proposed_scores") or {}
-    missing = [c for c in REQUIRED_PROPOSALS if scores.get(c) in (None, "")]
-    if missing:
-        return ("the sourcing agent has not proposed its scores yet (stage, function "
-                "state, S2-S5). Defer it; the agent completes these rows")
+    if not proposals_complete(row):
+        return None
     return outreach_intake.capacity_blocks(capacity, is_reengagement=False)
 
 
@@ -780,16 +803,16 @@ def approve(discovery_id: int, *, today: date | None = None) -> dict[str, Any] |
             return {"id": discovery_id, "accepted": False, "started": False,
                     "blocked": blocked, "company_name": row["company_name"]}
 
-        scores = row["proposed_scores"]
-        updates = {c: scores[c] for c in REQUIRED_PROPOSALS}
+        complete = proposals_complete(row)
+        updates = proposal_updates(row)
         with conn.transaction():
             if decide(discovery_id, "accept", conn=conn) is None:
                 return None                      # lost the race to another click
             target_id = promote(discovery_id, trigger_for(row), conn=conn)["target_id"]
-            assignments = ", ".join(f"{c} = %({c})s" for c in updates)
+            assignments = "".join(f"{c} = %({c})s, " for c in updates)
             with conn.cursor() as cur:
                 cur.execute(
-                    f"UPDATE outreach_targets SET {assignments}, "
+                    f"UPDATE outreach_targets SET {assignments}"
                     "signals_observed_at = CURRENT_DATE "
                     "WHERE id = %(target_id)s AND status = 'candidate'",
                     {**updates, "target_id": target_id},
@@ -803,6 +826,8 @@ def approve(discovery_id: int, *, today: date | None = None) -> dict[str, Any] |
 
     base = {"id": discovery_id, "target_id": target_id, "accepted": True,
             "company_name": row["company_name"]}
+    if not complete:
+        return {**base, "started": False, "blocked": NOT_STARTED}
     try:
         result = outreach_intake.decide(target_id, "work", today=today)
     except (outreach_intake.CapacityFullError, outreach_intake.NotReadyToWorkError) as exc:
@@ -896,9 +921,8 @@ def promote(discovery_id: int, trigger: dict[str, Any] | None = None, *,
             "careers_url": found["careers_url"],
             "sector": found["segment"],
             # Unknown, and deliberately not invented. 0014 made `stage`
-            # nullable rather than let an import fabricate one, and
-            # `outreach_targets_seq_ck` re-imposes it before sequencing -
-            # which is the only place stage is consumed.
+            # nullable rather than let an import fabricate one; since N8 R1
+            # sequencing doesn't need it either.
             "stage": None,
             "contact_name": found["contact_name"],
             "contact_role": found["contact_title"],
@@ -914,6 +938,11 @@ def promote(discovery_id: int, trigger: dict[str, Any] | None = None, *,
             "country": canonical_country(found.get("country")),
         })
         with conn.cursor() as cur:
+            # S2 is size fit, computed from headcount (N8 R3), never proposed.
+            cur.execute(
+                "UPDATE outreach_targets SET s2_stage_fit = %s WHERE id = %s",
+                (outreach.size_fit_from_band(found.get("headcount_band")), target["id"]),
+            )
             cur.execute(
                 "UPDATE outreach_discoveries SET promoted_target_id = %s "
                 "WHERE id = %s AND promoted_target_id IS NULL",

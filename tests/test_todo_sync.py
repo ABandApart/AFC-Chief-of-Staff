@@ -51,20 +51,19 @@ def test_projection_unassigned_and_unknown_source():
     assert props["Done"] == {"checkbox": True}
 
 
-def test_prospect_sources_never_send_their_real_title():
-    secret = "Follow up with Dana at Acme Corp about the Q1 pilot"
-    for source in todo.NEUTRAL_TITLES:
-        t = task(7, source=source, title=secret)
-        sent = todo.projection(t, done=False)["Task"]["title"][0]["text"]["content"]
-        assert secret not in sent and "Acme" not in sent and "Dana" not in sent
-        assert sent.endswith("· #7")
-    assert todo.title_for(task(7, source="operator", title="Renew domain")) == "Renew domain"
+def test_prospect_sources_send_their_real_title():
+    # N8 reversed N-D9 (operator, 2026-11-12).
+    real = "Follow up with Dana at Acme Corp about the Q1 pilot"
+    for source in todo.FORMERLY_NEUTRAL | {"outreach_touch", "operator"}:
+        t = task(7, source=source, title=real)
+        assert todo.projection(t, done=False)["Task"]["title"][0]["text"]["content"] == real
 
 
 def test_source_labels_cover_every_option():
     options = todo.properties("ds")["Source"]["select"]["options"]
     assert [o["name"] for o in options] == ["discovery", "outreach", "inbound", "operator",
                                             "notion", "plan"]
+    assert todo.SOURCES["outreach_touch"] == "outreach"
 
 
 # --- the per-field merge -------------------------------------------------------------
@@ -81,9 +80,8 @@ def test_merge_field_cases():
     assert m(True, False, True) == "pull" and m(True, False, False) == "push"
 
 
-def test_neutral_title_tasks_never_merge_their_title():
-    assert "title" not in todo.owned_fields(task(source="inbound_lead"))
-    assert todo.owned_fields(task()) == todo.OWNED
+def test_every_source_merges_its_title():
+    assert todo.owned_fields(task(source="inbound_lead")) == todo.OWNED
 
 
 def test_notion_values_reads_every_owned_field():
@@ -164,10 +162,16 @@ def test_plan_holds_an_unknown_initiative_or_a_blank_title():
     assert two.decisions["initiative"] == "hold"
 
 
-def test_plan_never_pulls_or_pushes_a_neutral_title():
+def test_plan_replaces_a_neutral_title_instead_of_pulling_it():
+    # A pre-N8 row: its title was never merged, so synced_fields has no title.
     t = _synced(task(page="p1", source="inbound_lead", title="Call Dana at Acme"))
-    step = _plan(t, page("p1", title="Something the operator typed"))
-    assert "title" not in step.decisions and "Task" not in step.props
+    t["synced_fields"] = {k: v for k, v in t["synced_fields"].items() if k != "title"}
+    step = _plan(t, page("p1", title="Inbound lead follow-up · open in Discord · #1"))
+    assert step.decisions["title"] == "push"
+    assert step.props["Task"]["title"][0]["text"]["content"] == "Call Dana at Acme"
+    # Once agreed, a later Notion edit wins as for any row.
+    t2 = _synced(task(page="p1", source="inbound_lead", title="Call Dana at Acme"))
+    assert _plan(t2, page("p1", title="Call Dana Friday")).decisions["title"] == "pull"
 
 
 def test_plan_recreates_a_row_deleted_in_notion():
@@ -258,7 +262,7 @@ def test_run_once_merges_imports_and_records():
              _synced(task(2, page="p2")),                               # ticked in Notion
              _synced(task(3, page="p3", source="inbound_lead", title="Call Dana at Acme")),
              _synced(task(4, page="p4"))]                               # due edited in Notion
-    notion = FakeNotion({"p2": page("p2", True), "p3": page("p3", title="x · #3"),
+    notion = FakeNotion({"p2": page("p2", True), "p3": page("p3", title="Call Dana at Acme"),
                          "p4": page("p4", due="2026-12-01"),
                          "hand": page("hand", title="Book the venue", initiative=["i-1"]),
                          "blank": page("blank", title="")})
@@ -278,8 +282,6 @@ def test_run_once_merges_imports_and_records():
     assert ("UPDATE tasks SET due_date = %s WHERE id = %s", ("2026-12-01", 4)) in log
     assert created == [{"title": "Book the venue", "owner": "operator", "due_date": "2026-11-15",
                         "okr_initiative_id": 3, "completed": False}]  # i-1 → 3
-    sent = [w[2].get("Task") for w in notion.writes if w[2].get("Task")]
-    assert not any("Acme" in t["title"][0]["text"]["content"] for t in sent)
     upserts = [p for sql, p in log if "INSERT INTO notion_sync" in sql]
     assert [p[1] for p in upserts] == ["1", "2", "3", "4", "60"]
     assert "1 rows created, 0 updated, 2 field(s) taken from Notion" in out

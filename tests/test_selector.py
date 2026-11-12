@@ -182,11 +182,22 @@ def test_stage_independent_slots_resolve_without_a_stage():
     assert selector.select(2, None, {}, RULES).template_code == "touch-2"
 
 
-def test_stage_specific_slot_without_a_stage_refuses():
-    # Migration 0014 lets stage be NULL; sequencing is where it becomes
-    # mandatory, and this is the code-side half of that rule.
+def test_stage_specific_slot_without_a_stage_or_any_rules_refuses():
+    # Funding stage is optional (N8 R1); a slot needs an `any` rule set to serve
+    # a target without one.
     with pytest.raises(selector.SelectorError, match="no stage"):
         selector.select(1, None, {}, RULES)
+
+
+def test_stage_specific_slot_without_a_stage_uses_any_rules():
+    rules = {**RULES, "slots": {**RULES["slots"], 1: {
+        **RULES["slots"][1],
+        "rules": {**RULES["slots"][1]["rules"],
+                  "any": [{"when": {"open_role_age_min": 1}, "template": "t03"},
+                          {"default": "t07"}]}}}}
+    assert selector.select(1, None, {"open_role_age_days": 5}, rules).template_code == "t03"
+    assert selector.select(1, None, {}, rules).template_code == "t07"
+    assert selector.select(1, "series_a", {}, rules).template_code != "t07"
 
 
 def test_unknown_stage_refuses_rather_than_guessing():
@@ -272,7 +283,7 @@ def test_every_template_in_the_pack_is_accounted_for(real):
 
 def test_all_five_slots_resolve_for_every_stage(real):
     _, config = real
-    for stage in ("seed", "series_a", "series_b_plus", "mature"):
+    for stage in ("seed", "series_a", "series_b_plus", "mature", None):
         for slot in (1, 2, 3, 4, 5):
             choice = selector.select(slot, stage, {}, config)
             assert choice.template_code and choice.because

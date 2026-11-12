@@ -126,10 +126,10 @@ def work_blocks(target: dict[str, Any]) -> str | None:
 
     Mirrors `outreach_targets_seq_ck` so the refusal names the missing judgement.
     `function_state` is the two-tab diagnostic — five minutes of human work that
-    the method is explicit cannot be bought or inferred (`35-` §6).
+    the method is explicit cannot be bought or inferred (`35-` §6). Funding stage
+    is not required (N8 R1, operator 2026-11-12): the ICP is services firms, and
+    slot 1 has a stage-free rule set.
     """
-    if not target.get("stage"):
-        return "no stage set — the Selector has no stage-specific template for slot 1"
     if not target.get("function_state"):
         return (
             "function_state not set — do the two-tab diagnostic first "

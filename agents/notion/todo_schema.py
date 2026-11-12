@@ -27,13 +27,16 @@ SYNC_TABLE = "tasks"  # notion_sync.entity_table for To-Do rows
 
 # task_candidates.source_type → the To-Do Source option.
 SOURCES = {"discovery": "discovery", "outreach_stale_signal": "outreach",
-           "inbound_lead": "inbound", "operator": "operator"}
+           "inbound_lead": "inbound", "operator": "operator",
+           "outreach_touch": "outreach"}  # an outreach touch's task (N8)
 # A task imported from a row added by hand in Notion has no Task Tinder candidate.
 IMPORTED_SOURCE = "notion"
 # A task the daily plan created (N7).
 PLAN_SOURCE = "plan"
-NEUTRAL_TITLES = {"outreach_stale_signal": "Outreach follow-up · open in NocoDB",
-                  "inbound_lead": "Inbound lead follow-up · open in Discord"}
+# Sources whose rows had neutral titles until N8 reversed N-D9 (operator,
+# 2026-11-12). Their titles were never merged, so the first sync after N8 pushes
+# the real title instead of pulling the neutral phrase into Postgres.
+FORMERLY_NEUTRAL = frozenset({"outreach_stale_signal", "inbound_lead"})
 
 DESCRIPTION = (
     "Your to-do list. Edit Task, Due, Initiative, and Done here: your edits win. "
@@ -78,10 +81,7 @@ REQUIRED = (*properties("x"), *ROLLUP)
 
 
 def title_for(task: dict[str, Any]) -> str:
-    """The row title: the task's own title, or a neutral one for prospect sources."""
-    neutral = NEUTRAL_TITLES.get(task.get("source_type") or "")
-    if neutral:
-        return f"{neutral} · #{task['id']}"
+    """The row title: the task's own title, for every source (N8 reversed N-D9)."""
     return str(task.get("title") or f"Task #{task['id']}")
 
 
@@ -112,12 +112,14 @@ PROPERTY = {"title": "Task", "due": "Due", "initiative": "Initiative", "done": "
 
 
 def owned_fields(task: dict[str, Any]) -> tuple[str, ...]:
-    """The fields merged for this task. A prospect-source task's title is neither
-    pushed nor pulled after the row is made: its Notion title is the neutral
-    phrase, and the real title stays in Postgres (N-D9)."""
-    if task.get("source_type") in NEUTRAL_TITLES:
-        return tuple(f for f in OWNED if f != "title")
+    """The fields merged for this task: all of them, for every source (N8)."""
     return OWNED
+
+
+def replaces_neutral_title(task: dict[str, Any], agreed: dict[str, Any]) -> bool:
+    """Whether this row still shows the neutral title N-D9 gave it (pure). Its title
+    was never merged, so there is no agreed title; Postgres's real title is pushed."""
+    return task.get("source_type") in FORMERLY_NEUTRAL and "title" not in agreed
 
 
 def pg_values(task: dict[str, Any], *, done: bool) -> dict[str, Any]:

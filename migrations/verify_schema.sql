@@ -286,6 +286,16 @@ SELECT t AS table_name,
 FROM (VALUES ('plans'), ('plan_items')) AS v(t);
 
 \echo
+\echo '=== Outreach leads (migration 0038) ==='
+SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = 'public' AND table_name = 'outreach_targets'
+                           AND column_name = 'start_on')
+             AND (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                  WHERE conname = 'outreach_targets_seq_ck') NOT LIKE '%stage%'
+            THEN 'OK   outreach_targets.start_on; seq_ck without stage'
+            ELSE 'FAIL apply migration 0038' END AS outreach_leads_status;
+
+\echo
 \echo '=== Summary ==='
 SELECT
     (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public') AS total_tables,

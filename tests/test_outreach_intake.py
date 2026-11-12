@@ -110,9 +110,9 @@ def test_missing_function_state_refuses_and_names_the_diagnostic():
     assert "vacant_seat" in blocked          # names the options
 
 
-def test_missing_stage_refuses():
-    blocked = intake.work_blocks({**TARGET, "stage": None})
-    assert blocked and "stage" in blocked
+def test_missing_stage_does_not_block():
+    # Funding stage isn't an outreach criterion (N8 R1).
+    assert intake.work_blocks({**TARGET, "stage": None}) is None
 
 
 # --- decide() -----------------------------------------------------------------

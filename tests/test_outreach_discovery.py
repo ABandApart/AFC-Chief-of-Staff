@@ -465,3 +465,21 @@ def test_deferrals_are_not_counted_as_labels(mocker):
     gate0.segment_label_counts(conn)
     sql = cur.execute.call_args[0][0]
     assert "review_decision IS NOT NULL" in sql
+
+
+# --- N8 R3: S2 is size fit ------------------------------------------------------
+
+def test_size_fit_points():
+    from agents._lib import outreach
+    assert [outreach.size_fit(n) for n in (50, 180, None, 400, 5, 10, 100, 101, 250)] == \
+        [5, 3, 3, 1, 1, 5, 5, 3, 3]
+
+
+def test_size_fit_from_hand_written_bands():
+    from agents._lib import outreach
+    assert outreach.size_fit_from_band("25-50") == 5
+    assert outreach.size_fit_from_band("~180") == 3
+    assert outreach.size_fit_from_band("100-300") == 3        # midpoint 200
+    assert outreach.size_fit_from_band("Unverified.") == 3    # unknown scores mid
+    assert outreach.size_fit_from_band(None) == 3
+    assert outreach.size_fit_from_band("400+") == 1

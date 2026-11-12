@@ -220,6 +220,36 @@ _COUNTRY_NAMES = {
 }
 
 
+# S2 is size fit, not funding-stage fit (N8 R3, operator 2026-11-12). The ICP is
+# services firms with 10–250 staff, sweet spot 10–100 (`icp._HEADCOUNT_BANDS`);
+# unknown scores mid, as in the ICP model. The column keeps its name.
+SIZE_FIT_UNKNOWN = 3
+
+
+def size_fit(headcount: int | None) -> int:
+    """S2 from a headcount (pure): 10–100 = 5, 101–250 = 3, unknown = 3, else 1."""
+    if headcount is None:
+        return SIZE_FIT_UNKNOWN
+    if 10 <= headcount <= 100:
+        return 5
+    if 101 <= headcount <= 250:
+        return 3
+    return 1
+
+
+def size_fit_from_band(band: str | None) -> int:
+    """S2 from a discovery's hand-written headcount band, such as `25-50` (pure).
+
+    A range scores at its midpoint; an open-ended `50+` at its floor.
+    """
+    from agents.outreach.icp import parse_headcount  # local: icp is a leaf module
+
+    low, high = parse_headcount(band)
+    if low is None:
+        return SIZE_FIT_UNKNOWN
+    return size_fit(low if high is None else (low + high) // 2)
+
+
 def normalize_country(raw: str | None) -> str | None:
     """`US` or `Canada` for an in-scope country, else None (pure)."""
     return _COUNTRY_NAMES.get((raw or "").strip().upper())
