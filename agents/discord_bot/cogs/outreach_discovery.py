@@ -38,6 +38,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from agents._lib import db, outreach_discovery
+from agents.discord_bot import config
 from agents.discord_bot.config import OPERATOR_DISCORD_ID, OUTREACH_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
@@ -555,6 +556,8 @@ class OutreachDiscoveryCog(commands.Cog):
         not a decision that ages. Posting is idempotent because `surfaced_at` is
         stamped once and the window query is ordered deterministically.
         """
+        if config.surface_off("gate0"):
+            return  # moved to Notion (N9 I7)
         channel = self.bot.get_channel(OUTREACH_CHANNEL_ID)
         if channel is None:
             return

@@ -267,6 +267,56 @@ def fetch_outreach_line(conn: object) -> str:
         return ""
 
 
+def _plain(text: str) -> str:
+    """Discord markdown to the plain text a Notion paragraph shows (pure)."""
+    return text.replace("**", "")
+
+
+def _body(section: str) -> str:
+    """A Discord section without its bold header line (pure)."""
+    lines = section.strip().splitlines()
+    if lines and lines[0].startswith("**") and lines[0].endswith("**"):
+        lines = lines[1:]
+    return _plain("\n".join(lines)).strip()
+
+
+def notion_sections(now: datetime, status: dict[str, Any], *, pending: int, recs_text: str,
+                    prospects_text: str, outreach_line: str,
+                    spend_text: str) -> list[tuple[str, str]]:
+    """The Briefing page's sections, (heading, text), from the same parts as the
+    Discord post (pure). Empty parts are omitted."""
+    status_lines = format_briefing(now, status).split("**System status**", 1)[1]
+    out = [("System status", _plain(status_lines).strip())]
+    if pending:
+        out.append(("Task Tinder", f"{pending} candidate(s) pending"))
+    for heading, part in (("Reading", recs_text), ("New prospects", prospects_text),
+                          ("Outreach", outreach_line), ("Spend", spend_text)):
+        if body := _body(part):
+            out.append((heading, body))
+    return out
+
+
+def write_notion(today: date, sections: list[tuple[str, str]]) -> str:
+    """Write the day's Briefing page and raise each urgent reason as a mention
+    comment (N9 I6). Returns the page id."""
+    from agents._lib.notion_client import NotionClient
+    from agents.notion import briefing_page
+
+    client = NotionClient.from_keychain()
+    page_id = briefing_page.today_page(client, db.connection, today)
+    for heading, body in sections:
+        briefing_page.append(client, db.connection, today, heading, body,
+                             key=f"briefing:{heading}")
+    now = datetime.now().astimezone()
+    with db.connection() as conn:
+        reasons = briefing_page.urgent_reasons(conn, now)
+    for reason in reasons:
+        briefing_page.system_note(client, db.connection, today, reason, urgent=True, now=now)
+    if not reasons:
+        briefing_page.refresh_system_callout(client, db.connection, now)
+    return page_id
+
+
 def post_to_discord(text: str) -> None:
     """POST one message to #briefing via the REST API (Bot token auth)."""
     req = urllib.request.Request(
@@ -309,10 +359,28 @@ def main() -> int:
         spend_text = format_spend(yesterday, spend)
     except Exception:
         logger.exception("briefing: spend section unavailable — omitting it")
-    post_to_discord(text)
-    if spend_text:
-        # Its own message: the briefing is near Discord's 2,000-character limit.
-        post_to_discord(spend_text)
+    # N9 I6: the Briefing page in Notion. A Notion failure never stops the Discord post.
+    notion_ok = False
+    try:
+        sections = notion_sections(datetime.now(), status, pending=pending,
+                                   recs_text=recs_text, prospects_text=prospects_text,
+                                   outreach_line=outreach_line, spend_text=spend_text)
+        write_notion(date.today(), sections)
+        notion_ok = True
+        logger.info("Wrote today's Briefing page in Notion")
+    except Exception:
+        logger.exception("briefing: Notion Briefing page failed")
+    from agents.notion.briefing_page import surface_off
+
+    if surface_off("briefing"):
+        if not notion_ok:
+            raise RuntimeError("Notion Briefing page failed and #briefing posting is off")
+        logger.info("#briefing posting is off (DISCORD_SURFACES_OFF); not posted")
+    else:
+        post_to_discord(text)
+        if spend_text:
+            # Its own message: the briefing is near Discord's 2,000-character limit.
+            post_to_discord(spend_text)
     # Success path only — the ping means "the briefing actually posted". Never
     # move this into a finally: a ping on a crashed run manufactures confidence.
     heartbeat.ping(HEARTBEAT_SLUG)

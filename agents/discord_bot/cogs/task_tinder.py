@@ -22,6 +22,7 @@ import discord
 from discord.ext import commands, tasks
 
 from agents._lib import initiatives, task_tinder
+from agents.discord_bot import config
 from agents.discord_bot.config import OPERATOR_DISCORD_ID, TASK_TINDER_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,8 @@ class TaskTinderCog(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def _poll(self) -> None:
+        if config.surface_off("task_tinder"):
+            return  # moved to Notion (N9 I7)
         channel = self.bot.get_channel(TASK_TINDER_CHANNEL_ID)
         if channel is None:
             return  # not connected yet; try again next tick

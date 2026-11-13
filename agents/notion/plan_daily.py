@@ -14,8 +14,10 @@ A plan comes from `cli.notion_plan_import`. On a plan day, each run:
 2. **Creates today's tasks** through `task_tinder.create_plan_task`. Their
    follow-ups have no deadline (N-D15). The To-Do sync pushes them to Notion
    within 5 minutes; this job writes no To-Do rows itself.
-3. **Posts the summary** to #tasks (N-D16), only on the run that created today's
-   tasks, so a re-run doesn't post twice.
+3. **Posts the summary** to #tasks (N-D16) and under "Daily plan" on today's
+   Briefing page (N9 I6), only on the run that created today's tasks, so a re-run
+   doesn't post twice. The #tasks post stops once `tasks_posts` is in
+   `DISCORD_SURFACES_OFF` (I7).
 4. **Updates the dashboard.** It adds the "📋 Daily plan" heading and view to the
    quarter's dashboard page if they're missing, then sets the view's Due filter to
    the last five plan days, ending today.
@@ -27,6 +29,7 @@ nothing. Every non-dry run writes one `agent_runs` row (`agents/notion/ledger.py
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from dataclasses import dataclass
 from datetime import date
@@ -35,9 +38,11 @@ from typing import Any
 from psycopg.rows import dict_row
 
 from agents._lib import kr_metrics
-from agents.notion import dashboard_page
+from agents.notion import briefing_page, dashboard_page
 from agents.notion import dashboard_schema as dash
 from agents.notion import todo_schema as todo
+
+logger = logging.getLogger(__name__)
 
 FUNCTION_LABEL = "plan_daily"
 DEFAULT_OWNER = "operator"  # what Task Tinder gives accepted tasks
@@ -47,6 +52,7 @@ HEADING = "📋 Daily plan"
 VIEW_NAME = "Daily plan"
 PLAN_SOURCE = "plan"
 CUT_MARK = "🔻"
+BRIEFING_HEADING = "Daily plan"
 
 _ACTIVE = "JOIN plans p ON p.id = pi.plan_id AND p.status = 'active'"
 
@@ -263,9 +269,12 @@ def dashboard(client: Any, connection: Any, today: date, days: list[date], say: 
 
 
 def run_once(client: Any, *, connection: Any, create: Any, today: date, post: Any,
-             say: Any = print, owner: str = DEFAULT_OWNER) -> str:
+             say: Any = print, owner: str = DEFAULT_OWNER, brief: Any = None) -> str:
     """One morning run. `create` is `task_tinder.create_plan_task`; `post` sends the
-    #tasks summary and returns True or False."""
+    #tasks summary and returns True or False; `brief`, when given, appends the
+    summary to today's Briefing page (N9 I6). A `brief` failure is logged and
+    reported, never raised. The #tasks post is skipped once `tasks_posts` is in
+    `DISCORD_SURFACES_OFF` (I7)."""
     with connection() as conn:
         days = plan_days(conn, today)
         if today not in days:
@@ -283,9 +292,21 @@ def run_once(client: Any, *, connection: Any, create: Any, today: date, post: An
     page_id = dashboard_page.recorder(connection, kr_metrics.quarter_of(today))[0]("page")
     posted = "not posted (today's tasks already existed)"
     if created:
-        sent = post(summary(today, now, prior, before, moved,
-                            page_url(page_id) if page_id else None))
-        posted = "posted to #tasks" if sent else "post to #tasks FAILED"
+        text = summary(today, now, prior, before, moved, page_url(page_id) if page_id else None)
+        if brief is not None:
+            try:
+                brief(text)
+                posted = "added to the Briefing page"
+            except Exception as e:  # never fail the plan run over the Briefing page
+                logger.exception("plan_daily: Briefing page append failed")
+                posted = f"Briefing page FAILED ({type(e).__name__})"
+        else:
+            posted = ""
+        if briefing_page.surface_off("tasks_posts"):
+            tasks = "not posted to #tasks (posting is off)"
+        else:
+            tasks = "posted to #tasks" if post(text) else "post to #tasks FAILED"
+        posted = f"{posted}, {tasks}" if posted else tasks
     view = dashboard(client, connection, today, days, say)
     return (f"OK    {today}: {created} task(s) created, {moved} carried forward, "
             f"{skipped} standing task(s) skipped; {now.tasks} open today "
@@ -335,7 +356,10 @@ def main() -> int:
         client = NotionClient.from_keychain()
         with notion_run(FUNCTION_LABEL, trigger_kind="manual" if args.manual else "scheduled"):
             print(run_once(client, connection=db.connection,
-                           create=task_tinder.create_plan_task, today=today, post=_post))
+                           create=task_tinder.create_plan_task, today=today, post=_post,
+                           brief=lambda text: briefing_page.append(
+                               client, db.connection, today, BRIEFING_HEADING, text,
+                               key="plan")))
     except (RuntimeError, NotionError) as e:
         print(f"FAIL  {e}")
         return 1

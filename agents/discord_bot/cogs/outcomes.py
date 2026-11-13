@@ -32,34 +32,20 @@ from discord import app_commands
 from discord.ext import commands
 
 from agents._lib import outreach
+from agents._lib.outcomes import (  # noqa: F401  (re-exported for callers and tests)
+    CONTRACT_TYPES,
+    OUTCOME_TYPES,
+    requires_company,
+)
 from agents.discord_bot import brain
 
 logger = logging.getLogger(__name__)
 
-# Outcome types from architecture/80-telemetry-layer.md.
-OUTCOME_TYPES = [
-    "discovery_call_booked",
-    "proposal_sent",
-    "engagement_signed",
-    "engagement_renewed",
-    "maintenance_converted",
-    "newsletter_published",
-    "roundtable_topic_used",
-    "partnership_explored",
-]
-
-# Contract outcomes must name a company (D3). Mirrored by the database CHECK
-# `outcomes_engagement_has_client_ck` (migration 0031) — change both together.
-CONTRACT_TYPES = frozenset(
-    {"engagement_signed", "engagement_renewed", "maintenance_converted"}
-)
+# OUTCOME_TYPES and CONTRACT_TYPES live in `_lib/outcomes.py` so the Notion
+# Outcomes import (N9 I5) checks the same lists without loading discord.py.
 
 MAX_CHOICES = 25  # Discord's autocomplete limit
 MAX_CHOICE_CHARS = 100  # Discord's limit on a choice's name and value
-
-
-def requires_company(outcome_type: str) -> bool:
-    return outcome_type in CONTRACT_TYPES
 
 
 def parse_value(raw: str) -> float | None:

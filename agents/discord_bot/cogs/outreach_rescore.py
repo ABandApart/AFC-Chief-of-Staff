@@ -22,6 +22,7 @@ import discord
 from discord.ext import commands, tasks
 
 from agents._lib import db, outreach_rescore
+from agents.discord_bot import config
 from agents.discord_bot.config import OPERATOR_DISCORD_ID, OUTREACH_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,8 @@ class OutreachRescoreCog(commands.Cog):
 
     @tasks.loop(seconds=120)
     async def _poll(self) -> None:
+        if config.surface_off("rescore"):
+            return  # moved to Notion (N9 I7)
         channel = self.bot.get_channel(OUTREACH_CHANNEL_ID)
         if channel is None:
             return

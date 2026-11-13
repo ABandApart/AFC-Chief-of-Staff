@@ -263,6 +263,13 @@ class NotionClient:
         """Change a view's settings, e.g. `{"filter": …}` (views API)."""
         return self.request("PATCH", f"/views/{view_id}", body)
 
+    def create_comment(self, page_id: str, rich_text: list[dict[str, Any]]) -> dict[str, Any]:
+        """Add a top-level comment to a page. A `mention_user` item in `rich_text`
+        @-mentions that workspace member (N9 I6 urgent alerts). The integration
+        needs the "Insert comments" capability."""
+        return self.request("POST", "/comments",
+                            {"parent": {"page_id": page_id}, "rich_text": rich_text})
+
     def iter_query(
         self, data_source_id: str, *, filter: dict[str, Any] | None = None
     ) -> Iterator[dict[str, Any]]:
@@ -282,6 +289,11 @@ def rich_text(text: str) -> list[dict[str, Any]]:
     """A rich-text array for plain text, split at the API's 2000-character limit."""
     return [{"type": "text", "text": {"content": text[i:i + 2000]}}
             for i in range(0, len(text), 2000)] or [{"type": "text", "text": {"content": ""}}]
+
+
+def mention_user(user_id: str) -> dict[str, Any]:
+    """A rich-text item that @-mentions a Notion user (pure)."""
+    return {"type": "mention", "mention": {"type": "user", "user": {"id": user_id}}}
 
 
 def title_of(obj: dict[str, Any]) -> str:

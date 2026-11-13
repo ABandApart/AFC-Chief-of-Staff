@@ -44,6 +44,7 @@ from psycopg.rows import dict_row
 
 from agents._lib.notion_client import NotionError, content_hash
 from agents.notion import leads_schema as leads
+from agents.notion import operator
 from agents.notion.todo_schema import merge_field
 
 DEFAULT_OWNER = "operator"  # what Task Tinder gives accepted tasks
@@ -60,7 +61,11 @@ _TARGETS_SQL = """
            t.headcount, t.hq_location, t.ownership_type, t.total_raised_usd,
            t.last_round_type, t.last_round_at, t.founded_year,
            t.contact_name, t.contact_role, t.contact_email, t.contact_linkedin_url,
-           t.stage, t.function_state, t.start_on,
+           t.stage, t.function_state, t.start_on, t.s4_leadership_gap,
+           t.s5_team_build_below, t.signals_observed_at,
+           (SELECT max(c.id) FROM task_candidates c
+             WHERE c.source_type = 'outreach_stale_signal' AND c.status = 'pending'
+               AND c.source_ref = t.id::text) AS rescore_candidate_id,
            (SELECT max(sent_at) FROM outreach_touches s WHERE s.target_id = t.id)
                AS last_contacted,
            CASE WHEN t.status = 'in_sequence' THEN nxt.due_date END AS next_touch,
@@ -114,11 +119,19 @@ class Step:
     decisions: dict[str, str] = field(default_factory=dict)  # push|pull|agree|refuse
     pulls: dict[str, Any] = field(default_factory=dict)
     refused: list[str] = field(default_factory=list)
+    next_step: str = ""  # the row's Next step: Parked's reason, a defer's note (N9)
+
+
+def next_step_of(page: dict[str, Any]) -> str:
+    parts = ((page.get("properties") or {}).get("Next step") or {}).get("rich_text") or []
+    return "".join(p.get("plain_text") or (p.get("text") or {}).get("content", "")
+                   for p in parts).strip()
 
 
 def plan(targets: list[dict[str, Any]], pages: dict[str, dict[str, Any]], *,
-         capacity_free: bool) -> list[Step]:
-    """Decide each target's per-field merge and row write (pure)."""
+         capacity_free: bool, allowed: frozenset[str] | None = None) -> list[Step]:
+    """Decide each target's per-field merge and row write (pure). With `allowed`,
+    edits by anyone else are refused (N-D24)."""
     steps = []
     for t in targets:
         pv = leads.pg_values(t)
@@ -133,14 +146,22 @@ def plan(targets: list[dict[str, Any]], pages: dict[str, dict[str, Any]], *,
             continue
         nv, before = leads.notion_values(page), dict(t.get("synced_fields") or {})
         step = Step(t["id"], t["company_name"], t["status"], "skip", page["id"], {},
-                    digest, dict(before))
+                    digest, dict(before), next_step=next_step_of(page))
+        foreign = allowed is not None and operator.foreign_edit(page, allowed)
         pushes = []
         for name in owned:
             decision = merge_field(pv[name], nv[name], before.get(name),
                                    has_agreed=name in before)
-            if decision == "pull" and (why := leads.refusal(name, nv[name])):
+            why = None
+            if decision == "pull":
+                why = ("edited by someone other than the operator" if foreign
+                       else leads.refusal(name, nv[name]))
+                if (not why and name == "status" and nv[name] == "Parked"
+                        and t["status"] != "candidate" and not step.next_step):
+                    why = "Parked needs the reason in Next step"
+            if why:
                 decision = "refuse"
-                step.refused.append(why)
+                step.refused.append(f"{leads.PROPERTY[name]}: {why}")
             step.decisions[name] = decision
             if decision == "pull":
                 step.pulls[name] = nv[name]
@@ -209,8 +230,9 @@ def _pages(client: Any) -> tuple[dict[str, dict[str, Any]], str]:
     problems = leads.schema_problems(client.retrieve_data_source(source).get("properties") or {})
     if problems:
         raise RuntimeError("Leads isn't ready: " + "; ".join(problems))
-    rows = client.iter_query(source, filter={"property": "Channel",
-                                             "select": {"equals": leads.CHANNEL}})
+    rows = client.iter_query(source, filter={"or": [
+        {"property": "Channel", "select": {"equals": channel}}
+        for channel in (leads.CHANNEL, leads.DISCOVERY_CHANNEL)]})
     return {p["id"]: p for p in rows if not p.get("in_trash") and not p.get("archived")}, source
 
 
@@ -251,32 +273,72 @@ def _record(conn: Any, target_id: int, page_id: str, digest: str | None,
 def _apply_pulls(connection: Any, step: Step) -> list[str]:
     """Write one target's Notion edits to Postgres. Returns the companies whose
     ended sequences left an unsent Gmail draft."""
+    from agents._lib import outreach_intake, outreach_rescore
+
     drafts: list[str] = []
+    pulls = dict(step.pulls)
+    status = leads.SETTABLE.get(pulls.pop("status", None) or "")
+    if status == "watchlist" and step.status == "candidate":
+        # Gate 1 Watchlist (N9 I3): the intake path sets its reason and watch_until.
+        outreach_intake.decide(step.target_id, "watchlist")
+        status = None
     with connection() as conn, conn.transaction():
-        for name, value in step.pulls.items():
-            if name == "status":
-                value = leads.SETTABLE[value]
+        scores = {k: int(pulls.pop(k)) for k in ("s4", "s5") if k in pulls}
+        for name, value in pulls.items():
             conn.execute(_PULL_SQL[name], (value, step.target_id))
-            if (name == "status" and step.status == "in_sequence"
-                    and value in leads.ENDS_SEQUENCE):
-                rows = conn.execute(
-                    "UPDATE outreach_touches SET skipped_at = now(), skip_reason = %s "
-                    "WHERE target_id = %s AND sent_at IS NULL AND skipped_at IS NULL "
-                    "RETURNING gmail_draft_id",
-                    (f"notion_{value}", step.target_id)).fetchall()
-                if any(r[0] for r in rows):
-                    drafts.append(step.company)
+        if scores:
+            row = conn.execute(
+                "SELECT s4_leadership_gap, s5_team_build_below, "
+                "(SELECT max(c.id) FROM task_candidates c WHERE c.source_type = "
+                "'outreach_stale_signal' AND c.status = 'pending' AND c.source_ref = %s) "
+                "FROM outreach_targets WHERE id = %s",
+                (str(step.target_id), step.target_id)).fetchone()
+            s4, s5 = scores.get("s4", row[0]), scores.get("s5", row[1])
+            if row[2] is not None and s4 is not None and s5 is not None:
+                outreach_rescore.apply_rescore(conn, row[2], step.target_id, s4, s5)
+            else:
+                conn.execute(
+                    "UPDATE outreach_targets SET s4_leadership_gap = %s, "
+                    "s5_team_build_below = %s, signals_observed_at = CURRENT_DATE "
+                    "WHERE id = %s", (s4, s5, step.target_id))
+        if status == "watchlist":
+            conn.execute(
+                "UPDATE outreach_targets SET status = 'watchlist', stalled_reason = %s, "
+                "watch_until = CURRENT_DATE + %s WHERE id = %s",
+                (step.next_step, outreach_intake.WATCH_DAYS, step.target_id))
+        elif status:
+            conn.execute(_PULL_SQL["status"], (status, step.target_id))
+        if status and step.status == "in_sequence" and status in leads.ENDS_SEQUENCE:
+            rows = conn.execute(
+                "UPDATE outreach_touches SET skipped_at = now(), skip_reason = %s "
+                "WHERE target_id = %s AND sent_at IS NULL AND skipped_at IS NULL "
+                "RETURNING gmail_draft_id",
+                (f"notion_{status}", step.target_id)).fetchall()
+            if any(r[0] for r in rows):
+                drafts.append(step.company)
     return drafts
 
 
-def _sync(client: Any, connection: Any, *, write_rows: bool) -> tuple[dict[str, int], list, list]:
+@dataclass
+class Synced:
+    counts: dict[str, int]
+    refused: list[str]
+    drafts: list[str]
+    pages: dict[str, dict[str, Any]]
+    source: str
+    allowed: frozenset[str]
+
+
+def _sync(client: Any, connection: Any, *, write_rows: bool) -> Synced:
     """Apply Notion edits; with `write_rows`, also write Leads rows. Returns counts,
-    refusals, and drafts to delete."""
+    refusals, drafts to delete, and the live Leads pages for the Gate 0 step."""
     targets, pages, source, capacity = _load(connection, client)
+    with connection() as conn:
+        allowed = operator.allowed_editors(client, conn)
     counts = {"pulled": 0, "refused": 0, "created": 0, "updated": 0}
     refused: list[str] = []
     drafts: list[str] = []
-    for step in plan(targets, pages, capacity_free=_free(capacity)):
+    for step in plan(targets, pages, capacity_free=_free(capacity), allowed=allowed):
         if step.pulls:
             drafts += _apply_pulls(connection, step)
             counts["pulled"] += len(step.pulls)
@@ -301,7 +363,7 @@ def _sync(client: Any, connection: Any, *, write_rows: bool) -> tuple[dict[str, 
         with connection() as conn:
             _record(conn, step.target_id, page_id, step.digest, step.agreed,
                     step.write != "skip")
-    return counts, refused, drafts
+    return Synced(counts, refused, drafts, pages, source, allowed)
 
 
 def _start_scheduled(connection: Any, today: date) -> tuple[list[str], list[str]]:
@@ -352,28 +414,95 @@ def _touch_tasks(connection: Any, create: Any, today: date, owner: str) -> int:
     return made
 
 
+_MOVED_TOUCHES_SQL = """
+    SELECT tc.id AS touch_id, t.due_date AS task_due, tc.due_date, tc.window_closes,
+           tg.id AS target_id, tg.company_name, ns.notion_page_id
+    FROM tasks t
+    JOIN task_candidates c ON c.id = t.source_candidate_id
+                          AND c.source_type = 'outreach_touch'
+    JOIN outreach_touches tc ON c.source_ref = 'touch:' || tc.id
+    JOIN outreach_targets tg ON tg.id = tc.target_id
+    LEFT JOIN notion_sync ns ON ns.entity_table = 'outreach_targets'
+                            AND ns.entity_id = tg.id::text
+    WHERE t.status = 'open' AND tc.sent_at IS NULL AND tc.skipped_at IS NULL
+      -- Moved by the operator: later than the Due the task was created with (the
+      -- touch's due date, or the creation day for an overdue touch).
+      AND t.due_date > c.due_date
+      AND (tc.snoozed_until IS NULL OR tc.snoozed_until < LEAST(t.due_date, tc.window_closes))
+"""
+
+
+def snooze_until(task_due: date, window_closes: date) -> tuple[date, bool]:
+    """The snooze a moved touch task sets, and whether it was clamped (pure)."""
+    return (min(task_due, window_closes), task_due > window_closes)
+
+
+def _touch_defers(connection: Any, pages: dict[str, dict[str, Any]]) -> tuple[int, list[str]]:
+    """Snooze each outreach touch whose task's Due was moved later in To-Do (N9 I4).
+    The note is the Leads row's Next step, else a default (N-D25)."""
+    with connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(_MOVED_TOUCHES_SQL)
+        moved = cur.fetchall()
+    notices, done = [], 0
+    for m in moved:
+        until, clamped = snooze_until(m["task_due"], m["window_closes"])
+        page = pages.get(m["notion_page_id"]) if m.get("notion_page_id") else None
+        note = (next_step_of(page) if page else "") or f"Due moved in Notion to {m['task_due']}"
+        with connection() as conn:
+            conn.execute(
+                "UPDATE outreach_touches SET snoozed_until = %s, snooze_note = %s "
+                "WHERE id = %s AND sent_at IS NULL AND skipped_at IS NULL",
+                (until, note[:500], m["touch_id"]))
+        done += 1
+        if clamped:
+            notices.append(f"{m['company_name']}: touch snoozed only to {until}, when its "
+                           "window closes")
+    return done, notices
+
+
+FOREIGN = "other than the operator"
+
+
 def run_pull(client: Any, *, connection: Any, create: Any, post: Any, today: date,
-             owner: str = DEFAULT_OWNER) -> str:
+             owner: str = DEFAULT_OWNER, alert: Any = None) -> str:
     """The 05:30 run. `create` is `task_tinder.create_outreach_task`; `post` sends
-    the #tasks message and returns True or False."""
-    counts, refused, drafts = _sync(client, connection, write_rows=False)
+    the morning message (the day's Briefing page, and #tasks until that surface is
+    off) and returns True or False; `alert` raises an urgent system note (N9 I6)."""
+    from agents.notion import leads_review
+
+    synced = _sync(client, connection, write_rows=False)
+    reviews, review_notices = leads_review.pull(client, connection, synced.pages,
+                                                synced.allowed)
+    defers, defer_notices = _touch_defers(connection, synced.pages)
     started, not_ready = _start_scheduled(connection, today)
     tasks = _touch_tasks(connection, create, today, owner)
-    text = report(started, not_ready, refused, drafts, tasks)
+    notices = synced.refused + review_notices + defer_notices
+    if alert and (foreign := [n for n in notices if FOREIGN in n]):
+        alert("Leads edits refused because someone other than the operator made them: "
+              + "; ".join(foreign))
+    text = report(started, not_ready, notices, synced.drafts, tasks)
     posted = "nothing to post"
     if text:
-        posted = "posted to #tasks" if post(text) else "post to #tasks FAILED"
+        posted = "posted" if post(text) else "post FAILED"
+    counts = synced.counts
     return (f"OK    {counts['pulled']} field(s) taken from Leads, {counts['refused']} "
-            f"refused; {len(started)} sequence(s) started, {len(not_ready)} not started; "
+            f"refused; Gate 0: {reviews['approved']} approved ({reviews['started']} "
+            f"started), {reviews['rejected']} rejected, {reviews['deferred']} deferred, "
+            f"{reviews['contacts']} contact fix(es); {defers} touch(es) snoozed; "
+            f"{len(started)} sequence(s) started, {len(not_ready)} not started; "
             f"{tasks} outreach task(s) created; {posted}")
 
 
 def run_push(client: Any, *, connection: Any) -> str:
     """The 06:20 run."""
-    counts, refused, _ = _sync(client, connection, write_rows=True)
+    from agents.notion import leads_review
+
+    synced = _sync(client, connection, write_rows=True)
+    window = leads_review.push(client, connection, synced.pages, synced.source)
+    counts = synced.counts
     return (f"OK    Leads: {counts['created']} row(s) created, {counts['updated']} "
-            f"updated; {counts['pulled']} field(s) taken from Leads, "
-            f"{counts['refused']} refused")
+            f"updated; {window} Gate 0 row(s) added; {counts['pulled']} field(s) taken "
+            f"from Leads, {counts['refused']} refused")
 
 
 def _post(text: str) -> bool:
@@ -381,6 +510,28 @@ def _post(text: str) -> bool:
     from agents.discord_bot.config import TASKS_CHANNEL_ID
 
     return discord_rest.post(TASKS_CHANNEL_ID, text)
+
+
+def _morning(client: Any, connection: Any, today: date) -> Any:
+    """Send the pull's message to the day's Briefing page and, until the
+    `tasks_posts` surface is switched off, to #tasks (N9 I6, I7). True if either
+    took it. A Notion failure never stops the Discord copy."""
+    import logging
+
+    from agents.discord_bot import config
+    from agents.notion import briefing_page
+
+    def send(text: str) -> bool:
+        ok = False
+        try:
+            briefing_page.append(client, connection, today, "Outreach", text, key="leads")
+            ok = True
+        except Exception:  # noqa: BLE001 - the Briefing page must not stop the run
+            logging.getLogger(__name__).exception("leads: Briefing append failed")
+        if not config.surface_off("tasks_posts"):
+            ok = _post(text) or ok
+        return ok
+    return send
 
 
 def main() -> int:
@@ -415,9 +566,15 @@ def main() -> int:
         label = f"leads_{args.mode}"
         with notion_run(label, trigger_kind="manual" if args.manual else "scheduled"):
             if args.mode == "pull":
+                from agents.notion import briefing_page
+
+                def alert(text: str) -> None:
+                    briefing_page.system_note(client, db.connection, today, text, urgent=True)
+
                 print(run_pull(client, connection=db.connection,
-                               create=task_tinder.create_outreach_task, post=_post,
-                               today=today))
+                               create=task_tinder.create_outreach_task,
+                               post=_morning(client, db.connection, today), today=today,
+                               alert=alert))
             else:
                 print(run_push(client, connection=db.connection))
     except (RuntimeError, NotionError) as e:

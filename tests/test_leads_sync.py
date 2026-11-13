@@ -69,9 +69,11 @@ def test_every_postgres_status_has_a_label_and_settable_ones_round_trip():
         assert leads.STATUS_LABEL[status] == label
 
 
-def test_status_new_contacted_and_parked_are_refused():
-    for label in ("New", "Contacted", "Parked"):
+def test_status_new_and_contacted_are_refused_parked_is_settable():
+    for label in ("New", "Contacted"):
         assert "can't be set" in leads.refusal("status", label)
+    assert leads.refusal("status", "Parked") is None          # N9 I3
+    assert leads.refusal("s4", "3") is None and "can't be cleared" in leads.refusal("s4", None)
     assert leads.refusal("status", "Opted out") is None
     assert leads.refusal("stage", "pre_seed") and leads.refusal("stage", None) is None
     assert leads.refusal("function_state", "under_led") is None
@@ -80,11 +82,10 @@ def test_status_new_contacted_and_parked_are_refused():
 def test_schema_problems_names_missing_columns_and_options():
     props = {n: {"type": k, k: {}} for n, k in leads.COLUMNS.items()}
     props["Status"] = {"type": "status", "status": {"options": [{"name": "New"}]}}
-    props["Channel"] = {"type": "select", "select": {"options": [{"name": "Outreach"}]}}
-    props["Stage"] = {"type": "select", "select": {"options": [
-        {"name": s} for s in leads.STAGES]}}
-    props["Function state"] = {"type": "select", "select": {"options": [
-        {"name": s} for s in leads.FUNCTION_STATES]}}
+    for name, wanted in leads.OPTIONS.items():
+        if name != "Status":
+            props[name] = {"type": "select", "select": {"options": [
+                {"name": w} for w in wanted]}}
     del props["Message"]
     problems = leads.schema_problems(props)
     assert any("'Message'" in p for p in problems)
@@ -120,7 +121,7 @@ def test_ready_to_start_needs_only_function_state_and_room():
 
 def test_stage_and_function_state_are_cos_written_once_in_sequence():
     live = target(status="in_sequence", stage="mature", function_state="vacant_seat")
-    assert leads.owned_fields(live) == ("status", "start_on")
+    assert leads.owned_fields(live) == ("status", "start_on", "s4", "s5")
     facts = leads.fact_props(live, capacity_free=True)
     assert facts["Function state"] == {"select": {"name": "vacant_seat"}}
     assert "Function state" not in leads.fact_props(target(), capacity_free=True)
@@ -234,3 +235,48 @@ def test_create_outreach_task_once_per_touch(monkeypatch):
                         "FROM tasks t JOIN task_candidates c ON c.id = t.source_candidate_id "
                         "JOIN follow_ups f ON f.id = t.follow_up_id").fetchall()
         assert row == [("outreach_touch", "accepted", None, TODAY)]   # N-D18: no deadline
+
+
+# --- N9: Gate 0 review, re-score, Parked, defers -----------------------------------
+
+def test_reject_needs_a_reason_and_other_needs_a_note():
+    from agents.notion import leads_review as lr
+    base = {"review": "Reject", "reason": None, "next_step": ""}
+    assert "Reject reason" in lr.review_problem(base)
+    assert "Next step" in lr.review_problem({**base, "reason": "Other (say why in Next step)"})
+    assert lr.review_problem({**base, "reason": "Too small"}) is None
+    assert lr.review_problem({**base, "review": "Approve"}) is None
+
+
+def test_contact_edits_are_changes_from_the_agreed_values():
+    from agents.notion import leads_review as lr
+    agreed = {"name": "Dana Reyes", "email": "dana@a.com", "role": "CEO"}
+    v = {"name": "Dana Reyes", "email": "dana.reyes@a.com", "role": "", "review": None}
+    assert lr.contact_edits(v, agreed) == {"contact_email": "dana.reyes@a.com"}
+
+
+def test_parked_on_a_live_sequence_needs_next_step():
+    t = synced(target(status="in_sequence", function_state="under_led"))
+    p = page("p1", status="Parked")
+    step = one(t, p)
+    assert step.decisions["status"] == "refuse" and "Next step" in step.refused[0]
+    p["properties"]["Next step"] = {"rich_text": [{"plain_text": "Hiring freeze"}]}
+    assert one(t, p).pulls == {"status": "Parked"}
+    assert one(synced(target()), page("p1", status="Parked")).pulls == {"status": "Parked"}
+
+
+def test_s4_s5_merge_and_foreign_edits_are_refused():
+    t = synced(target(s4_leadership_gap=3, s5_team_build_below=1))
+    p = page("p1")
+    p["properties"]["S4 leadership gap"] = {"type": "select", "select": {"name": "5"}}
+    p["properties"]["S5 team build below"] = {"type": "select", "select": {"name": "1"}}
+    step = one(t, p)
+    assert step.pulls == {"s4": "5"}
+    p["last_edited_by"] = {"id": "stranger"}
+    [refused] = ls.plan([t], {"p1": p}, capacity_free=True, allowed=frozenset({"op"}))
+    assert refused.pulls == {} and "other than the operator" in refused.refused[0]
+
+
+def test_a_moved_touch_is_snoozed_to_its_due_clamped_to_the_window():
+    assert ls.snooze_until(date(2026, 11, 20), date(2026, 11, 25)) == (date(2026, 11, 20), False)
+    assert ls.snooze_until(date(2026, 12, 1), date(2026, 11, 25)) == (date(2026, 11, 25), True)

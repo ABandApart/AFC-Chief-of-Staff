@@ -26,6 +26,8 @@ from agents._lib.notion_client import rich_text
 DATABASE_ID = "f9c8c348-4c17-4d2c-9af9-aefa9e20fbb8"
 SYNC_TABLE = "outreach_targets"  # notion_sync.entity_table for Leads rows
 CHANNEL = "Outreach"
+DISCOVERY_CHANNEL = "Discovery"  # Gate 0 rows (N9 I2), mapped to outreach_discoveries
+SCORES = ("1", "3", "5")  # S4 and S5 as Notion select options (N9 I3)
 
 STAGES = ("seed", "series_a", "series_b_plus", "mature")
 FUNCTION_STATES = ("self_covered", "under_led", "vacant_seat")
@@ -52,9 +54,12 @@ SETTABLE = {
     "Client": "engaged",
     "Not a fit": "dropped",
     "Opted out": "opted_out",
+    # N9 I3: parking from a candidate is the Gate 1 Watchlist; from a live sequence
+    # it needs a reason in Next step (`stalled_reason`).
+    "Parked": "watchlist",
 }
 # Statuses that end a live sequence: its unsent touches are skipped.
-ENDS_SEQUENCE = frozenset({"conversation", "dropped", "opted_out"})
+ENDS_SEQUENCE = frozenset({"conversation", "dropped", "opted_out", "watchlist"})
 
 # Columns the CoS needs, beyond the ones Docent made. barry-admin adds them once
 # through the Notion connector; the sync refuses to run while any is missing.
@@ -66,19 +71,38 @@ COLUMNS = {
     "Ready to start": "checkbox", "Start on": "date", "Last contacted": "date",
     "Next touch": "date", "Message": "rich_text", "Message ready": "checkbox",
     "CoS id": "number",
+    # N9
+    "S4 leadership gap": "select", "S5 team build below": "select",
+    "Signals checked": "date", "Re-score due": "checkbox",
+    "Review": "select", "Reject reason": "select", "ICP fit": "number",
+    "Verification": "rich_text", "Proposed": "rich_text",
 }
 # Select and status options the CoS writes; each must exist.
+# Gate 0 reject reasons: Notion label → `outreach_discovery.REJECT_REASONS` code.
+REJECT_REASONS = {
+    "Wrong segment": "wrong_segment", "Too small": "too_small", "Too large": "too_large",
+    "No pain signal": "no_pain_signal", "Poor contact path": "poor_contact_path",
+    "Geography": "geography", "Competitor or conflict": "competitor_or_conflict",
+    "Already known": "already_known", "Other (say why in Next step)": "other",
+}
+REVIEWS = ("Approve", "Reject", "Defer")
+
 OPTIONS = {
-    "Channel": (CHANNEL,),
+    "Channel": (CHANNEL, DISCOVERY_CHANNEL),
+    "S4 leadership gap": SCORES,
+    "S5 team build below": SCORES,
+    "Review": REVIEWS,
+    "Reject reason": tuple(REJECT_REASONS),
     "Status": tuple(dict.fromkeys(STATUS_LABEL.values())),
     "Stage": STAGES,
     "Function state": FUNCTION_STATES,
 }
 
 # Fields merged with Notion. Stage and Function state only while `candidate`.
-MERGED = ("status", "start_on", "stage", "function_state")
+MERGED = ("status", "start_on", "s4", "s5", "stage", "function_state")
 PROPERTY = {"status": "Status", "start_on": "Start on", "stage": "Stage",
-            "function_state": "Function state"}
+            "function_state": "Function state", "s4": "S4 leadership gap",
+            "s5": "S5 team build below"}
 
 
 def schema_problems(props: dict[str, Any]) -> list[str]:
@@ -102,7 +126,7 @@ def owned_fields(target: dict[str, Any]) -> tuple[str, ...]:
     Function state are the CoS's: the arc's templates were chosen from them."""
     if target.get("status") == "candidate":
         return MERGED
-    return ("status", "start_on")
+    return ("status", "start_on", "s4", "s5")
 
 
 def _iso(value: date | datetime | None) -> str | None:
@@ -113,10 +137,15 @@ def _iso(value: date | datetime | None) -> str | None:
 
 def pg_values(target: dict[str, Any]) -> dict[str, Any]:
     """The merged fields as Postgres holds them, in the form `notion_values` reads."""
+    def score(v: Any) -> str | None:
+        return str(v) if v is not None else None
+
     return {"status": STATUS_LABEL.get(target["status"], "Parked"),
             "start_on": _iso(target.get("start_on")),
             "stage": target.get("stage"),
-            "function_state": target.get("function_state")}
+            "function_state": target.get("function_state"),
+            "s4": score(target.get("s4_leadership_gap")),
+            "s5": score(target.get("s5_team_build_below"))}
 
 
 def notion_values(page: dict[str, Any]) -> dict[str, Any]:
@@ -129,7 +158,8 @@ def notion_values(page: dict[str, Any]) -> dict[str, Any]:
         return ((spec.get(spec.get("type") or "select") or {}) or {}).get("name")
 
     return {"status": option("Status"), "start_on": start[:10] if start else None,
-            "stage": option("Stage"), "function_state": option("Function state")}
+            "stage": option("Stage"), "function_state": option("Function state"),
+            "s4": option("S4 leadership gap"), "s5": option("S5 team build below")}
 
 
 def refusal(name: str, value: Any) -> str | None:
@@ -140,6 +170,8 @@ def refusal(name: str, value: Any) -> str | None:
     if name == "status" and value not in SETTABLE:
         return (f"Status {value!r} can't be set in Notion "
                 f"(use {', '.join(SETTABLE)}; start a sequence with Start on)")
+    if name in ("s4", "s5") and value not in SCORES:
+        return f"{PROPERTY[name]} must be 1, 3, or 5 (it can't be cleared)"
     if name == "stage" and value is not None and value not in STAGES:
         return f"Stage {value!r} is not one of {', '.join(STAGES)}"
     if name == "function_state" and value is not None and value not in FUNCTION_STATES:
@@ -226,6 +258,9 @@ def fact_props(t: dict[str, Any], *, capacity_free: bool) -> dict[str, Any]:
         "Message": {"rich_text": rich_text(message(t))},
         "Message ready": {"checkbox": bool(t.get("packet_ready"))},
         "CoS id": {"number": t["id"]},
+        "Signals checked": {"date": {"start": _iso(t["signals_observed_at"])}
+                            if t.get("signals_observed_at") else None},
+        "Re-score due": {"checkbox": bool(t.get("rescore_candidate_id"))},
     }
     if "stage" not in owned_fields(t):
         out.update(field_props(pg_values(t), ("stage", "function_state")))

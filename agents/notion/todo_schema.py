@@ -62,6 +62,7 @@ def properties(initiatives_data_source_id: str) -> dict[str, Any]:
         "Created": {"date": {}},
         "CoS id": {"number": {"format": "number"}},
         **PLAN_PROPERTIES,
+        **CARD_PROPERTIES,
     }
 
 
@@ -72,6 +73,26 @@ PLAN_PROPERTIES = {
     "Planned for": {"date": {}},
     "Context": {"rich_text": {}},
 }
+
+
+# Task Tinder cards as To-Do rows (N9 I1, operator 2026-11-12). A row with a Card id
+# and no CoS id is an undecided card, not a task. barry-admin adds these columns.
+CARD_DECISIONS = ("Accept", "Decline", "Defer")
+CARD_PROPERTIES = {
+    "Decision": {"select": {"options": [{"name": d, "color": "default"}
+                                        for d in CARD_DECISIONS]}},
+    "Defer until": {"date": {}},
+    "Evidence": {"rich_text": {}},
+    "Confidence": {"number": {"format": "number"}},
+    "Card id": {"number": {"format": "number"}},
+}
+
+
+def is_card(page: dict[str, Any]) -> bool:
+    """A Task Tinder card row: a Card id and no CoS id (pure)."""
+    props = page.get("properties") or {}
+    return ((props.get("Card id") or {}).get("number") is not None
+            and (props.get("CoS id") or {}).get("number") is None)
 
 
 ROLLUP = {"Key Result": {"rollup": {"relation_property_name": "Initiative",

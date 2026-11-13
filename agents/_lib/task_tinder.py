@@ -30,8 +30,8 @@ from agents._lib.initiatives import LABEL_COLS
 # this a candidate stays pending but isn't posted to #task-tinder.
 MIN_CONFIDENCE = 0.5
 
-# Days a deferred candidate is pushed out (informational for now; re-surfacing
-# deferred-past-date candidates is a future enhancement).
+# Days a deferred candidate is pushed out by default. Since N9 (N-D29) a deferral
+# whose date has passed returns to `pending` (`resurface_deferred`).
 DEFER_DAYS = 7
 
 # action → the status it produces. A candidate must be `pending` to transition.
@@ -179,20 +179,24 @@ def count_pending(min_confidence: float = MIN_CONFIDENCE) -> int:
         return cur.fetchone()[0]
 
 
-def decide(candidate_id: int, action: str) -> dict[str, Any] | None:
+def decide(candidate_id: int, action: str, *, defer_until: Any = None) -> dict[str, Any] | None:
     """Atomically transition a `pending` candidate; the idempotency gate.
 
     `WHERE status='pending'` is the authority — a second click updates zero rows
     and returns None (the no-op). On success returns `{status, candidate}` where
     `candidate` is the row (so an accept can be promoted). Defer stamps
-    `deferred_until`.
+    `deferred_until`: `defer_until` if given (a Notion card row, N9), else
+    today + DEFER_DAYS.
     """
     new_status = _ACTION_STATUS.get(action)
     if new_status is None:
         raise ValueError(f"unknown task-tinder action: {action!r}")
-    deferred = "now()::date + %s" if action == "defer" else "NULL"
-    params: tuple = (new_status, DEFER_DAYS, candidate_id) if action == "defer" \
-        else (new_status, candidate_id)
+    if action == "defer" and defer_until is not None:
+        deferred, params = "%s::date", (new_status, defer_until, candidate_id)
+    elif action == "defer":
+        deferred, params = "now()::date + %s", (new_status, DEFER_DAYS, candidate_id)
+    else:
+        deferred, params = "NULL", (new_status, candidate_id)
     with db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             f"UPDATE task_candidates SET status = %s, decided_at = now(), "
@@ -316,3 +320,37 @@ def create_outreach_task(*, touch_id: int, title: str, owner: str, due_date: Any
             "VALUES (%s, %s, %s, %s, 'open', %s, %s) RETURNING id",
             (title, evidence, owner, candidate_id, follow_up_id, due_date))
         return cur.fetchone()[0]
+
+
+# --- Task Tinder cards in the Notion To-Do database (N9 I1) ---------------------
+
+
+def set_card_fields(candidate_id: int, *, title: str, due_date: Any,
+                    okr_initiative_id: int | None) -> None:
+    """Take a card row's Task, Due, and Initiative into the undecided candidate, so
+    an accept promotes what the operator edited in Notion."""
+    with db.connection() as conn:
+        conn.execute(
+            "UPDATE task_candidates SET proposed_action = %s, due_date = %s, "
+            "okr_initiative_id = %s WHERE id = %s AND status IN ('pending', 'deferred')",
+            (title, due_date, okr_initiative_id, candidate_id))
+
+
+def reopen_deferred(candidate_id: int) -> bool:
+    """Return a deferred candidate to `pending`, so it can be decided again."""
+    with db.connection() as conn:
+        row = conn.execute(
+            "UPDATE task_candidates SET status = 'pending', deferred_until = NULL "
+            "WHERE id = %s AND status = 'deferred' RETURNING id", (candidate_id,)).fetchone()
+    return row is not None
+
+
+def resurface_deferred(today: Any) -> list[int]:
+    """Return every deferral whose date has come to `pending` (N-D29). Before N9 a
+    deferred card never came back."""
+    with db.connection() as conn:
+        rows = conn.execute(
+            "UPDATE task_candidates SET status = 'pending', deferred_until = NULL "
+            "WHERE status = 'deferred' AND deferred_until <= %s RETURNING id",
+            (today,)).fetchall()
+    return [r[0] for r in rows]

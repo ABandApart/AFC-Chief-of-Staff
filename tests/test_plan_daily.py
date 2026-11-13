@@ -244,3 +244,35 @@ def test_create_plan_task_is_once_per_item(conn):
     assert task_tinder.create_plan_task(**kwargs) is not None
     assert task_tinder.create_plan_task(**kwargs) is None
     assert conn.execute("SELECT count(*) FROM tasks").fetchone()[0] == 1
+
+
+@db_only
+def test_summary_goes_to_the_briefing_and_tasks_posts_can_be_off(conn, monkeypatch):
+    from agents.notion import briefing_page
+
+    pi.save(conn, _plan(fri=[STANDING]), "p")
+    briefs, posts = [], []
+    monkeypatch.setattr(briefing_page, "surface_off", lambda name: name == "tasks_posts")
+    out = pd.run_once(FakeNotion(), connection=conn.same, create=task_tinder.create_plan_task,
+                      today=FRI, post=lambda t: posts.append(t) or True,
+                      say=lambda _: None, brief=briefs.append)
+    assert briefs and briefs[0].startswith("Today, Fri Nov 20: 1 task")
+    assert posts == []
+    assert "summary added to the Briefing page, not posted to #tasks (posting is off)" in out
+
+
+@db_only
+def test_a_briefing_failure_does_not_fail_the_run(conn, monkeypatch):
+    from agents.notion import briefing_page
+
+    pi.save(conn, _plan(fri=[STANDING]), "p")
+    posts = []
+    monkeypatch.setattr(briefing_page, "surface_off", lambda name: False)
+
+    def broken(_):
+        raise RuntimeError("Notion down")
+    out = pd.run_once(FakeNotion(), connection=conn.same, create=task_tinder.create_plan_task,
+                      today=FRI, post=lambda t: posts.append(t) or True,
+                      say=lambda _: None, brief=broken)
+    assert len(posts) == 1
+    assert "Briefing page FAILED (RuntimeError), posted to #tasks" in out

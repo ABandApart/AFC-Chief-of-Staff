@@ -165,10 +165,12 @@ def _load(connection: Any, client: Any) -> tuple[list[dict[str, Any]], dict, str
 
 
 def new_rows(tasks: list[dict[str, Any]], pages: dict[str, dict[str, Any]]) -> list[dict]:
-    """Rows added by hand in Notion: not mapped to a task, and no CoS id (pure)."""
+    """Rows added by hand in Notion: not mapped to a task, no CoS id, and not a Task
+    Tinder card row (N9 I1: a card becomes a task only through its Decision)."""
     mapped = {t["notion_page_id"] for t in tasks}
     return [p for pid, p in pages.items() if pid not in mapped
-            and ((p.get("properties") or {}).get("CoS id") or {}).get("number") is None]
+            and ((p.get("properties") or {}).get("CoS id") or {}).get("number") is None
+            and ((p.get("properties") or {}).get("Card id") or {}).get("number") is None]
 
 
 def _record(conn: Any, task_id: int, page_id: str, digest: str, agreed: dict[str, Any],
@@ -261,7 +263,8 @@ def run_once(client: Any, *, connection: Any, complete: Any, reopen: Any, create
         _import(connection, client, page, initiatives, owner, create)
         counts["imported"] += 1
     mapped = {t["notion_page_id"] for t in tasks}
-    unmatched = sum(1 for pid in pages if pid not in mapped) - len(fresh)
+    unmatched = (sum(1 for pid in pages if pid not in mapped) - len(fresh)
+                 - sum(1 for pid, p in pages.items() if pid not in mapped and todo.is_card(p)))
     return (f"OK    {len(tasks)} tasks: {counts['created']} rows created, "
             f"{counts['updated']} updated, {counts['pulled']} field(s) taken from Notion, "
             f"{counts['held']} held; {counts['imported']} row(s) imported as tasks, "

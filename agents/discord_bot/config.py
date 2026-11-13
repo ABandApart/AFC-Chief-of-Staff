@@ -45,3 +45,16 @@ DASHBOARD_CHANNEL_ID = 1565400602173767680
 # own Discord user ID (Developer Mode → right-click your name → Copy User ID)
 # and re-deploy before using #approvals.
 OPERATOR_DISCORD_ID = 734930526586142831
+
+
+# Discord surfaces switched off after their Notion replacement passed its check
+# (PRD-notion-integration.md N9 I7). Names: task_tinder, gate0, rescore,
+# outreach_today, briefing, tasks_posts. A switched-off cog posts no new cards
+# or messages; its slash commands and existing buttons keep working. #approvals
+# (B2) is not on this list: it stays on Discord (N-D23).
+DISCORD_SURFACES_OFF: frozenset[str] = frozenset()
+
+
+def surface_off(name: str) -> bool:
+    """Whether Discord posting for this surface is switched off (N9 I7)."""
+    return name in DISCORD_SURFACES_OFF
