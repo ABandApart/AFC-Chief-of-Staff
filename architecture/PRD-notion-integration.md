@@ -1033,12 +1033,17 @@ The research worker gains a browser, backed by the operator's Chrome on the Mac 
 | N-S17 | **Notion is the source of truth for To-Do content (operator, 2026-11-10).** Notion owns each row's Task, Due, Initiative, and Done. The sync merges each field against the value both sides last agreed on (`notion_sync.synced_fields`, migration 0036): a Notion edit is copied into Postgres and never overwritten, and a Discord change (`/initiative`, the #tasks Done button) reaches Notion only if Notion didn't change that field. When both changed, Notion wins. Source, Created, and CoS id stay CoS-written. A row added by hand in Notion becomes an open task, skipping Task Tinder (amends N-S12 for Notion rows). A prospect-source task's title is never merged, so its real title stays in Postgres (N-D9). Amends N-S1, N-S13, and N-S16. |
 | N-S18 | **The daily plan runs in the CoS (N7, operator 2026-11-11).** It replaces the claude.ai routine. The operator accepted the three recommended defaults: an unfinished standing item closes as `skipped` instead of carrying forward (N-D14); plan follow-ups have no deadline, so plan tasks don't count toward Follow-ups closed on time (N-D15); and the morning summary posts to #tasks (N-D16). |
 | N-S12 | `/todo` posts a Task Tinder card. It doesn't skip acceptance, because a new to-do may not be a priority yet (N-D10). |
-
 | N-S19 | **Outreach leads in Notion, and a wider intake (N8, operator 2026-11-12).** Outreach targets are mirrored to Leads daily; the operator sets Status, Start on, Stage, and Function state there; Start on starts a sequence. Funding stage is not an outreach criterion, S2 is size fit, and Gate 0 shows verified rows without proposed scores. Reverses containment for outreach targets (S1.7, S2) and N-S11. Accepted with the defaults below: N-D17 yes, N-D18 no deadline, N-D19 all rows, N-D20 enable after V6 if the operator accepts it, N-D21 T03/T07 (copy approved 2026-11-12), N-D22 the R3 points. |
+| N-S20 | **Off Discord (N9, operator 2026-11-12).** Task Tinder decisions are a Decision field on To-Do card rows (no Inbox database); Gate 0, re-score, Parked, and touch defers are in Leads and To-Do; Outcomes, Capture, Sources, and Briefings are Notion databases; urgent alerts are comment mentions. All N9 syncs run daily. #approvals stays on Discord. Accepted with the defaults below. |
+| N-S21 | **OKR pages and browser research (N10, operator 2026-11-17).** The OKR pages get live Now callouts and Claude-drafted narratives the operator owns; the research agent reads pages, LinkedIn included, through the operator's Chrome within N-D31's limits. Accepted with the defaults below. |
 
 ### Open
 
-None for N8 (2026-11-12). The decisions N-S19 accepted, for reference:
+None (2026-11-17).
+
+### Accepted defaults, for reference
+
+**N8 (N-S19, 2026-11-12):**
 
 | # | Question | Accepted default |
 |---|---|---|
@@ -1049,12 +1054,7 @@ None for N8 (2026-11-12). The decisions N-S19 accepted, for reference:
 | N-D22 | S2 size-fit points. | **10–100 = 5, 101–250 = 3, unknown = 3, other = 1** (R3). |
 | N-D19 | Should the Leads rows include `dropped`, `opted_out`, and parked targets, or only active ones? | **All.** Marking, not deleting, is the point (operator, 2026-11-12). The Leads default view can filter them out. |
 
-| N-S20 | **Off Discord (N9, operator 2026-11-12).** Task Tinder decisions are a Decision field on To-Do card rows (no Inbox database); Gate 0, re-score, Parked, and touch defers are in Leads and To-Do; Outcomes, Capture, Sources, and Briefings are Notion databases; urgent alerts are comment mentions. All N9 syncs run daily. #approvals stays on Discord. Accepted with the defaults below. |
-| N-S21 | **OKR pages and browser research (N10, operator 2026-11-17).** The OKR pages get live Now callouts and Claude-drafted narratives the operator owns; the research agent reads pages, LinkedIn included, through the operator's Chrome within N-D31's limits. Accepted with the defaults below. |
-
-### Open
-
-None for N9 (2026-11-12). The decisions N-S20 accepted, for reference:
+**N9 (N-S20, 2026-11-12):**
 
 | # | Question | Accepted default |
 |---|---|---|
@@ -1066,9 +1066,7 @@ None for N9 (2026-11-12). The decisions N-S20 accepted, for reference:
 | N-D28 | How often do the N9 syncs run? | **Daily** (operator, 2026-11-12): card decisions, Outcomes, Capture, and Sources at 05:15; Leads-based decisions at 05:30 (N8). |
 | N-D29 | Should a deferred Task Tinder item come back when its Defer until date passes? | **Yes.** Today a deferral never re-surfaces. |
 
-### Open
-
-None for N10 (2026-11-17). The decisions N-S21 accepted, for reference:
+**N10 (N-S21, 2026-11-17):**
 
 | # | Question | Accepted default |
 |---|---|---|
