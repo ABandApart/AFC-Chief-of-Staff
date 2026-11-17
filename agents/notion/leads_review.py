@@ -94,7 +94,7 @@ def facts(d: dict[str, Any]) -> dict[str, Any]:
                                        if d.get("company_domain") else None)
     return {
         "Channel": {"select": {"name": leads.DISCOVERY_CHANNEL}},
-        "Company": {"rich_text": rich_text(d["company_name"])},
+        "Organization": {"rich_text": rich_text(d["company_name"])},
         "Website": {"url": website},
         "LinkedIn": {"url": d.get("contact_linkedin_url") or None},
         "Background": {"rich_text": rich_text(background(d)[:2000])},
@@ -106,14 +106,14 @@ def facts(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def new_row(d: dict[str, Any]) -> dict[str, Any]:
-    return {"Name": {"title": rich_text(d.get("contact_name") or d["company_name"])},
+    return {"Name": {"title": rich_text(d.get("contact_name") or leads.NO_CONTACT)},
             "Email": {"email": d.get("contact_email") or None},
             "Role": {"rich_text": rich_text(d.get("contact_title") or "")},
             "Status": {"status": {"name": "New"}}, **facts(d)}
 
 
 def contact_agreed(d: dict[str, Any]) -> dict[str, Any]:
-    return {"name": d.get("contact_name") or d["company_name"],
+    return {"name": d.get("contact_name") or leads.NO_CONTACT,
             "email": d.get("contact_email") or None, "role": d.get("contact_title") or ""}
 
 
@@ -121,7 +121,7 @@ def contact_edits(values: dict[str, Any], agreed: dict[str, Any]) -> dict[str, A
     """Contact fields the operator changed since the last agreed values (pure)."""
     out = {}
     for key, column in CONTACT.items():
-        if values[key] and values[key] != agreed.get(key):
+        if values[key] and values[key] not in (agreed.get(key), leads.NO_CONTACT):
             out[column] = values[key]
     return out
 

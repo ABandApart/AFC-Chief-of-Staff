@@ -105,7 +105,9 @@ def test_background_line_skips_missing_fields():
 def test_facts_use_company_when_no_contact_and_split_long_messages():
     t = target(contact_name=None, body_filled="x" * 4500, subject_line="Hi")
     facts = leads.fact_props(t, capacity_free=True)
-    assert facts["Name"]["title"][0]["text"]["content"] == "Acme Learning"
+    assert facts["Name"]["title"][0]["text"]["content"] == leads.NO_CONTACT
+    assert facts["Organization"]["rich_text"][0]["text"]["content"] == "Acme Learning"
+    assert "Company" not in facts
     assert len(facts["Message"]["rich_text"]) == 3
     assert facts["Website"] == {"url": "https://acmelearning.com"}
     assert facts["Channel"] == {"select": {"name": "Outreach"}}

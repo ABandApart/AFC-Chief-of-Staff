@@ -523,12 +523,15 @@ def test_a_canadian_firm_passes():
     assert check(good_dossier(country="Canada")) == []
 
 
-def test_missing_proposals_fail():
-    """V6 finding 1: LifeLabs passed with every proposed score empty."""
+def test_empty_proposals_pass_but_partial_or_invalid_ones_fail():
+    """V6 found dossiers with every proposed score empty. Since N8 R4 Gate 0 shows
+    them and approval adds a candidate, so empty is not a failure; a partial or
+    invalid set still is."""
     empty = {"s2_stage_fit": None, "s3_sector_match": None, "s4_leadership_gap": None,
              "s5_team_build_below": None, "stage": None, "function_state": None,
              "reasons": ""}
-    assert "bad_proposals" in check(good_dossier(proposed=empty))
+    assert "bad_proposals" not in check(good_dossier(proposed=empty))
+    assert "bad_proposals" in check(good_dossier(proposed={**empty, "s4_leadership_gap": 3}))
     assert "bad_proposals" in check(good_dossier(proposed={**good_dossier()["proposed"],
                                                            "s2_stage_fit": 2}))
 

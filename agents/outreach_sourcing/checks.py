@@ -32,19 +32,23 @@ normalize_country = outreach.normalize_country  # D6: US + Canada (shared rule)
 def proposal_failures(dossier: dict[str, Any]) -> list[str]:
     """Fields the strict tool schema should have guaranteed, checked in code (pure).
 
-    V6 showed the schema is not fully enforced: one dossier arrived with every
-    proposed score empty. A dossier like that must not pass, and must not reach a
-    card that approval would then refuse.
+    V6 showed the schema is not fully enforced: a dossier can arrive with every
+    proposed score empty (ExperiencePoint, 2026-10-05 and 2026-11-12, when the
+    worker's fetches failed). Since N8 R4 that is not a failure: Gate 0 shows the
+    row, and approving it adds a candidate the operator completes in Leads. A
+    dossier with *some* proposals must have all of them valid.
     """
     from agents.outreach_sourcing import dossier as vocab
 
     failures: list[str] = []
     proposed = dossier.get("proposed") or {}
-    scores_ok = all(proposed.get(k) in vocab.SCORE_VALUES for k in (
-        "s2_stage_fit", "s3_sector_match", "s4_leadership_gap", "s5_team_build_below"))
-    if not (scores_ok and proposed.get("stage") in (*vocab.STAGES, None)
-            and proposed.get("function_state") in vocab.FUNCTION_STATES):
-        failures.append("bad_proposals")
+    judgements = ("s2_stage_fit", "s3_sector_match", "s4_leadership_gap",
+                  "s5_team_build_below", "function_state")
+    if any(proposed.get(k) not in (None, "") for k in judgements):
+        scores_ok = all(proposed.get(k) in vocab.SCORE_VALUES for k in judgements[:4])
+        if not (scores_ok and proposed.get("stage") in (*vocab.STAGES, None)
+                and proposed.get("function_state") in vocab.FUNCTION_STATES):
+            failures.append("bad_proposals")
     contact = dossier.get("contact") or {}
     evidence = dossier.get("evidence")
     if (contact.get("method") not in vocab.CONTACT_METHODS

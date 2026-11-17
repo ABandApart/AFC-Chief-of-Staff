@@ -29,6 +29,7 @@ CHANNEL = "Outreach"
 DISCOVERY_CHANNEL = "Discovery"  # Gate 0 rows (N9 I2), mapped to outreach_discoveries
 SCORES = ("1", "3", "5")  # S4 and S5 as Notion select options (N9 I3)
 
+NO_CONTACT = "(no contact yet)"  # Name for a firm without a named person
 STAGES = ("seed", "series_a", "series_b_plus", "mature")
 FUNCTION_STATES = ("self_covered", "under_led", "vacant_seat")
 
@@ -66,7 +67,7 @@ ENDS_SEQUENCE = frozenset({"conversation", "dropped", "opted_out", "watchlist"})
 COLUMNS = {
     "Name": "title", "Channel": "select", "Email": "email", "Role": "rich_text",
     "Status": "status", "Notes": "rich_text", "Next step": "rich_text",
-    "Company": "rich_text", "Website": "url", "LinkedIn": "url",
+    "Organization": "rich_text", "Website": "url", "LinkedIn": "url",
     "Background": "rich_text", "Stage": "select", "Function state": "select",
     "Ready to start": "checkbox", "Start on": "date", "Last contacted": "date",
     "Next touch": "date", "Message": "rich_text", "Message ready": "checkbox",
@@ -241,13 +242,14 @@ def ready_to_start(t: dict[str, Any], capacity_free: bool) -> bool:
 def fact_props(t: dict[str, Any], *, capacity_free: bool) -> dict[str, Any]:
     """Every CoS-written column (pure). Hashed to skip unchanged rows. Stage and
     Function state are here only once the target has left `candidate`."""
-    name = t.get("contact_name") or t["company_name"]
+    # Name is the person only; the firm is in Organization (operator, 2026-11-17).
+    name = t.get("contact_name") or NO_CONTACT
     out: dict[str, Any] = {
         "Name": {"title": rich_text(str(name))},
         "Channel": {"select": {"name": CHANNEL}},
         "Email": {"email": t.get("contact_email") or None},
         "Role": {"rich_text": rich_text(t.get("contact_role") or "")},
-        "Company": {"rich_text": rich_text(t["company_name"])},
+        "Organization": {"rich_text": rich_text(t["company_name"])},
         "Website": {"url": website(t)},
         "LinkedIn": {"url": t.get("contact_linkedin_url") or None},
         "Background": {"rich_text": rich_text(background(t))},

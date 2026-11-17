@@ -2,7 +2,7 @@
 name: outreach-sourcing
 schedule: "0 5 * * 1-5"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.outreach_sourcing.run
 description: Research agent that surfaces at least 10 approvable outreach candidates each weekday (PRD-outreach-autonomous-sourcing).
 ---
@@ -22,7 +22,7 @@ stored; the Gate 0 cog surfaces what passed in `#outreach` from 05:30.
 **Stops** when N candidates pass (§6.4), the budget is spent, or 07:00 arrives,
 and posts one line to `#outreach` if it fell short.
 
-**SHIPS DISABLED.** Turn it on only after:
+**Enabled 2026-11-17** on the operator's go-ahead: the V6 probe (`v6-20261112T225020`, 5 firms, $1.40) was judged accurate (N-D20, `PRD-notion-integration.md` N8 R5). It shipped disabled until:
 1. migration `0029_outreach_autonomous_sourcing.sql` is applied;
 2. V6, the worker quality probe: a `--dry-run` on the runtime box, reviewed by the
    operator for accuracy and cost per candidate.
