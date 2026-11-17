@@ -1050,6 +1050,7 @@ None for N8 (2026-11-12). The decisions N-S19 accepted, for reference:
 | N-D19 | Should the Leads rows include `dropped`, `opted_out`, and parked targets, or only active ones? | **All.** Marking, not deleting, is the point (operator, 2026-11-12). The Leads default view can filter them out. |
 
 | N-S20 | **Off Discord (N9, operator 2026-11-12).** Task Tinder decisions are a Decision field on To-Do card rows (no Inbox database); Gate 0, re-score, Parked, and touch defers are in Leads and To-Do; Outcomes, Capture, Sources, and Briefings are Notion databases; urgent alerts are comment mentions. All N9 syncs run daily. #approvals stays on Discord. Accepted with the defaults below. |
+| N-S21 | **OKR pages and browser research (N10, operator 2026-11-17).** The OKR pages get live Now callouts and Claude-drafted narratives the operator owns; the research agent reads pages, LinkedIn included, through the operator's Chrome within N-D31's limits. Accepted with the defaults below. |
 
 ### Open
 
@@ -1064,8 +1065,6 @@ None for N9 (2026-11-12). The decisions N-S20 accepted, for reference:
 | N-D27 | Run Discord and Notion side by side before switching each Discord surface off? | **Yes,** per surface, until its runtime check passes. Guarded writes make double decisions harmless. |
 | N-D28 | How often do the N9 syncs run? | **Daily** (operator, 2026-11-12): card decisions, Outcomes, Capture, and Sources at 05:15; Leads-based decisions at 05:30 (N8). |
 | N-D29 | Should a deferred Task Tinder item come back when its Defer until date passes? | **Yes.** Today a deferral never re-surfaces. |
-
-| N-S21 | **OKR pages and browser research (N10, operator 2026-11-17).** The OKR pages get live Now callouts and Claude-drafted narratives the operator owns; the research agent reads pages, LinkedIn included, through the operator's Chrome within N-D31's limits. Accepted with the defaults below. |
 
 ### Open
 
