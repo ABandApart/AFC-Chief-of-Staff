@@ -2,7 +2,7 @@
 name: notion-inputs-sync
 schedule: "15 5 * * *"
 trigger_kind: scheduled
-enabled: false
+enabled: true
 command: uv run python -m agents.notion.inputs_sync
 description: Task Tinder cards in To-Do, plus the Outcomes, Capture, and Sources databases (PRD-notion-integration.md N9).
 ---
@@ -23,10 +23,10 @@ operator is refused and raised as an urgent alert (a Notion comment mention).
 
 **What activation starts:** no LLM call from this job itself. Capture ingest
 uses cognee, as #capture does today. One `agent_runs` row per run
-(`function_label='inputs_sync'`). Ships `enabled: false` per `loops/README.md`;
-enable after barry-admin adds the To-Do card columns, creates the Outcomes,
-Capture, Sources, and Briefings databases, and records their ids
-(`PHASE-NOTION-N9.md`).
+(`function_label='inputs_sync'`). Shipped `enabled: false` per `loops/README.md` and was
+enabled 2026-11-17 on the operator's go-ahead, after barry-admin added the To-Do
+card columns, created the Outcomes, Capture, Sources, and Briefings databases,
+and recorded their ids and the operator's Notion user id (`PHASE-NOTION-N9.md`).
 
 Health check any time:
 
