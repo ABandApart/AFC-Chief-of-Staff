@@ -314,6 +314,15 @@ def run_once(client: Any, *, connection: Any, now: datetime,
     counts = {name: push_rows(client, connection, name, sources[name], w.rows[name])
               for name in dash.DATABASES}
     n_blocks = push_blocks(client, connection, w.quarter, block_ids, blocks(w))
+    # N10 Part A: the Now callout on every OKR page. A failure here never stops
+    # the dashboard push.
+    from agents.notion import okr_pages
+    try:
+        n_pages = okr_pages.push(client, connection, w)
+    except NotionError as e:
+        say(f"WARN  OKR page callouts not updated: {e}")
+        n_pages = 0
+    n_blocks += n_pages
     posted = "not posted (re-run this week)"
     if new:
         sent = post(summary(w, block_ids.get("page")))

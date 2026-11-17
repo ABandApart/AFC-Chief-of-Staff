@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.5, 2026-11-17: N10 (OKR pages and browser research) specified, not yet accepted. Rev 2.4, 2026-11-12: N9 (off Discord) specified, revised, accepted (N-S20), BUILT, set up in Notion, merged to `main`, and `notion-inputs-sync` enabled 2026-11-17 (no migration). Rev 2.3, 2026-11-12: N8 (outreach leads in Notion, and a wider intake) specified, accepted (N-S19), and BUILT, merged to `main`, and loops enabled 2026-11-12 (migrations 0038 and 0039 applied; Leads columns added; T03/T07 copy approved); it reverses containment for outreach targets and drops funding stage as an outreach criterion, by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.5, 2026-11-17: N10 (OKR pages and browser research) specified, accepted (N-S21), and BUILT on branch `notion-n10`; the 26 OKR narratives are drafted in Notion. Rev 2.4, 2026-11-12: N9 (off Discord) specified, revised, accepted (N-S20), BUILT, set up in Notion, merged to `main`, and `notion-inputs-sync` enabled 2026-11-17 (no migration). Rev 2.3, 2026-11-12: N8 (outreach leads in Notion, and a wider intake) specified, accepted (N-S19), and BUILT, merged to `main`, and loops enabled 2026-11-12 (migrations 0038 and 0039 applied; Leads columns added; T03/T07 copy approved); it reverses containment for outreach targets and drops funding stage as an outreach criterion, by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -895,7 +895,7 @@ No migration. Every new mapping is a `notion_sync` row; a card row is mapped as 
 
 ## N10 — OKR pages and browser research
 
-**Outcome:** S1.11. Added 2026-11-17 (rev 2.5). **Not yet accepted.**
+**Outcome:** S1.11. Added 2026-11-17 (rev 2.5). **Accepted 2026-11-17 with the recommended defaults (N-S21). Built 2026-11-17; see the build notes.**
 
 **Why.** Two asks from the operator, 2026-11-17:
 1. **OKR pages.** On 2026-11-17 every page in the master OKR databases was blank: 4 objectives, 16 KRs, and 6 initiatives. The operator wants each one to summarize its goal, steps, process, and metrics.
@@ -976,6 +976,26 @@ The research worker gains a browser, backed by the operator's Chrome on the Mac 
      - The operator rates the dossiers, as in V6.
      - With Chrome closed, the same probe completes without the browser, and the run's notes say so.
 
+**Build notes, Part A (2026-11-17):**
+- `agents/notion/okr_pages.py`: pure `kr_text`, `initiative_text`, and `objective_text`, plus `pages()` (26 pages on 2026-11-17) and `push()`. A callout the operator deleted is recreated at the top of the page. `METRIC_NOTES` holds the one-sentence "how it's measured" for each registry metric and for `manual`.
+- `notion_client.append_blocks(..., at_start=True)` sends `position: {"type": "start"}`.
+- `dashboard_push.run_once` calls `okr_pages.push` after the dashboard blocks. A Notion error there is reported and doesn't fail the push.
+- Read-only preview against `aiadaptive_cos` on 2026-11-17: 26 pages, values matching the dashboard. Example: "Touches sent on schedule: 3.2% of 90% · 🔴 Off track".
+- The narratives were drafted on 2026-11-17 by a Claude session through the operator's connector (N-D30). The handoff lists the pages and their gaps.
+
+**Build notes, Part B (2026-11-17):**
+- `agents/_lib/browser.py`:
+  - Playwright 1.65.2 attaches with `connect_over_cdp` to `COS_BROWSER_CDP` (default `http://127.0.0.1:9222`), using the profile's own context. It opens one tab per call and never closes the browser.
+  - `open_text` refuses ZoomInfo, Glassdoor, non-http(s) URLs, and localhost or private addresses, so a page can't steer the worker to the CDP port, `file://`, or `chrome://`.
+  - `linkedin_company` and `linkedin_people` only read: a test asserts the module makes no click, type, fill, press, or submit calls.
+- **The LinkedIn limiter** is a JSON state file at `~/.local/state/aiadaptive-cos/linkedin-limiter.json` (`COS_BROWSER_STATE`), shared across workers and processes with a thread lock and `flock`. It caps 25 loads a day and 3 per firm, with 8–20 s pacing. A detected checkpoint, CAPTCHA, auth wall, or status 999 stops LinkedIn for the rest of the day.
+- **The worker** gets the three browser tools only when `browser.available()` answers at the start of the run. Then it has up to 14 turns and 10 browser calls, and opened and final URLs count as seen. Without a browser, it runs exactly as before.
+- **N-D32:** `evidence_domains()` folds every LinkedIn host into `linkedin.com`, so the stored list and the unchanged SQL `outreach_distinct_count` count LinkedIn as one domain at most. `run_checks` fails LinkedIn-only evidence as `thin_evidence`. The old "LinkedIn evidence is a blocked source" rule is gone.
+- **`linkedin_profile`:** the dossier vocabulary accepts it, but `outreach_discoveries_contact_method_ck` (0029) doesn't. It's stored as `none_found`, with the profile URL in `contact_linkedin_url`, until a migration widens the CHECK (open follow-up).
+- **A LinkedIn stop** is written to the run's notes and, on a real run, as a system note on the day's Briefing page.
+- **Tests:** 46 in `test_browser.py` (one live test runs only with `COS_BROWSER_CDP` set) and 108 in `test_outreach_sourcing.py`. The full suite has 1,458 passing.
+- **Not verified:** the live LinkedIn page structure. The People card links (`a[href*="/in/"]`), the About labels, and the wall phrases are assumptions until barry-agent's probe.
+
 ---
 
 ## S2. Non-goals
@@ -1045,9 +1065,13 @@ None for N9 (2026-11-12). The decisions N-S20 accepted, for reference:
 | N-D28 | How often do the N9 syncs run? | **Daily** (operator, 2026-11-12): card decisions, Outcomes, Capture, and Sources at 05:15; Leads-based decisions at 05:30 (N8). |
 | N-D29 | Should a deferred Task Tinder item come back when its Defer until date passes? | **Yes.** Today a deferral never re-surfaces. |
 
-### Open (N10, 2026-11-17)
+| N-S21 | **OKR pages and browser research (N10, operator 2026-11-17).** The OKR pages get live Now callouts and Claude-drafted narratives the operator owns; the research agent reads pages, LinkedIn included, through the operator's Chrome within N-D31's limits. Accepted with the defaults below. |
 
-| # | Question | Recommended default |
+### Open
+
+None for N10 (2026-11-17). The decisions N-S21 accepted, for reference:
+
+| # | Question | Accepted default |
 |---|---|---|
 | N-D30 | Who writes the OKR pages' narrative, and does the CoS ever rewrite it? | **barry-admin drafts it once through the connector, from the repo and plan sources, marked as a draft; the operator owns it after review. The CoS only maintains the Now callout.** |
 | N-D31 | Accept the LinkedIn terms risk, with these limits? LinkedIn's User Agreement prohibits automated access, so the CoS research profile's LinkedIn account could be restricted. | **Yes, with the limits in Part B:** 25 loads a day, 3 per firm, human pacing, read-only, and a stop at any checkpoint. Use an account the operator can afford to have restricted. |

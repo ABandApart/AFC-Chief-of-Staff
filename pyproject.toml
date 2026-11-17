@@ -28,6 +28,10 @@ dependencies = [
     # Reading the .xlsx also removes the manual CSV export step, which is how
     # the workbook's "Date Added" column became every target's trigger_date.
     "openpyxl>=3.1",
+    # N10 Part B: the research worker reads pages in the operator's Chrome over
+    # CDP (`agents/_lib/browser.py`). No bundled browser is downloaded: it only
+    # attaches with `connect_over_cdp`, and is imported lazily.
+    "playwright>=1.65.2",
 ]
 
 [dependency-groups]

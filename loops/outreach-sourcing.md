@@ -27,4 +27,42 @@ and posts one line to `#outreach` if it fell short.
 2. V6, the worker quality probe: a `--dry-run` on the runtime box, reviewed by the
    operator for accuracy and cost per candidate.
 
+## Browser research (N10 Part B)
+
+When the operator's **CoS research** Chrome answers on CDP, each worker also gets
+three read-only tools, run by `agents/_lib/browser.py`: `browser_open` (any page
+except ZoomInfo and Glassdoor, at most 20,000 characters of text),
+`linkedin_company` (headcount band, HQ, industry), and `linkedin_people` (names
+and titles). The run checks the browser once at start (`COS_BROWSER_CDP`, default
+`http://127.0.0.1:9222`) and writes a `browser:` line in the run's notes. If Chrome
+doesn't answer, the run uses the server-side tools only, as before; a missing
+browser never fails a run.
+
+Start Chrome as barry-agent with a profile used only for research, then sign in
+to LinkedIn in it by hand (the CoS never signs in):
+
+```sh
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --user-data-dir="$HOME/Library/Application Support/CoS-Research-Chrome" \
+  --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 \
+  --no-first-run --no-default-browser-check
+```
+
+Check it listens on loopback only: `lsof -nP -iTCP:9222 -sTCP:LISTEN` shows
+`127.0.0.1:9222`.
+
+**LinkedIn limits (N-D31).** At most 25 LinkedIn page loads a day and 3 per
+researched firm, 8 to 20 seconds apart, shared by every worker and process. A
+sign-in wall, checkpoint, or CAPTCHA stops LinkedIn for the rest of the day; the
+tools then return `linkedin_unavailable`, and the run's notes end with a
+`LinkedIn today: ... STOPPED` line. Check the profile's LinkedIn session by hand.
+The day's counters are in `~/.local/state/aiadaptive-cos/linkedin-limiter.json`
+(override with `COS_BROWSER_STATE`); delete the file to clear a stop early.
+
+**Rules.** LinkedIn evidence counts toward at most one of the two independent
+domains a candidate needs (N-D32), so a firm found only on LinkedIn fails
+`thin_evidence`. A contact found on LinkedIn without an email has method
+`linkedin_profile`; it is stored as `none_found` with the profile in
+`contact_linkedin_url` until a migration widens the `contact_method` CHECK.
+
 Nothing here sends mail (B2, G3).

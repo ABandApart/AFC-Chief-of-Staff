@@ -18,7 +18,9 @@ MARKET_TRIGGERS = (
 )
 SOURCE_KINDS = ("own_site", "job_post", "press", "directory", "filing",
                 "search_result", "other")
-CONTACT_METHODS = ("published", "pattern_inferred", "generic_inbox", "none_found")
+# `linkedin_profile` (N10): a named person and title from LinkedIn, no email.
+CONTACT_METHODS = ("published", "pattern_inferred", "generic_inbox", "none_found",
+                   "linkedin_profile")
 STAGES = ("seed", "series_a", "series_b_plus", "mature")
 FUNCTION_STATES = ("self_covered", "under_led", "vacant_seat")
 OWNERSHIP = ("vc_backed", "pe_backed", "bootstrapped", "founder_owned", "public")
@@ -101,7 +103,22 @@ EMAIL_CONFIDENCE = {
     "pattern_inferred": "inferred_pattern",
     "generic_inbox": "general_inbox",
     "none_found": None,
+    # Confidence "none": a LinkedIn name is a contact path, not an address. Stored
+    # as NULL, like none_found, because the email_confidence CHECK (0018/0020)
+    # has no "none" value.
+    "linkedin_profile": None,
 }
+
+# `outreach_discoveries.contact_method` is CHECKed (0029) to the pre-N10 values,
+# and N10 adds no migration. Until one widens it, a LinkedIn-only contact is
+# stored as `none_found` - which is true of the email - and its profile URL goes
+# in `contact_linkedin_url`, so nothing is lost.
+STORED_CONTACT_METHOD = {"linkedin_profile": "none_found"}
+
+
+def stored_contact_method(method: str | None) -> str | None:
+    """The value written to `outreach_discoveries.contact_method` (pure)."""
+    return STORED_CONTACT_METHOD.get(method or "", method)
 
 
 def proposed_scores(dossier: dict[str, Any]) -> dict[str, Any]:

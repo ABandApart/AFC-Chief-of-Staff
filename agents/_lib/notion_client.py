@@ -237,13 +237,17 @@ class NotionClient:
         return self.request("PATCH", f"/data_sources/{data_source_id}", {"properties": properties})
 
     def append_blocks(self, block_id: str, children: list[dict[str, Any]], *,
-                      after: str | None = None) -> list[dict[str, Any]]:
+                      after: str | None = None,
+                      at_start: bool = False) -> list[dict[str, Any]]:
         """Append blocks to a page or block; returns the created blocks, in order.
-        `after` inserts them right after that child block instead of at the end
-        (the `position` object that replaced `after` in 2026-03-11)."""
+        `after` inserts them right after that child block instead of at the end, and
+        `at_start` before the first child (the `position` object that replaced `after`
+        in 2026-03-11; `start` confirmed 2026-10-16)."""
         body: dict[str, Any] = {"children": children}
         if after:
             body["position"] = {"type": "after_block", "after_block": {"id": after}}
+        elif at_start:
+            body["position"] = {"type": "start"}
         return self.request("PATCH", f"/blocks/{block_id}/children", body).get("results", [])
 
     def update_block(self, block_id: str, body: dict[str, Any]) -> dict[str, Any]:

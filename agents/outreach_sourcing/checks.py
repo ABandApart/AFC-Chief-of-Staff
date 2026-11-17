@@ -14,10 +14,17 @@ from collections.abc import Callable, Iterable
 from typing import Any
 from urllib.parse import urlsplit
 
-from agents._lib import outreach
+from agents._lib import browser, outreach
 
-# R14: never fetched, never cited, including through search results.
-BLOCKED_DOMAINS = ("linkedin.com", "zoominfo.com", "glassdoor.com")
+LINKEDIN_DOMAIN = browser.LINKEDIN_DOMAIN
+# R14 as amended by N10: never opened by any tool and never cited.
+NEVER_DOMAINS = browser.REFUSED_DOMAINS
+# The server-side web_search / web_fetch block list. LinkedIn stays on it: those
+# tools cannot sign in, so LinkedIn is read through the browser tools only, under
+# N-D31's limits. Since N10 a LinkedIn citation is allowed (see `evidence_domains`).
+BLOCKED_DOMAINS = (LINKEDIN_DOMAIN, *NEVER_DOMAINS)
+# Hosts that are LinkedIn under another name, so they count as one domain (N-D32).
+_DOMAIN_ALIASES = {"lnkd.in": LINKEDIN_DOMAIN, "licdn.com": LINKEDIN_DOMAIN}
 
 # Second-level suffixes where the registrable domain is three labels. Discovery is
 # US-only (D6), so this short list is enough; a public-suffix dependency is not.
@@ -81,8 +88,16 @@ def normalize_url(url: str) -> str:
     return f"{host}{path}{query}"
 
 
+def source_domain(url: str) -> str:
+    """The domain a cited URL counts as for R0.5: its registrable domain, with
+    LinkedIn's alias hosts folded into `linkedin.com` (pure)."""
+    dom = registrable_domain(url)
+    return _DOMAIN_ALIASES.get(dom, dom)
+
+
 def is_blocked(url: str) -> bool:
-    return registrable_domain(url) in BLOCKED_DOMAINS
+    """A citation that is refused outright: ZoomInfo or Glassdoor (R14, N10)."""
+    return source_domain(url) in NEVER_DOMAINS
 
 
 # A server that answers with one of these is up but refusing an automated client
@@ -106,13 +121,27 @@ def default_site_is_live(domain: str, *, timeout: int = 10) -> bool:
 
 
 def evidence_domains(dossier: dict[str, Any]) -> list[str]:
-    """Distinct registrable domains among the dossier's evidence URLs (pure)."""
+    """Distinct source domains among the dossier's evidence URLs (pure).
+
+    **N-D32: LinkedIn counts toward at most one of R0.5's two domains.** Every
+    LinkedIn URL - company page, people page, profile, `lnkd.in` link - folds into
+    the single entry `linkedin.com`, so LinkedIn can fill one slot and never two.
+    This list is what is stored in `outreach_discoveries.evidence_domains`, which
+    `outreach_distinct_count` counts for the bar in `_eligible` and in the 0029
+    CHECK; folding here keeps that SQL count honest without changing it.
+    """
     seen: list[str] = []
     for item in dossier.get("evidence") or []:
-        dom = registrable_domain(item.get("url", ""))
+        dom = source_domain(item.get("url", ""))
         if dom and dom not in seen:
             seen.append(dom)
     return seen
+
+
+def independent_domain_count(domains: Iterable[str]) -> int:
+    """How many of R0.5's independent domains these fill, LinkedIn at most once (pure)."""
+    distinct = {source_domain(d) for d in domains if d}
+    return len(distinct - {LINKEDIN_DOMAIN}) + min(1, int(LINKEDIN_DOMAIN in distinct))
 
 
 def run_checks(
@@ -155,10 +184,11 @@ def run_checks(
     evidence = dossier.get("evidence") or []
     if any(normalize_url(item.get("url", "")) not in seen for item in evidence):
         failures.append("uncited_url")
-    if len(evidence_domains(dossier)) < MIN_DISTINCT_EVIDENCE_DOMAINS:
+    # N-D32: LinkedIn fills at most one of the two, so LinkedIn alone is thin.
+    if independent_domain_count(evidence_domains(dossier)) < MIN_DISTINCT_EVIDENCE_DOMAINS:
         failures.append("thin_evidence")
 
-    # 4. R14.
+    # 4. R14, as amended by N10: ZoomInfo and Glassdoor are never cited.
     urls = [item.get("url", "") for item in evidence]
     urls += [(dossier.get("contact") or {}).get("source_url") or "",
              (dossier.get("trigger") or {}).get("source_url") or ""]

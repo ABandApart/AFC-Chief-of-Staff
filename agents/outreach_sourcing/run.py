@@ -37,7 +37,15 @@ from typing import Any
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from agents._lib import db, discord_rest, heartbeat, outreach, outreach_discovery, runs
+from agents._lib import (
+    browser,
+    db,
+    discord_rest,
+    heartbeat,
+    outreach,
+    outreach_discovery,
+    runs,
+)
 from agents._lib.runs import DailyCeilingExceeded, agent_run
 from agents.outreach_sourcing import checks, dossier, worker
 
@@ -96,6 +104,7 @@ class RunState:
     stop_reason: str | None = None
     report: list[str] = field(default_factory=list)
     tried_ids: set[int] = field(default_factory=set)
+    with_browser: bool = False
 
 
 # --- context -------------------------------------------------------------------
@@ -390,6 +399,20 @@ def create_hypothesis(conn: object, spec: dict[str, Any]) -> int:
 # --- persisting a dossier ---------------------------------------------------------
 
 
+def contact_linkedin_url(contact: dict[str, Any]) -> str | None:
+    """The contact's LinkedIn profile URL, when that is the cited source (pure)."""
+    url = contact.get("source_url") or ""
+    return url if browser.is_linkedin(url) and "/in/" in url else None
+
+
+def browser_note(available: bool) -> str:
+    """The run-notes line on the browser (N10 Part B; pure)."""
+    if available:
+        return f"browser: Chrome answered at {browser.cdp_endpoint()}; browser tools on"
+    return (f"browser: unavailable (no answer at {browser.cdp_endpoint()}); "
+            "server-side tools only, LinkedIn not used")
+
+
 def discovery_fields(found: dict[str, Any], seen: set[str], *, run_id: str,
                      failures: list[str]) -> dict[str, Any]:
     """Columns written for one dossier, H2-cleaned (pure apart from cleaning)."""
@@ -408,7 +431,7 @@ def discovery_fields(found: dict[str, Any], seen: set[str], *, run_id: str,
         "evidence": Jsonb(evidence),
         "evidence_domains": domains,
         "proposed_scores": Jsonb(dossier.proposed_scores(trimmed)),
-        "contact_method": contact.get("method"),
+        "contact_method": dossier.stored_contact_method(contact.get("method")),
         "sourcing_run_id": run_id,
         "check_failures": failures,
         "suggested_angle": outreach.clean_field(found.get("suggested_angle"), max_chars=400),
@@ -427,7 +450,8 @@ def store(conn: object, brief: dict[str, Any], found: dict[str, Any], seen: set[
         assignments = ", ".join(f"{c} = %({c})s" for c in cols)
         fill = {"contact_name": contact.get("name"), "contact_title": contact.get("title"),
                 "contact_email": contact.get("email"),
-                "email_confidence": dossier.EMAIL_CONFIDENCE.get(contact.get("method", ""))}
+                "email_confidence": dossier.EMAIL_CONFIDENCE.get(contact.get("method", "")),
+                "contact_linkedin_url": contact_linkedin_url(contact)}
         fill_sql = ", ".join(f"{c} = COALESCE({c}, %({c})s)" for c in fill)
         with conn.cursor() as cur:  # type: ignore[attr-defined]
             cur.execute(
@@ -449,6 +473,7 @@ def store(conn: object, brief: dict[str, Any], found: dict[str, Any], seen: set[
         "contact_title": contact.get("title"),
         "contact_email": contact.get("email"),
         "email_confidence": dossier.EMAIL_CONFIDENCE.get(contact.get("method", "")),
+        "contact_linkedin_url": contact_linkedin_url(contact),
         "discovered_via": "agent_research",
         "discovery_query": outreach.clean_field(brief.get("guidance"), max_chars=500),
         "source_url": ((found.get("evidence") or [{}])[0]).get("url"),
@@ -472,7 +497,8 @@ def verify_briefs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def process(brief: dict[str, Any], ctx: dict[str, Any], state: RunState) -> dict[str, Any]:
     """Research one brief and check the result. Never raises; returns an outcome."""
     try:
-        result = worker.research(brief, run_id=state.run_id)
+        result = worker.research(brief, run_id=state.run_id,
+                                 with_browser=state.with_browser)
     except DailyCeilingExceeded as exc:
         return {"brief": brief, "error": "budget", "detail": str(exc)}
     except Exception as exc:  # one bad brief must not stop the round
@@ -532,7 +558,10 @@ def run(*, dry_run: bool = False, ignore_deadline: bool = False) -> RunState:
             with conn.cursor() as cur:
                 cur.execute("INSERT INTO outreach_sourcing_runs (run_id, target_n) "
                             "VALUES (%s, %s)", (run_id, need))
-    state = RunState(run_id=run_id, target_n=need, dry_run=dry_run)
+    state = RunState(run_id=run_id, target_n=need, dry_run=dry_run,
+                     with_browser=browser.available())
+    # A missing browser never fails a run: the workers run as before (N10).
+    state.report.append(browser_note(state.with_browser))
     if not dry_run:
         with db.connection() as conn:
             state.released = release_held(conn, need)
@@ -662,7 +691,27 @@ def _absorb(outcomes: list[dict[str, Any]], ctx: dict[str, Any], state: RunState
     return stop
 
 
+def _brief_stop(note: str) -> None:
+    """Put a LinkedIn stop on the day's Briefing page as a system note (N10 Part B),
+    so the operator checks the CoS research profile's session. Best effort."""
+    from datetime import date
+
+    from agents._lib.notion_client import NotionClient
+    from agents.notion import briefing_page
+
+    briefing_page.system_note(NotionClient.from_keychain(), db.connection, date.today(),
+                              f"Research agent: {note}")
+
+
 def _finish(state: RunState) -> None:
+    if state.with_browser:
+        try:
+            note = browser.linkedin_note()
+            state.report.append(note)
+            if "STOPPED" in note and not state.dry_run:
+                _brief_stop(note)
+        except Exception:  # the note is a courtesy; never lose the run record over it
+            logger.exception("could not read the LinkedIn limiter state")
     with db.connection() as conn:
         cost = run_spend(conn, state.run_id)
         if not state.dry_run:
@@ -725,7 +774,8 @@ def probe_cost(conn: object, correlation_id: str) -> float:
         return float(cur.fetchone()[0])
 
 
-def probe_one(target: dict[str, Any], probe_id: str) -> dict[str, Any]:
+def probe_one(target: dict[str, Any], probe_id: str,
+              with_browser: bool = False) -> dict[str, Any]:
     """Research one known firm with the real worker; check it; store nothing."""
     domain = target["company_domain"]
     segment = target.get("sector") or "unknown"
@@ -733,7 +783,8 @@ def probe_one(target: dict[str, Any], probe_id: str) -> dict[str, Any]:
              "domain": domain, "segment_key": segment, "known": "an existing target"}
     correlation = f"{probe_id}:{domain}"
     try:
-        result = worker.research(brief, run_id=correlation, trigger_kind="manual")
+        result = worker.research(brief, run_id=correlation, trigger_kind="manual",
+                                 with_browser=with_browser)
     except Exception as exc:
         return {"target": target, "error": str(exc)[:300], "correlation": correlation}
     found = result.dossier
@@ -745,12 +796,17 @@ def probe_one(target: dict[str, Any], probe_id: str) -> dict[str, Any]:
                if checks.is_blocked(e.get("url", ""))]
     # Report the trigger as the real path would store it (V6 finding 2).
     found["trigger"] = checks.usable_trigger(found, result.seen_urls)
+    linkedin_cited = [e.get("url") for e in found.get("evidence") or []
+                      if browser.is_linkedin(e.get("url", ""))]
     return {"target": target, "dossier": found, "failures": failures, "turns": result.turns,
-            "seen": len(result.seen_urls), "blocked": blocked, "correlation": correlation}
+            "seen": len(result.seen_urls), "blocked": blocked, "correlation": correlation,
+            "browser_calls": result.browser_calls, "linkedin_loads": len(result.linkedin_urls),
+            "linkedin_cited": linkedin_cited}
 
 
-def probe_report(outcomes: list[dict[str, Any]], costs: dict[str, float], probe_id: str) -> str:
-    """The V6 review document (pure)."""
+def probe_report(outcomes: list[dict[str, Any]], costs: dict[str, float], probe_id: str,
+                 notes: list[str] | None = None) -> str:
+    """The V6 review document (pure). `notes` are the browser lines (N10)."""
     passed = sum(1 for o in outcomes if "dossier" in o and not o["failures"])
     total = sum(costs.values())
     n = len(outcomes)
@@ -765,8 +821,12 @@ def probe_report(outcomes: list[dict[str, Any]], costs: dict[str, float], probe_
         "",
         f"- Dossiers passing the checks: **{passed} of {n}**",
         f"- Total cost: **${total:.2f}**, average **${(total / n if n else 0):.2f}** per firm",
-        f"- Evidence from LinkedIn, ZoomInfo or Glassdoor (VB3, must be 0): "
+        f"- Evidence from ZoomInfo or Glassdoor (VB3, must be 0): "
         f"**{sum(len(o.get('blocked') or []) for o in outcomes)}**",
+        f"- Firms where LinkedIn was read: "
+        f"**{sum(1 for o in outcomes if o.get('linkedin_loads'))} of {n}** "
+        f"(LinkedIn counts toward at most one of the two domains, N-D32)",
+        *[f"- {line}" for line in notes or []],
         "",
         "| # | Firm | Checks | Cost | Accurate? (Y/N) | Notes |",
         "|---|---|---|---|---|---|",
@@ -787,7 +847,9 @@ def probe_report(outcomes: list[dict[str, Any]], costs: dict[str, float], probe_
         trig = d.get("trigger") or {}
         lines += [
             f"- **Checks:** {'pass' if not o['failures'] else ', '.join(o['failures'])} "
-            f"· {o['turns']} turn(s) · {o['seen']} URLs seen",
+            f"· {o['turns']} turn(s) · {o['seen']} URLs seen · "
+            f"{o.get('browser_calls', 0)} browser call(s), "
+            f"{len(o.get('linkedin_cited') or [])} LinkedIn citation(s)",
             f"- **Summary:** {d.get('summary', '')}",
             f"- **Why now:** {d.get('why_now', '')}",
             f"- **Trigger:** {trig.get('kind') or 'none'} {trig.get('date') or ''} "
@@ -811,15 +873,19 @@ def probe_report(outcomes: list[dict[str, Any]], costs: dict[str, float], probe_
 def probe(n: int, report_path: str | None = None) -> str:
     """Run V6 and write its report. Returns the report path."""
     probe_id = f"v6-{datetime.now(UTC):%Y%m%dT%H%M%S}"
+    with_browser = browser.available()
     with db.connection() as conn:
         targets = probe_targets(conn, n)
     with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
-        outcomes = list(pool.map(lambda t: probe_one(t, probe_id), targets))
+        outcomes = list(pool.map(lambda t: probe_one(t, probe_id, with_browser), targets))
     with db.connection() as conn:
         costs = {o["correlation"]: probe_cost(conn, o["correlation"]) for o in outcomes}
+    notes = [browser_note(with_browser)]
+    if with_browser:
+        notes.append(browser.linkedin_note())
     path = report_path or f"{PROBE_REPORT_DIR}/V6-probe-{datetime.now():%Y-%m-%d}.md"
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(probe_report(outcomes, costs, probe_id))
+        fh.write(probe_report(outcomes, costs, probe_id, notes))
     os.chmod(path, 0o666)  # the handoff directory is shared between accounts
     return path
 
