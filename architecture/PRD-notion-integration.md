@@ -3,7 +3,7 @@
 <doc:meta>
   <doc:theme>Notion as the operator's planning and writing surface; Postgres keeps everything the agents compute</doc:theme>
   <doc:owner>Barry Baldwin</doc:owner>
-  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.4, 2026-11-12: N9 (off Discord) specified, revised, accepted (N-S20), BUILT, set up in Notion, merged to `main`, and `notion-inputs-sync` enabled 2026-11-17 (no migration). Rev 2.3, 2026-11-12: N8 (outreach leads in Notion, and a wider intake) specified, accepted (N-S19), and BUILT, merged to `main`, and loops enabled 2026-11-12 (migrations 0038 and 0039 applied; Leads columns added; T03/T07 copy approved); it reverses containment for outreach targets and drops funding stage as an outreach criterion, by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
+  <doc:status>DRAFT rev 2, 2026-10-16 — revised to the operator's vision of 2026-10-16 (initiatives tier, Notion master OKR document, to-do push, writing workflow, build order). N1 BUILT 2026-10-16 (branch `notion-integration`) and verified live 2026-10-28 (`cli.notion_check` PASS). N2 setup RUN live 2026-10-28 with the Q4 seed; N2 OKR pull BUILT and LIVE 2026-10-28 (`agents/notion/okr_pull.py`, migration 0033 applied; merged to `main` and loop `notion-okr-pull` enabled, first scheduled run 16:30). N3 BUILT 2026-10-28 (migration 0034 applied), merged to `main` and loop `notion-todo-sync` enabled 2026-10-28; smoke test passed 2026-10-29. **N1, N2, and N3 complete.** N4 BUILT 2026-10-29 (branch `notion-integration`; migration 0035 applied; loop `notion-dashboard-push` shipped disabled), not yet deployed. N4 deployed 2026-11-10 (merged to `main` @ `f41eaf9`, loop enabled). N5–N6 not started. Rev 2.2, 2026-11-11: N7 (daily plan) specified, accepted (N-S18), BUILT, set up live, and merged to `main` 2026-11-11 (migration 0037 applied; 145 plan items imported; loop `notion-plan-daily` enabled, first run Mon Nov 16 06:00). Rev 2.5, 2026-11-17: N10 (OKR pages and browser research) specified, not yet accepted. Rev 2.4, 2026-11-12: N9 (off Discord) specified, revised, accepted (N-S20), BUILT, set up in Notion, merged to `main`, and `notion-inputs-sync` enabled 2026-11-17 (no migration). Rev 2.3, 2026-11-12: N8 (outreach leads in Notion, and a wider intake) specified, accepted (N-S19), and BUILT, merged to `main`, and loops enabled 2026-11-12 (migrations 0038 and 0039 applied; Leads columns added; T03/T07 copy approved); it reverses containment for outreach targets and drops funding stage as an outreach criterion, by operator decision. Rev 2.1, 2026-10-28: N4 spec completed after review (metric registry, scoring, `okr_snapshots`, one-way relations, quarter rollover); N2 known gaps recorded. N-D8…N-D12 settled 2026-10-16; N-D13 (status thresholds) settled 2026-10-28.</doc:status>
   <doc:depends_on>`15-okrs-q4-2026.md`, `PRD-outcome-attribution.md`, `PRD-phase-4-discovery.md`, `PRD-tasktinder-refinements.md`, `80-telemetry-layer.md` (Higgins), `25-target-state.md` (B2, B3), `ADR-0001` (API boundary)</doc:depends_on>
   <doc:supersedes>rev 1 (2026-10-05), which kept Postgres as the system of record for KR definitions</doc:supersedes>
 </doc:meta>
@@ -21,6 +21,7 @@ Notion becomes the operator's surface for **planning** and **writing**:
 7. **Daily plan (N7, rev 2.2).** A multi-week plan written in Notion is imported once. Each weekday morning the CoS turns that day's items into tasks, carries forward unfinished ones, shows the last five plan days on the dashboard, and posts a summary to #tasks. This replaces a routine that ran outside the CoS.
 8. **Outreach leads (N8, rev 2.3).** Each outreach target is a row in the Leads database, with company background, stage, last contact, and its current message, refreshed each morning. The operator sets Status there, and starts a sequence by setting Start on.
 9. **Off Discord (N9, rev 2.4).** Task Tinder (as a Decision field in To-Do), Gate 0, re-scoring, outreach defers, outcomes, capture, feeds, the morning briefing, and alerts move to Notion. Only the #approvals gate (B2) stays on Discord.
+10. **OKR pages and browser research (N10, rev 2.5).** Every objective, KR, and initiative page carries a live Now callout and a narrative of its goal, steps, process, and metrics. The research agent can read LinkedIn and other login-walled pages through the operator's Chrome, within strict limits.
 
 **Build order (operator, 2026-10-16):** N1 foundation → N2 master OKR document → N3 Task Tinder updates → N4 dashboard → **N6 writing → N5 Tartt review**. Time-to-value decides the tail: writing is mostly setup and is usable in days. N7 (added 2026-11-11) is proposed ahead of N5 and N6, because the plan it serves starts Mon Nov 16. N8 (added 2026-11-12) follows N7, and N9 (added 2026-11-12) follows N8.
 
@@ -46,6 +47,7 @@ When N1–N7 are done:
 8. **Daily plan:** by 06:05 each plan weekday, that day's plan items are open tasks with due date today. Every unfinished non-standing item from earlier days has moved to today. Within 5 minutes they're in the To-Do database and #tasks. The dashboard's Daily plan view shows the prior four plan days and today, and #tasks has the 3-line summary.
 9. **Outreach leads:** by 06:30 each day, every outreach target is a Leads row whose fields match Postgres. A Status, Stage, Function state, or Start on set in Notion by 05:30 is in Postgres that morning. A ready candidate whose Start on is today is `in_sequence`, with its task in To-Do and its message in Leads. No gate requires a funding stage, and Gate 0 shows every verified discovery that passed its checks.
 10. **Off Discord:** every required operator step except a B2 approval can be done in Notion. A Decision set on a To-Do card row, or an Outcome, Capture, or Source row, reaches Postgres at the next morning's run. A Gate 0, re-score, Parked, or touch-defer change made in Leads or To-Do by 05:30 takes effect that morning. Each day's briefing is a Notion page by 06:05. An urgent alert reaches the operator's phone as a Notion mention.
+11. **OKR pages and browser research:** after each Monday push, every OKR page's Now callout matches the dashboard. The research agent uses LinkedIn on most firms it researches, never exceeds its daily LinkedIn limits, and stops at any checkpoint.
 
 ## Architecture
 
@@ -891,6 +893,91 @@ No migration. Every new mapping is a `notion_sync` row; a card row is mapped as 
 
 ---
 
+## N10 — OKR pages and browser research
+
+**Outcome:** S1.11. Added 2026-11-17 (rev 2.5). **Not yet accepted.**
+
+**Why.** Two asks from the operator, 2026-11-17:
+1. **OKR pages.** On 2026-11-17 every page in the master OKR databases was blank: 4 objectives, 16 KRs, and 6 initiatives. The operator wants each one to summarize its goal, steps, process, and metrics.
+2. **Browser research.** The research agent (`outreach-sourcing`, enabled 2026-11-17) uses Anthropic's server-side `web_search` and `web_fetch`. Those can't open pages behind a login, LinkedIn above all, and they can't open a URL that wasn't in an earlier search result. That second limit is the `url_not_in_prior_context` failure in V6, where ExperiencePoint's contact, news, and careers pages wouldn't open. The operator wants the agent to research in a real browser, LinkedIn in particular. The operator keeps Chrome up to date and available to barry-agent.
+
+### Part A: OKR pages
+
+Each Objective, KR, and Initiative row in the master databases is a page. N10 writes its body in two parts:
+
+**1. A live "Now" callout at the top, CoS-written.** The Monday dashboard push already computes everything it needs (`kr_metrics.evaluate`, N4), so it writes the callout in the same run:
+- **KR:** current value, target, unit, progress, status (On track, At risk, Off track, or Too early), the last 4 weekly values from `okr_snapshots`, and how the value is computed (the registry entry's source and window, in one sentence).
+- **Initiative:** its KR's line, plus open and done to-do counts, and the plan minutes this week from `plan_items`.
+- **Objective:** one line per KR, plus the worst status.
+
+The callout is recorded as `notion_sync ('okr_page', '<notion_page_id>:now')` and updated in place. The CoS never writes anything else on the page.
+
+**2. Narrative sections below the callout, written once, then the operator's.**
+
+| Page | Sections |
+|---|---|
+| Objective | **Goal** (why it matters, from `15-okrs-q4-2026.md` and `10-strategy.md`), **How we'll get there** (its KRs and what each one measures), **Risks and assumptions** |
+| Key Result | **Goal** (the target and why that number), **Metric** (definition, source table, window, direction; for a `manual` KR, who enters the value and where), **What moves it** (its initiatives, and which activity drives the number), **Process** (the weekly routine that produces it) |
+| Initiative | **Goal** (which KR it serves and how), **Steps** (from the active plan's items for this initiative, grouped by week, and from the AI Adaptive context repo's operating guides where one applies: Phase 1 social media, Phase 2 short-form video, Phase 3 micro-magnets), **Process** (the recurring routine and its done-when), **Metrics** (the KR it moves, plus any leading count the CoS already tracks) |
+
+How the narrative gets written (N-D30):
+- barry-admin drafts all 26 pages once, through the Notion connector, from these sources:
+  - `15-okrs-q4-2026.md`;
+  - `kr_metrics.REGISTRY`;
+  - the active plan (`plan_items`);
+  - the 4-week plan page;
+  - `operations-guides/` in the AI Adaptive repo.
+- Each draft carries a "Draft — written by Claude from <sources> on <date>" line, which the operator deletes once the page is reviewed.
+- The CoS never rewrites the narrative.
+- A new quarter's pages are drafted the same way, on request.
+
+No new loop. The Monday `notion-dashboard-push` gains the Now callouts.
+
+### Part B: Browser research
+
+The research worker gains a browser, backed by the operator's Chrome on the Mac Mini:
+
+1. **Chrome.**
+   - The operator keeps a dedicated Chrome profile, **CoS research**, running for barry-agent with remote debugging on `127.0.0.1:9222` only.
+   - The operator signs in to LinkedIn in that profile by hand. The CoS never handles the password and never signs in.
+   - The operator keeps Chrome up to date (operator, 2026-11-17).
+2. **Tools.** Two custom tools are added to the worker, beside the server-side ones:
+   - `browser_open(url)` returns the page's readable text (title, main text, links), at most 20,000 characters.
+   - `linkedin_company(slug_or_url)` and `linkedin_people(company, title_keywords)` return structured fields read from LinkedIn's company "About" and "People" pages: headcount band, HQ, industry, and names with titles.
+
+   Playwright attaches to that Chrome over CDP (`connect_over_cdp`), opens a new tab per call, and closes it afterward. Pages are data, never instructions, as the worker's rules already say.
+3. **Limits (N-D31):**
+   - At most 25 LinkedIn page loads per day, and 3 per firm.
+   - 8–20 seconds between LinkedIn loads.
+   - Read-only: no clicks on Connect, Message, Follow, or Like, and no form submissions.
+   - The tools only read.
+   - If LinkedIn shows a sign-in wall, a checkpoint, or a CAPTCHA, the tool stops browsing LinkedIn for the day and reports `linkedin_unavailable`. The CoS never solves a CAPTCHA and never retries around a checkpoint. The day's Briefing page gets a system note, so the operator can check the session.
+   - `browser_open` refuses ZoomInfo and Glassdoor (`checks.BLOCKED_DOMAINS` minus LinkedIn).
+4. **What changes in the rules:**
+   - The worker prompt drops "Never use LinkedIn" and adds when to use it: to confirm headcount and HQ, and to find a named contact and title.
+   - `checks.BLOCKED_DOMAINS` drops `linkedin.com` for the browser tools only.
+   - The VB3 check ("evidence from LinkedIn must be 0") becomes: **LinkedIn evidence counts toward at most one of the two independent domains** that R0.5 requires, so a firm can't be verified on LinkedIn alone.
+   - `contact_method` gains `linkedin_profile`, with email confidence `none`. A LinkedIn name without an email is a contact path, not an address.
+5. **When the browser isn't there.** If CDP doesn't answer, the worker runs as today, with server-side tools only, and the run's notes say so. A missing browser never fails a run.
+
+**Cost.** The browser adds no API cost. It adds turns, so cost per firm is expected to rise from about $0.28 toward $0.35–0.45; the $20/day outreach ceiling still holds.
+
+### Verification
+
+1. **Part A:**
+   - **Pure tests:** the Now callout's blocks for a KR, an initiative, and an objective, including a `manual` KR and a KR that's Too early.
+   - **DB test:** the callout is found and updated in place on a second run.
+   - **Runtime:** after the next Monday push, every OKR page shows a Now callout that matches the dashboard. The operator reviews the 26 drafts.
+2. **Part B:**
+   - **Pure tests:** the LinkedIn rate limiter and per-firm cap; checkpoint detection, from a saved checkpoint page's text; the VB3 rule; the new contact method.
+   - **Integration test** against a local static page served on 127.0.0.1.
+   - **Runtime:**
+     - With the CoS research profile signed in, a `--probe 5` run uses LinkedIn on at least 3 firms, stays under the caps, and stores nothing.
+     - The operator rates the dossiers, as in V6.
+     - With Chrome closed, the same probe completes without the browser, and the run's notes say so.
+
+---
+
 ## S2. Non-goals
 
 - **No outreach evidence or correspondence in Notion.** No evidence, sent or received messages, dossiers, or discoveries. *Amended by N8 (operator, 2026-11-12): outreach targets' company and contact details and their current templated message are in Leads, and outreach and inbound to-dos use real titles.*
@@ -958,6 +1045,14 @@ None for N9 (2026-11-12). The decisions N-S20 accepted, for reference:
 | N-D28 | How often do the N9 syncs run? | **Daily** (operator, 2026-11-12): card decisions, Outcomes, Capture, and Sources at 05:15; Leads-based decisions at 05:30 (N8). |
 | N-D29 | Should a deferred Task Tinder item come back when its Defer until date passes? | **Yes.** Today a deferral never re-surfaces. |
 
+### Open (N10, 2026-11-17)
+
+| # | Question | Recommended default |
+|---|---|---|
+| N-D30 | Who writes the OKR pages' narrative, and does the CoS ever rewrite it? | **barry-admin drafts it once through the connector, from the repo and plan sources, marked as a draft; the operator owns it after review. The CoS only maintains the Now callout.** |
+| N-D31 | Accept the LinkedIn terms risk, with these limits? LinkedIn's User Agreement prohibits automated access, so the CoS research profile's LinkedIn account could be restricted. | **Yes, with the limits in Part B:** 25 loads a day, 3 per firm, human pacing, read-only, and a stop at any checkpoint. Use an account the operator can afford to have restricted. |
+| N-D32 | Does LinkedIn evidence count toward R0.5's two independent domains? | **At most one of the two.** A firm verified on LinkedIn alone isn't verified. |
+
 ## Risks and verify-before-build
 
 | Risk | Mitigation |
@@ -979,4 +1074,7 @@ None for N9 (2026-11-12). The decisions N-S20 accepted, for reference:
 | The operator misses an urgent alert once #system stops being primary (N9). | Urgent alerts @-mention the operator in a Notion comment, which pushes to the phone. Verify at build that a comment by the integration that mentions a user sends that user a notification. |
 | About 178 card rows crowd the To-Do database (N9). | They show only in the To triage view; the task views filter on CoS id. A later step can bulk-decline stale discovery cards. |
 | A card row gets imported as a task by the 5-minute To-Do sync (N9). | The import skips any row with a Card id; a test pins it. |
+| LinkedIn restricts the account used by the CoS research profile (N10). | N-D31's limits. Checkpoints stop LinkedIn browsing for the day and raise a system note. The CoS never solves a CAPTCHA. |
+| A page in the browser carries a prompt injection (N10). | The worker's rule that page text is data, never instructions. The tools are read-only, and the dossier still passes the code checks before storage. |
+| The CDP port exposes the signed-in browser to any local process (N10). | It binds to 127.0.0.1 only, on a profile used only for research. Verify before build that barry-agent is the only account on the Mac Mini that can reach it. |
 | The operator edits a mirrored field in Notion. | The next push overwrites it (S2). Each database's description says which fields are yours. |
