@@ -51,6 +51,11 @@ def proposal_failures(dossier: dict[str, Any]) -> list[str]:
     proposed = dossier.get("proposed") or {}
     judgements = ("s2_stage_fit", "s3_sector_match", "s4_leadership_gap",
                   "s5_team_build_below", "function_state")
+    # `worker` decodes a JSON-string field (`dossier.normalize`); a dossier that
+    # reaches here another way is checked, not trusted.
+    if not isinstance(proposed, dict):
+        failures.append("bad_proposals")
+        proposed = {}
     if any(proposed.get(k) not in (None, "") for k in judgements):
         scores_ok = all(proposed.get(k) in vocab.SCORE_VALUES for k in judgements[:4])
         if not (scores_ok and proposed.get("stage") in (*vocab.STAGES, None)
@@ -58,7 +63,7 @@ def proposal_failures(dossier: dict[str, Any]) -> list[str]:
             failures.append("bad_proposals")
     contact = dossier.get("contact") or {}
     evidence = dossier.get("evidence")
-    if (contact.get("method") not in vocab.CONTACT_METHODS
+    if (not isinstance(contact, dict) or contact.get("method") not in vocab.CONTACT_METHODS
             or not isinstance(evidence, list)
             or any(not (isinstance(e, dict) and e.get("url") and e.get("claim"))
                    for e in evidence)):

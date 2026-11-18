@@ -8,6 +8,7 @@ dossier is either complete or visibly says what is missing.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 # The eight market triggers from `35-` §3 (the vocabulary in 0023/0029).
@@ -114,6 +115,51 @@ EMAIL_CONFIDENCE = {
 # stored as `none_found` - which is true of the email - and its profile URL goes
 # in `contact_linkedin_url`, so nothing is lost.
 STORED_CONTACT_METHOD = {"linkedin_profile": "none_found"}
+
+
+# The nested fields of a dossier and the JSON type each must have.
+_NESTED = {"trigger": dict, "contact": dict, "proposed": dict, "evidence": list}
+
+
+def _decode(value: Any, kind: type) -> Any:
+    """`value` as `kind`, decoding a JSON string; None if it can't be (pure)."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    return value if isinstance(value, kind) else None
+
+
+def normalize(found: dict[str, Any]) -> list[str]:
+    """Repair a submitted dossier in place; return the fields that were malformed.
+
+    The strict tool schema is not fully enforced: on 2026-11-18 a worker sent
+    `proposed` as a JSON-encoded string, and the checks crashed the run. A string
+    that decodes to the right type is decoded. Anything else is replaced with an
+    empty value, so the checks fail the dossier (`bad_fields`, `thin_evidence`)
+    instead of raising. Evidence items get the same treatment.
+    """
+    malformed: list[str] = []
+    for key, kind in _NESTED.items():
+        if key not in found or found[key] is None:
+            continue
+        value = _decode(found[key], kind)
+        if value is None:
+            malformed.append(key)
+            value = kind()
+        elif value is not found[key]:
+            malformed.append(key)
+        found[key] = value
+    items = []
+    for item in found.get("evidence") or []:
+        decoded = _decode(item, dict)
+        if decoded is not item and "evidence" not in malformed:
+            malformed.append("evidence")
+        items.append(decoded if decoded is not None else {})
+    if "evidence" in found:
+        found["evidence"] = items
+    return malformed
 
 
 def stored_contact_method(method: str | None) -> str | None:

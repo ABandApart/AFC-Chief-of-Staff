@@ -289,7 +289,16 @@ def _submitted(content: list[Any]) -> dict[str, Any] | None:
         if (isinstance(data, dict) and data.get("type") == "tool_use"
                 and data.get("name") == dossier.SUBMIT_TOOL):
             value = data.get("input")
-            return json.loads(value) if isinstance(value, str) else dict(value or {})
+            try:
+                found = json.loads(value) if isinstance(value, str) else value
+            except ValueError:
+                found = None
+            if not isinstance(found, dict):
+                raise WorkerError("submit_dossier input is not a JSON object")
+            if (malformed := dossier.normalize(found)):
+                logger.warning("dossier for %s had malformed fields: %s",
+                               found.get("company_name") or "?", ", ".join(malformed))
+            return found
     return None
 
 

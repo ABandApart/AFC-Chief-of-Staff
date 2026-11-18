@@ -104,6 +104,7 @@ class RunState:
     stop_reason: str | None = None
     report: list[str] = field(default_factory=list)
     tried_ids: set[int] = field(default_factory=set)
+    stored_ids: set[int] = field(default_factory=set)
     with_browser: bool = False
 
 
@@ -511,10 +512,14 @@ def process(brief: dict[str, Any], ctx: dict[str, Any], state: RunState) -> dict
     # the hypothesis rule (and the 0029 trigger would refuse the row).
     found["segment_key"] = brief["segment_key"]
     has_hyp = bool(brief.get("hypothesis"))
-    failures = checks.run_checks(
-        found, seen_urls=result.seen_urls, known_domains=ctx["known_domains"],
-        in_list_segments=ctx["segments"], has_hypothesis=has_hyp,
-        own_discovery_domain=brief.get("domain") if brief["kind"] == "verify" else None)
+    try:
+        failures = checks.run_checks(
+            found, seen_urls=result.seen_urls, known_domains=ctx["known_domains"],
+            in_list_segments=ctx["segments"], has_hypothesis=has_hyp,
+            own_discovery_domain=brief.get("domain") if brief["kind"] == "verify" else None)
+    except Exception as exc:  # a malformed dossier is this brief's error, not the run's
+        logger.exception("checks failed: %s", brief.get("company_name") or brief["segment_key"])
+        return {"brief": brief, "error": "error", "detail": f"checks: {exc}"[:300]}
     return {"brief": brief, "dossier": found, "seen": result.seen_urls,
             "failures": failures}
 
@@ -525,6 +530,15 @@ def round_size(remaining: int, budget_left: float) -> int:
     # Round first: 3.6 // 0.4 is 8.0 in floating point, not 9.
     affordable = math.floor(round(budget_left / EXPECTED_COST_PER_BRIEF, 6))
     return max(0, min(affordable, math.ceil(remaining * BRIEFS_PER_NEEDED)))
+
+
+def release_claims(ids: set[int], run_id: str) -> None:
+    """Unclaim rows a failed round never stored, so a later run can try them."""
+    if not ids:
+        return
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE outreach_discoveries SET sourcing_run_id = NULL "
+                    "WHERE id = ANY(%s) AND sourcing_run_id = %s", (sorted(ids), run_id))
 
 
 def claim_ids(briefs: list[dict[str, Any]]) -> list[int]:
@@ -631,9 +645,25 @@ def run(*, dry_run: bool = False, ignore_deadline: bool = False) -> RunState:
                             "WHERE id = ANY(%s) AND sourcing_run_id IS NULL",
                             (run_id, claimed))
 
-        with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
-            outcomes = list(pool.map(lambda b: process(b, ctx, state), briefs))
-        if _absorb(outcomes, ctx, state):
+        try:
+            with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+                outcomes = list(pool.map(lambda b: process(b, ctx, state), briefs))
+            stop = _absorb(outcomes, ctx, state)
+        except Exception as exc:
+            # `process` never raises, so this is a bug. Free the rows this round
+            # claimed but didn't store, and record the run, before failing it:
+            # otherwise the rows stay claimed (the 2026-10-06 repair by hand).
+            logger.exception("round %d failed", round_no)
+            if not dry_run:
+                release_claims(set(claimed) - state.stored_ids, run_id)
+            state.stop_reason = "error"
+            state.report.append(f"round {round_no}: failed ({str(exc)[:120]})")
+            try:
+                _finish(state)
+            except Exception:  # keep the original error
+                logger.exception("could not record the failed run")
+            raise
+        if stop:
             break
     else:
         state.stop_reason = state.stop_reason or (
@@ -681,6 +711,8 @@ def _absorb(outcomes: list[dict[str, Any]], ctx: dict[str, Any], state: RunState
             with db.connection() as conn:
                 store(conn, brief, found, out["seen"], run_id=state.run_id,
                       failures=failures)
+            if brief.get("discovery_id"):
+                state.stored_ids.add(brief["discovery_id"])
         except Exception:  # one bad row must not lose the rest of the round
             logger.exception("could not store %s", label)
             state.report.append(f"✗ {label}: not stored (see log)")
@@ -789,15 +821,19 @@ def probe_one(target: dict[str, Any], probe_id: str,
         return {"target": target, "error": str(exc)[:300], "correlation": correlation}
     found = result.dossier
     found["segment_key"] = segment
-    failures = checks.run_checks(found, seen_urls=result.seen_urls, known_domains=set(),
-                                 in_list_segments={segment}, has_hypothesis=False,
-                                 own_discovery_domain=domain)
-    blocked = [e.get("url") for e in found.get("evidence") or []
-               if checks.is_blocked(e.get("url", ""))]
-    # Report the trigger as the real path would store it (V6 finding 2).
-    found["trigger"] = checks.usable_trigger(found, result.seen_urls)
-    linkedin_cited = [e.get("url") for e in found.get("evidence") or []
-                      if browser.is_linkedin(e.get("url", ""))]
+    try:
+        failures = checks.run_checks(found, seen_urls=result.seen_urls, known_domains=set(),
+                                     in_list_segments={segment}, has_hypothesis=False,
+                                     own_discovery_domain=domain)
+        blocked = [e.get("url") for e in found.get("evidence") or []
+                   if checks.is_blocked(e.get("url", ""))]
+        # Report the trigger as the real path would store it (V6 finding 2).
+        found["trigger"] = checks.usable_trigger(found, result.seen_urls)
+        linkedin_cited = [e.get("url") for e in found.get("evidence") or []
+                          if browser.is_linkedin(e.get("url", ""))]
+    except Exception as exc:  # report the firm as an error; keep the other firms
+        logger.exception("probe checks failed: %s", domain)
+        return {"target": target, "error": f"checks: {exc}"[:300], "correlation": correlation}
     return {"target": target, "dossier": found, "failures": failures, "turns": result.turns,
             "seen": len(result.seen_urls), "blocked": blocked, "correlation": correlation,
             "browser_calls": result.browser_calls, "linkedin_loads": len(result.linkedin_urls),

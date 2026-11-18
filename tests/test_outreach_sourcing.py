@@ -980,3 +980,100 @@ def test_probe_report_counts_linkedin_use():
     assert "ZoomInfo or Glassdoor (VB3, must be 0): **0**" in report
     assert "- browser: unavailable" in report and "LinkedIn today: 2/25" in report
     assert "3 browser call(s), 1 LinkedIn citation(s)" in report
+
+
+# --- malformed dossiers (2026-11-18: `proposed` arrived as a JSON string) ------------
+
+def test_normalize_decodes_json_string_fields():
+    import json
+    good = good_dossier()
+    d = good_dossier(proposed=json.dumps(good["proposed"]), contact=json.dumps(good["contact"]),
+                     evidence=[json.dumps(e) for e in good["evidence"]])
+    assert sorted(dossier.normalize(d)) == ["contact", "evidence", "proposed"]
+    assert d["proposed"] == good["proposed"] and d["contact"] == good["contact"]
+    assert d["evidence"] == good["evidence"]
+    assert check(d) == []
+
+
+def test_normalize_empties_what_cannot_be_decoded_so_the_checks_fail_it():
+    d = good_dossier(proposed="{not json", contact=["a list"], trigger=None,
+                     evidence=[good_dossier()["evidence"][0], "junk"])
+    assert sorted(dossier.normalize(d)) == ["contact", "evidence", "proposed"]
+    assert d["proposed"] == {} and d["contact"] == {} and d["trigger"] is None
+    assert d["evidence"][1] == {}
+    assert "bad_fields" in check(d)
+
+
+def test_a_clean_dossier_is_left_alone():
+    d = good_dossier()
+    assert dossier.normalize(d) == [] and d == good_dossier()
+
+
+def test_checks_fail_rather_than_crash_on_string_fields():
+    assert "bad_proposals" in checks.proposal_failures(good_dossier(proposed='{"a": 1}'))
+    assert "bad_fields" in checks.proposal_failures(good_dossier(contact="Pat Lee"))
+
+
+def test_worker_decodes_a_string_proposed():
+    import json
+    d = good_dossier(proposed=json.dumps(good_dossier()["proposed"]))
+    submit = _block(type="tool_use", id="t1", name=dossier.SUBMIT_TOOL, input=d)
+    result = worker.research({"kind": "find", "segment_key": "corporate_l_and_d"},
+                             run_id="r", call=lambda *a, **k: _resp([submit], "tool_use"))
+    assert result.dossier["proposed"]["s3_sector_match"] == 5
+
+
+def test_worker_refuses_a_submission_that_is_not_an_object():
+    submit = _block(type="tool_use", id="t1", name=dossier.SUBMIT_TOOL, input='["x"]')
+    with pytest.raises(worker.WorkerError):
+        worker.research({"kind": "find", "segment_key": "x"}, run_id="r",
+                        call=lambda *a, **k: _resp([submit], "tool_use"))
+
+
+def test_process_turns_a_check_crash_into_an_error_outcome(mocker):
+    mocker.patch.object(run.worker, "research",
+                        return_value=worker.WorkerResult(dossier=good_dossier(), seen_urls=SEEN))
+    mocker.patch.object(checks, "run_checks", side_effect=AttributeError("boom"))
+    out = run.process({"kind": "find", "segment_key": "corporate_l_and_d"},
+                      {"known_domains": set(), "segments": SEGMENTS},
+                      run.RunState(run_id="r", target_n=15, dry_run=True))
+    assert out["error"] == "error" and "checks: boom" in out["detail"]
+
+
+def test_probe_one_turns_a_check_crash_into_an_error(mocker):
+    mocker.patch.object(run.worker, "research",
+                        return_value=worker.WorkerResult(dossier=good_dossier(), seen_urls=SEEN))
+    mocker.patch.object(checks, "run_checks", side_effect=AttributeError("boom"))
+    out = run.probe_one({"id": 1, "company_name": "Acme", "company_domain": "acmelearning.com",
+                         "sector": "corporate_l_and_d"}, "v6-x")
+    assert out["error"].startswith("checks: boom")
+
+
+def test_a_crashed_round_releases_its_claims_and_records_the_run(mocker):
+    executed = []
+    cur = mocker.MagicMock()
+    cur.execute.side_effect = lambda sql, params=None: executed.append((sql, params))
+    conn = mocker.MagicMock()
+    conn.__enter__.return_value = conn
+    conn.cursor.return_value.__enter__.return_value = cur
+    mocker.patch.object(run.db, "connection", return_value=conn)
+    for name, value in (("housekeeping", None), ("target_n", 15),
+                        ("in_list_segments", SEGMENTS), ("open_hypotheses", []),
+                        ("recent_rejects", []), ("known_by_segment", {}),
+                        ("plan_find_briefs", []), ("group_spend_today", 0.0)):
+        mocker.patch.object(run, name, return_value=value)
+    finish = mocker.patch.object(run, "_finish")
+    mocker.patch.object(run.outreach_discovery, "known_domains", return_value=set())
+    pool = [{"id": i, "company_name": f"F{i}", "company_domain": f"f{i}.com",
+             "segment": "corporate_l_and_d", "description": "", "hypothesis_id": None}
+            for i in (100, 101)]
+    mocker.patch.object(run, "stuck_pool", return_value=pool)
+    mocker.patch.object(run, "process", side_effect=RuntimeError("bug"))
+
+    with pytest.raises(RuntimeError):
+        run.run(dry_run=False, ignore_deadline=True)
+
+    released = [p for sql, p in executed if "SET sourcing_run_id = NULL" in sql]
+    assert released and sorted(released[0][0]) == [100, 101]
+    finish.assert_called_once()
+    assert finish.call_args[0][0].stop_reason == "error"
