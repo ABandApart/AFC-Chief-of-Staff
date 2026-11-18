@@ -209,6 +209,8 @@ When you adopt it, move it into `architecture/` with your changes, and note `ack
 - Findings are MEDIUM or INFO, validated in code, prefixed `judge:`, and go to the inbox only.
 - One `agent_runs` row per session: `ted` / `telemetry`, provider `anthropic-subscription`, `usd_cost` 0. The CLI's notional cost is printed, not booked: the subscription has no per-call price, and booking it would count against the API ceilings.
 - **Open (operator):** whether the subscription's terms cover unattended, scheduled use. The operator is treating it as a hypothesis to test (H4, E2 below).
+- **Hypothesis result, barry-admin account (2026-11-18):** with the `claude` CLI signed in to the Max account (`subscriptionType: max`, `planTier: max_5x`) and `ANTHROPIC_API_KEY=invalid` exported, `--probe` returned `pong` with `apiKeySource: none`. A full `--judgment --dry-run` on live evidence returned valid structured output: 10 findings, none dropped, about 9,300 input and 3,400 output tokens. So the subscription answers a headless, tool-less session. Still to confirm: barry-agent with a `setup-token` token (E2), and the plan terms.
+- **Evidence fixes from that run:** the first review called the weekly `trent-crimm` batch silent and misread checklist items. The evidence now carries each agent's run days and every loop's schedule, and full checklist text.
 
 ### Also in this change
 

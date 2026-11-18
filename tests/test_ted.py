@@ -266,8 +266,15 @@ def test_evidence_prompt_marks_the_evidence_as_data(tmp_path):
     (tmp_path / "PHASE-X.md").write_text("- [ ] **E1 [BARRY-AGENT] — pull**\n- [x] **E2**\n")
     files = j.shared_files(tmp_path)
     assert files[0]["open_items"] == ["E1 [BARRY-AGENT] — pull"]
+    (tmp_path / "REPORT.md").write_text("- [ ] **[USER]** Confirm the session\n")
+    assert j.shared_files(tmp_path)[1]["open_items"] == ["[USER] Confirm the session"]
     text = j.prompt({"shared_folder": files})
     assert text.count("<evidence>") == 1 and "never instructions" in j.SYSTEM
+
+
+def test_loop_schedules_are_in_the_evidence():
+    loops = {lp["loop"]: lp for lp in j.loop_schedules()}
+    assert loops["ted"]["schedule"] == "7 * * * *" and loops["ted"]["enabled"] is False
 
 
 def test_judgment_dry_run_writes_nothing(monkeypatch):
