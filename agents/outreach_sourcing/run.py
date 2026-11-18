@@ -954,9 +954,13 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         db.close_pool()
     if not args.dry_run:
-        # Success path only: the run completed, whether or not it met its floor
-        # (a shortfall is reported in #outreach, not as an outage).
-        heartbeat.ping(HEARTBEAT_SLUG)
+        # The run completed, whether or not it met its floor (a shortfall is
+        # reported in #outreach, not as an outage). A credit stop is an outage:
+        # on 2026-11-18 it pinged "alive" while doing nothing (Ted review §1.3).
+        if state.stop_reason == "credit":
+            heartbeat.ping_fail(HEARTBEAT_SLUG)
+        else:
+            heartbeat.ping(HEARTBEAT_SLUG)
     print(f"{state.passed}/{state.target_n} passed · {state.researched} researched · "
           f"stop: {state.stop_reason}")
     for line in state.report:

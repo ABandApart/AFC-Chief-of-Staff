@@ -1077,3 +1077,15 @@ def test_a_crashed_round_releases_its_claims_and_records_the_run(mocker):
     assert released and sorted(released[0][0]) == [100, 101]
     finish.assert_called_once()
     assert finish.call_args[0][0].stop_reason == "error"
+
+
+def test_a_credit_stop_pings_fail_not_alive(mocker):
+    """2026-11-18: the 05:00 run stopped on credit and still reported alive."""
+    state = run.RunState(run_id="r", target_n=15, dry_run=False, stop_reason="credit")
+    mocker.patch.object(run, "run", return_value=state)
+    mocker.patch.object(run.db, "close_pool")
+    ping = mocker.patch.object(run.heartbeat, "ping")
+    fail = mocker.patch.object(run.heartbeat, "ping_fail")
+    assert run.main([]) == 0
+    fail.assert_called_once_with("cos-sourcing")
+    ping.assert_not_called()

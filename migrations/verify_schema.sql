@@ -296,6 +296,13 @@ SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns
             ELSE 'FAIL apply migration 0038' END AS outreach_leads_status;
 
 \echo
+\echo '=== Ted findings (migration 0040) ==='
+SELECT
+    CASE WHEN (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'ted_findings' AND relkind = 'r') = 'barry_agent'
+         THEN 'OK   ted_findings owned by barry_agent'
+         ELSE 'FAIL ted_findings missing or not owned by barry_agent — apply migration 0040' END AS ted_findings_status;
+
+\echo
 \echo '=== Summary ==='
 SELECT
     (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public') AS total_tables,

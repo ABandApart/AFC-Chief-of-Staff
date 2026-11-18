@@ -447,6 +447,8 @@ trust boundaries B1/B2, with the tunnel (14) before any external channel.
 
 **Goal**: Higgins live. Weekly dashboard in #dashboard. Ted's G3 anomaly detection running.
 
+> **2026-11-18:** Ted's first increment is built ahead of this phase from `PRD-ted-ops-monitor.md` (hourly, no LLM, findings to the inbox and the Briefing page; weekly headless review). It replaces the `#system` pinned status and the Haiku summarization below. G3 is its increment 3.
+
 **Tasks**:
 
 1. Implement `~/agents/higgins/`:
@@ -592,6 +594,7 @@ These are not commitments. They are evidence that the architecture has headroom.
 | Single cost-emission helper enforced for all LLM calls | Single source of truth for spend tracking and runaway prevention | 2026-05-14 |
 | Three guards: per-run cap, per-day ceiling, anomaly detection | Layered protection at single-call / stuck-agent / regression time scales | 2026-05-14 |
 | Ted does G3 anomaly detection (not Higgins) | Computation is pure Python on agent_runs; no LLM cost; should run reactively | 2026-05-14 |
+| Ted increment 1 adopted (`PRD-ted-ops-monitor.md`): hourly pure-SQL ops check, findings to `INBOX-admin.md` and urgent Briefing notes, weekly judgment by a headless Claude Code session on the subscription | The 2026-11-18 credit outage ran ~12 h unseen. Detection must not depend on the credit it reports on; the judgment layer uses the subscription, not the API. Amends Phase 11's Ted scope (#system, 6 h, Haiku) and `80-` | 2026-11-18 |
 | Three metrics per agent | Discipline: token-discipline + effectiveness + outcome | 2026-05-14 |
 | Defer dwell rate metric | Discord doesn't surface link clicks; revisit when Buffer engagement is in place | 2026-05-14 |
 | North star: sustainable long-term contract engagements | All workflows tie to KR1, KR2, or KR3 | 2026-05-14 |

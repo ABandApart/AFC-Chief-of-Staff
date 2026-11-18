@@ -68,6 +68,7 @@ For **outcome attribution** (the `clients` table, `outcomes.client_id` and `attr
 
 For the **Notion integration** (master OKR document with initiatives, `/initiative` + `/todo` on Task Tinder, Notion to-do list, dashboard, Tartt review, long-form writing workflow):
 → [`PRD-notion-integration.md`](./PRD-notion-integration.md) — DRAFT rev 2, 2026-10-16; build order N1→N2→N3→N4→N6→N5; all decisions settled
+→ [`PRD-ted-ops-monitor.md`](./PRD-ted-ops-monitor.md) — Ted increment 1, ADOPTED and built 2026-11-18 (loops disabled); hourly SQL ops check plus a weekly headless Claude Code review on the subscription
 
 For the **outreach workflow as a picture** (six diagrams — read this before 35-):
 → [`37-outreach-workflow.md`](./37-outreach-workflow.md)

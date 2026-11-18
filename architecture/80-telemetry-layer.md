@@ -464,6 +464,8 @@ Every agent gets at most three metrics. One is token-discipline (catches spirals
 
 Ted's scope expands from pure health monitoring to include real-time cost guarding. Specifically:
 
+> **Amended 2026-11-18 (`PRD-ted-ops-monitor.md`).** Increment 1 runs hourly, uses no LLM on the detection path, sends findings to `INBOX-admin.md` and urgent Briefing-page notes (not `#system`), and runs a weekly judgment review as a headless Claude Code session on the subscription. Items 2, 6, and 7 below are later increments.
+
 Every 6 hours, Ted:
 
 1. **Reads dashboard** (existing): timestamps of last successful runs per agent.
@@ -517,7 +519,7 @@ switch works; the property required is *alert on absence*.
 | Check | Pinged by | Period | Grace |
 |-------|-----------|--------|-------|
 | `cos-briefing` | morning-briefing loop, after posting | 24h | 1h |
-| `cos-ted` | Ted, at the end of each cycle | 6h | 1h |
+| `cos-ted` | Ted, at the end of each cycle | 1h (was 6h; amended 2026-11-18) | 15m |
 | `cos-scheduler` | scheduler daemon heartbeat | 1h | 15m |
 | `cos-outreach-evidence` | evidence poller (Track O) | 12h | 2h |
 | `cos-outreach-bcc` | BCC poller (Track O) | 15m | 10m |
@@ -575,7 +577,7 @@ individual loop's grace), **`cos-outreach-evidence`** (`agents/outreach/
 evidence.py`, success + `/fail`), and **`cos-outreach-bcc`**
 (`agents/outreach/gmail_capture.py` `run_bcc`, pinged only on a live pass — never
 on the intentional skip when the bcc@ credential is absent, so the check stays
-honest). Still to wire as its loop lands: `cos-ted` (Phase 11). **Operator/runtime
+honest). `cos-ted` is wired by `agents/ted/run.py` (2026-11-18, `PRD-ted-ops-monitor.md`; period 1 h, grace 15 min, loop ships disabled). **Operator/runtime
 setup** (once): create the healthchecks.io project, add `healthchecks-ping-key` to
 barry-agent's keychain, create the checks per the table above — `cos-briefing`
 (24h/1h), `cos-scheduler` (1h/15m), `cos-outreach-evidence` (12h/2h),
